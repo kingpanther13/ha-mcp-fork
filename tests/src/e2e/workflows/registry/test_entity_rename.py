@@ -19,7 +19,8 @@ import logging
 
 import pytest
 
-from ...utilities.assertions import parse_mcp_result, safe_call_tool
+from ...utilities.assertions import safe_call_tool
+from ...utilities.wait_helpers import wait_for_entity_state
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class TestEntityRename:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. RENAME: With name and icon updates
         rename_data = await safe_call_tool(
@@ -181,7 +182,7 @@ class TestEntityRename:
         logger.info("Renamed entity with name and icon update")
 
         # Wait for rename to propagate
-        await asyncio.sleep(0.5)
+        await wait_for_entity_state(mcp_client, new_entity_id, "off", timeout=10)
 
         # 3. VERIFY: New entity has updated attributes
         state_data = await safe_call_tool(
@@ -310,7 +311,7 @@ async def test_rename_entity_basic(mcp_client, cleanup_tracker):
     cleanup_tracker.track("input_button", new_id)
 
     # Wait for entity to be registered
-    await asyncio.sleep(1.0)
+    await wait_for_entity_state(mcp_client, original_id, "unknown", timeout=10)
 
     # Rename
     rename_data = await safe_call_tool(
@@ -324,7 +325,7 @@ async def test_rename_entity_basic(mcp_client, cleanup_tracker):
     assert rename_data.get("success"), f"Failed to rename: {rename_data}"
 
     # Wait for rename to propagate
-    await asyncio.sleep(0.5)
+    await wait_for_entity_state(mcp_client, new_id, "unknown", timeout=10)
 
     # Cleanup
     delete_data = await safe_call_tool(
@@ -376,7 +377,7 @@ class TestEntityRenameVoiceExposure:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. EXPOSE: Entity to conversation assistant
         expose_data = await safe_call_tool(
@@ -410,7 +411,7 @@ class TestEntityRenameVoiceExposure:
         logger.info(f"Voice exposure migration result: {migration_info}")
 
         # Wait for rename to propagate
-        await asyncio.sleep(0.5)
+        await wait_for_entity_state(mcp_client, new_entity_id, "off", timeout=10)
 
         # 4. VERIFY: New entity has exposure settings
         check_data = await safe_call_tool(
@@ -454,7 +455,7 @@ class TestEntityRenameVoiceExposure:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. RENAME: With preserve_voice_exposure=False
         rename_data = await safe_call_tool(
@@ -515,7 +516,7 @@ class TestRenameEntityAndDevice:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. RENAME: Using convenience wrapper
         rename_data = await safe_call_tool(
@@ -541,7 +542,7 @@ class TestRenameEntityAndDevice:
         logger.info(f"Device rename result: {device_result}")
 
         # Wait for rename to propagate
-        await asyncio.sleep(0.5)
+        await wait_for_entity_state(mcp_client, new_entity_id, "off", timeout=10)
 
         # 3. VERIFY: New entity exists
         state_data = await safe_call_tool(
@@ -586,7 +587,7 @@ class TestRenameEntityAndDevice:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. RENAME: Without new_device_name
         rename_data = await safe_call_tool(
@@ -637,7 +638,7 @@ class TestRenameEntityAndDevice:
         cleanup_tracker.track("input_boolean", new_entity_id)
 
         # Wait for entity to be registered
-        await asyncio.sleep(1.0)
+        await wait_for_entity_state(mcp_client, original_entity_id, "off", timeout=10)
 
         # 2. RENAME: With new entity friendly name
         rename_data = await safe_call_tool(
@@ -687,7 +688,7 @@ async def test_rename_entity_and_device_basic(mcp_client, cleanup_tracker):
     cleanup_tracker.track("input_button", new_id)
 
     # Wait for entity to be registered
-    await asyncio.sleep(1.0)
+    await wait_for_entity_state(mcp_client, original_id, "unknown", timeout=10)
 
     # Rename using convenience wrapper
     rename_data = await safe_call_tool(
@@ -701,7 +702,7 @@ async def test_rename_entity_and_device_basic(mcp_client, cleanup_tracker):
     assert rename_data.get("success"), f"Failed to rename: {rename_data}"
 
     # Wait for rename to propagate
-    await asyncio.sleep(0.5)
+    await wait_for_entity_state(mcp_client, new_id, "unknown", timeout=10)
 
     # Cleanup
     delete_data = await safe_call_tool(

@@ -5,6 +5,7 @@ This module provides specialized assertion functions that make E2E tests
 more readable and provide better error messages for common test scenarios.
 """
 
+import ast
 import json
 import logging
 from typing import Any
@@ -39,7 +40,7 @@ def parse_mcp_result(result) -> dict[str, Any]:
                 return json.loads(response_text)
             except json.JSONDecodeError:
                 try:
-                    return eval(response_text)
+                    return ast.literal_eval(response_text)
                 except Exception:
                     return {"raw_response": response_text}
         return {"content": str(result.content[0])}
