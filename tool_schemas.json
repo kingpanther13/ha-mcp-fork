@@ -1,0 +1,3853 @@
+[
+  {
+    "name": "ha_add_todo_item",
+    "description": "Add an item to a Home Assistant todo list.\n\nCreates a new item in the specified todo list with optional description and due date.\n\nPARAMETERS:\n- entity_id: The todo list to add to (e.g., 'todo.shopping_list')\n- summary: The item text (required)\n- description: Optional detailed description\n- due_date: Optional due date (YYYY-MM-DD format)\n- due_datetime: Optional due datetime (ISO format, overrides due_date if both provided)\n\nEXAMPLES:\n- Add simple item: ha_add_todo_item(\"todo.shopping_list\", \"Buy milk\")\n- Add with description: ha_add_todo_item(\"todo.shopping_list\", \"Buy milk\", description=\"2% organic\")\n- Add with due date: ha_add_todo_item(\"todo.tasks\", \"Pay bills\", due_date=\"2024-12-31\")\n\nUSE CASES:\n- \"Add milk to my shopping list\"\n- \"Add 'call mom' to my todo list\"\n- \"Remind me to pay rent by the 1st\"\n\nNOTE: Not all todo integrations support all features (description, due dates).\nThe Shopping List integration only supports summary.",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Todo list entity ID (e.g., 'todo.shopping_list')",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Item text/name to add (e.g., 'Buy milk')",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional detailed description for the item"
+        },
+        "due_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional due date in YYYY-MM-DD format (e.g., '2024-12-25')"
+        },
+        "due_datetime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional due datetime in ISO format (e.g., '2024-12-25T14:00:00')"
+        }
+      },
+      "required": [
+        "entity_id",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Add Todo Item' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['todo']"
+  },
+  {
+    "name": "ha_backup_create",
+    "description": "Create a fast Home Assistant backup (local only).\n\n**What's Included:**\n- Home Assistant configuration (core settings)\n- All add-ons\n- SSL certificates\n- Database is EXCLUDED for faster backup (excludes historical sensor data, statistics, state history)\n\n**Password:** Uses Home Assistant's default backup password (if configured)\n\n**Storage:** Local only (hassio.local agent)\n\n**Duration:** Typically takes several seconds to complete (without database)\n\n**When to Use:**\nRun before operations that CANNOT be undone (e.g., deleting devices). If the current definition was fetched or can be fetched, this tool is usually not needed.\n\n**Example Usage:**\n- Before deleting device: ha_backup_create(\"Before_Device_Delete\")\n- Before modifying system settings: ha_backup_create(\"Pre_System_Change\")\n- Quick safety backup: ha_backup_create()\n\n**Returns:** Backup ID and job status",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Backup name (auto-generated if not provided, e.g., 'MCP_Backup_2025-10-05_04:30')"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Create Backup' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_backup_restore",
+    "description": "Restore Home Assistant from a backup (LAST RESORT - use with extreme caution).\n\n**\u26a0\ufe0f WARNING - DESTRUCTIVE OPERATION \u26a0\ufe0f**\n\n**This tool restarts Home Assistant and restores configuration to a previous state.**\n\n**IMPORTANT CONSIDERATIONS:**\n1. **Try undo operations first** - Often you can just reverse what you did:\n   - Deleted automation? Recreate it with ha_config_set_automation\n   - Modified script? Use ha_config_set_script to fix it\n   - Most config changes can be rolled back without using restore\n\n2. **Safety mechanism:** A NEW backup is automatically created BEFORE restore\n   - This allows you to rollback the restore if needed\n   - You can restore from this pre-restore backup if something goes wrong\n\n3. **What gets restored:**\n   - Home Assistant configuration (automations, scripts, etc.)\n   - Add-ons (if they were in the backup)\n   - Optional: Database - historical sensor data, statistics, state history (set restore_database=true)\n\n4. **Side effects:**\n   - Home Assistant will RESTART during restore\n   - Any changes made after the backup was created will be LOST\n   - Temporary disconnection from all integrations during restart\n\n**Recommended workflow:**\n1. Try to undo your changes manually first\n2. If you must restore, use the most recent backup\n3. Set restore_database=false unless you need historical data\n4. Expect a restart and temporary downtime\n\n**Example Usage:**\n- Restore config only: ha_backup_restore(\"dd7550ed\")\n- Full restore with DB: ha_backup_restore(\"dd7550ed\", restore_database=true)\n\n**Returns:** Restore job status",
+    "inputSchema": {
+      "properties": {
+        "backup_id": {
+          "description": "Backup ID to restore (e.g., 'dd7550ed' from backup list or ha_backup_create result)",
+          "type": "string"
+        },
+        "restore_database": {
+          "default": false,
+          "description": "Restore database (default: false for config-only restore)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "backup_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Restore Backup' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_bulk_control",
+    "description": "Control multiple devices with bulk operation support and WebSocket tracking.",
+    "inputSchema": {
+      "properties": {
+        "operations": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "parallel": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": true
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Bulk Control' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_call_service",
+    "description": "Execute Home Assistant services to control entities and trigger automations.\n\nThis is the universal tool for controlling all Home Assistant entities. Services follow\nthe pattern domain.service (e.g., light.turn_on, climate.set_temperature).\n\n**Basic Usage:**\n```python\n# Turn on a light\nha_call_service(\"light\", \"turn_on\", entity_id=\"light.living_room\")\n\n# Set temperature with parameters\nha_call_service(\"climate\", \"set_temperature\",\n              entity_id=\"climate.thermostat\", data={\"temperature\": 22})\n\n# Trigger automation\nha_call_service(\"automation\", \"trigger\", entity_id=\"automation.morning_routine\")\n\n# Universal controls work with any entity\nha_call_service(\"homeassistant\", \"toggle\", entity_id=\"switch.porch_light\")\n```\n\n**Parameters:**\n- **domain**: Service domain (light, climate, automation, etc.)\n- **service**: Service name (turn_on, set_temperature, trigger, etc.)\n- **entity_id**: Optional target entity. For some services (e.g., light.turn_off), omitting this targets all entities in the domain\n- **data**: Optional dict of service-specific parameters\n- **return_response**: Set to True for services that return data\n\n**For detailed service documentation and parameters, use ha_get_domain_docs(domain).**\n\nCommon patterns: Use ha_get_state() to check current values before making changes.\nUse ha_search_entities() to find correct entity IDs.",
+    "inputSchema": {
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "return_response": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false
+        }
+      },
+      "required": [
+        "domain",
+        "service"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Call Service' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_check_config",
+    "description": "Check Home Assistant configuration for errors.\n\nValidates configuration files without applying changes.\nAlways run this before ha_restart() to ensure configuration is valid.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='Check Configuration' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_config_delete_dashboard",
+    "description": "Delete a storage-mode dashboard completely.\n\nWARNING: This permanently deletes the dashboard and all its configuration.\nCannot be undone. Does not work on YAML-mode dashboards.\n\nEXAMPLES:\n- Delete dashboard: ha_config_delete_dashboard(\"mobile-dashboard\")\n\nNote: The default dashboard cannot be deleted via this method.",
+    "inputSchema": {
+      "properties": {
+        "dashboard_id": {
+          "description": "Dashboard ID to delete (typically same as url_path)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dashboard_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Delete Dashboard' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['dashboard']"
+  },
+  {
+    "name": "ha_config_delete_dashboard_resource",
+    "description": "Delete a dashboard resource.\n\nRemoves a resource from Home Assistant. The resource will no longer\nbe loaded on dashboards. This operation is idempotent - deleting\na non-existent resource will succeed.\n\nWARNING: Deleting a resource used by custom cards in your dashboards\nwill cause those cards to fail to load.\n\nEXAMPLES:\nha_config_delete_dashboard_resource(resource_id=\"abc123\")\n\nNote: Use ha_config_list_dashboard_resources() to find resource IDs\nbefore deleting. Ensure no dashboards depend on the resource.",
+    "inputSchema": {
+      "properties": {
+        "resource_id": {
+          "description": "Resource ID to delete. Get from ha_config_list_dashboard_resources()",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Delete Dashboard Resource' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['dashboard', 'resources']"
+  },
+  {
+    "name": "ha_config_get_automation",
+    "description": "Retrieve Home Assistant automation configuration.\n\nReturns the complete configuration including triggers, conditions, actions, and mode settings.\n\nEXAMPLES:\n- Get automation: ha_config_get_automation(\"automation.morning_routine\")\n- Get by unique_id: ha_config_get_automation(\"my_unique_automation_id\")\n\nFor comprehensive automation documentation, use: ha_get_domain_docs(\"automation\")",
+    "inputSchema": {
+      "properties": {
+        "identifier": {
+          "description": "Automation entity_id (e.g., 'automation.morning_routine') or unique_id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Automation Config' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['automation']"
+  },
+  {
+    "name": "ha_config_get_calendar_events",
+    "description": "Retrieve calendar events from a calendar entity.\n\nRetrieves calendar events within a specified time range.\n\n**Parameters:**\n- entity_id: Calendar entity ID (e.g., 'calendar.family')\n- start: Start datetime in ISO format (default: now)\n- end: End datetime in ISO format (default: 7 days from start)\n- max_results: Maximum number of events to return (default: 20)\n\n**Example Usage:**\n```python\n# Get events for the next week\nevents = ha_config_get_calendar_events(\"calendar.family\")\n\n# Get events for a specific date range\nevents = ha_config_get_calendar_events(\n    \"calendar.work\",\n    start=\"2024-01-01T00:00:00\",\n    end=\"2024-01-31T23:59:59\"\n)\n```\n\n**Note:** To find calendar entities, use ha_search_entities(query='calendar', domain_filter='calendar')\n\n**Returns:**\n- List of calendar events with summary, start, end, description, location",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Calendar entity ID (e.g., 'calendar.family')",
+          "type": "string"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start datetime in ISO format (default: now)"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End datetime in ISO format (default: 7 days from start)"
+        },
+        "max_results": {
+          "default": 20,
+          "description": "Maximum number of events to return",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Calendar Events' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['calendar']"
+  },
+  {
+    "name": "ha_config_get_dashboard",
+    "description": "Get dashboard info - list all dashboards or get config for a specific one.\n\nWithout url_path (or with list_only=True): Lists all storage-mode dashboards\nwith metadata including url_path, title, icon, admin requirements.\n\nWith url_path: Returns the full Lovelace dashboard configuration\nincluding all views and cards.\n\nEXAMPLES:\n- List all dashboards: ha_config_get_dashboard(list_only=True)\n- Get default dashboard: ha_config_get_dashboard(url_path=\"default\")\n- Get custom dashboard: ha_config_get_dashboard(url_path=\"lovelace-mobile\")\n- Force reload: ha_config_get_dashboard(url_path=\"lovelace-home\", force_reload=True)\n\nNote: YAML-mode dashboards (defined in configuration.yaml) are not included in list.",
+    "inputSchema": {
+      "properties": {
+        "url_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dashboard URL path (e.g., 'lovelace-home'). Use 'default' for default dashboard. If omitted with list_only=True, lists all dashboards."
+        },
+        "list_only": {
+          "default": false,
+          "description": "If True, list all dashboards instead of getting config. When True, url_path is ignored.",
+          "type": "boolean"
+        },
+        "force_reload": {
+          "default": false,
+          "description": "Force reload from storage (bypass cache)",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Dashboard' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard']"
+  },
+  {
+    "name": "ha_config_get_label",
+    "description": "Get label info - list all labels or get a specific one by ID.\n\nWithout a label_id: Lists all Home Assistant labels with their configurations.\nWith a label_id: Returns configuration for that specific label.\n\nLABEL PROPERTIES:\n- ID (label_id), Name\n- Color (optional), Icon (optional), Description (optional)\n\nEXAMPLES:\n- List all labels: ha_config_get_label()\n- Get specific label: ha_config_get_label(\"my_label_id\")\n\nUse ha_config_set_label() to create or update labels.\nUse ha_set_entity(labels=[\"label1\", \"label2\"]) to assign labels to entities.",
+    "inputSchema": {
+      "properties": {
+        "label_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ID of the label to retrieve. If omitted, lists all labels."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Label' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['label']"
+  },
+  {
+    "name": "ha_config_get_script",
+    "description": "Retrieve Home Assistant script configuration.\n\nReturns the complete configuration for a script, including sequence, mode, fields, and other settings.\n\nEXAMPLES:\n- Get script: ha_config_get_script(\"morning_routine\")\n- Get script: ha_config_get_script(\"backup_script\")\n\nFor detailed script configuration help, use: ha_get_domain_docs(\"script\")",
+    "inputSchema": {
+      "properties": {
+        "script_id": {
+          "description": "Script identifier (e.g., 'morning_routine')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "script_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Script Config' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['script']"
+  },
+  {
+    "name": "ha_config_info",
+    "description": "Get information about Home Assistant configuration access via ha-mcp.\n\n**IMPORTANT FOR AI AGENTS:**\nHome Assistant accessed via ha-mcp is a REMOTE system accessed through\nREST and WebSocket APIs. Configuration files are NOT accessible on the\nlocal filesystem where this MCP server runs.\n\n**DO NOT:**\n- Search for configuration.yaml or other HA config files on disk\n- Attempt to read HA configuration files from the filesystem\n- Try to modify configuration files directly\n- Assume HA is running on the same machine as this MCP server\n\n**DO:**\n- Use ha-mcp tools to query configuration via the API\n- Generate configuration snippets for the user to copy/paste\n- Direct users to the Home Assistant UI for configuration changes\n- Suggest configuration examples based on user needs\n\n**CONFIGURATION ACCESS:**\n- Automations: Use ha_config_* tools (list, get, create, update, delete)\n- Scripts: Use ha_config_script_* tools\n- Dashboards: Use ha_config_dashboard_* tools\n- Integrations: Most are configured via UI, some via YAML\n- YAML files: Not directly accessible via ha-mcp\n\n**GENERATING SNIPPETS:**\nWhen users need configuration examples:\n1. Generate valid YAML/JSON snippets based on their requirements\n2. Provide clear instructions on where to add the configuration\n3. Explain any required steps (restart, reload, etc.)\n4. Link to relevant Home Assistant documentation\n\n**FEATURE REQUESTS:**\nIf users need direct configuration file access or advanced features:\n- Suggest filing a feature request at:\n  https://github.com/homeassistant-ai/ha-mcp/issues/new\n- Explain the current capabilities and limitations\n- Provide workarounds using existing tools\n\nReturns information specific to the requested config_type.",
+    "inputSchema": {
+      "properties": {
+        "config_type": {
+          "default": "general",
+          "description": "Type of configuration information to retrieve. Options: 'general' (default), 'automation', 'script', 'dashboard', 'integration', or 'yaml'. Use 'general' for an overview of how configuration works via ha-mcp.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Home Assistant Configuration Info' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['information', 'configuration']"
+  },
+  {
+    "name": "ha_config_list_areas",
+    "description": "List all Home Assistant areas (rooms).\n\nReturns area ID, name, icon, floor assignment, aliases, and picture URL.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='List Areas' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['area']"
+  },
+  {
+    "name": "ha_config_list_dashboard_resources",
+    "description": "List all Lovelace dashboard resources (custom cards, themes, CSS/JS).\n\nReturns all registered resources. For inline resources (created with\nha_config_set_inline_dashboard_resource), shows a preview of the content\ninstead of the full encoded URL to save tokens.\n\nArgs:\n    include_content: If True, includes full decoded content for inline\n        resources in \"_content\" field. Default False (150-char preview only).\n\nResource types:\n- module: ES6 JavaScript modules (modern custom cards)\n- js: Legacy JavaScript files\n- css: CSS stylesheets\n\nEach resource has a unique ID for update/delete operations.\n\nEXAMPLES:\n- List all resources: ha_config_list_dashboard_resources()\n- List with full content: ha_config_list_dashboard_resources(include_content=True)\n\nNote: Requires advanced mode to be enabled in Home Assistant for resource\nmanagement through the UI, but API access works regardless.",
+    "inputSchema": {
+      "properties": {
+        "include_content": {
+          "default": false,
+          "description": "Include full decoded content for inline resources. Default False to save tokens (shows 150-char preview instead).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='List Dashboard Resources' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard', 'resources']"
+  },
+  {
+    "name": "ha_config_list_floors",
+    "description": "List all Home Assistant floors.\n\nReturns floor ID, name, icon, level (0=ground, 1=first, -1=basement), and aliases.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='List Floors' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['floor']"
+  },
+  {
+    "name": "ha_config_list_groups",
+    "description": "List all Home Assistant entity groups with their member entities.\n\nReturns all groups created via group.set service or YAML configuration,\nincluding:\n- Entity ID (group.xxx)\n- Friendly name\n- State (on/off based on member states)\n- Member entities\n- Icon (if set)\n- All mode (if all entities must be on)\n\nEXAMPLES:\n- List all groups: ha_config_list_groups()\n\n**NOTE:** This returns old-style groups (created via group.set or YAML).\nPlatform-specific groups (light groups, cover groups) are separate entities.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='List Groups' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['group']"
+  },
+  {
+    "name": "ha_config_list_helpers",
+    "description": "List all Home Assistant helpers of a specific type with their configurations.\n\nReturns complete configuration for all helpers of the specified type including:\n- ID, name, icon\n- Type-specific settings (min/max for input_number, options for input_select, etc.)\n- Area and label assignments\n\nSUPPORTED HELPER TYPES:\n- input_button: Virtual buttons for triggering automations\n- input_boolean: Toggle switches/checkboxes\n- input_select: Dropdown selection lists\n- input_number: Numeric sliders/input boxes\n- input_text: Text input fields\n- input_datetime: Date/time pickers\n- counter: Counters with increment/decrement/reset\n- timer: Countdown timers with start/pause/cancel\n- schedule: Weekly schedules with time ranges (on/off per day)\n- zone: Geographical zones for presence detection\n- person: Person entities linked to device trackers\n- tag: NFC/QR tags for automation triggers\n\nEXAMPLES:\n- List all number helpers: ha_config_list_helpers(\"input_number\")\n- List all counters: ha_config_list_helpers(\"counter\")\n- List all zones: ha_config_list_helpers(\"zone\")\n- List all persons: ha_config_list_helpers(\"person\")\n- List all tags: ha_config_list_helpers(\"tag\")\n\n**NOTE:** This only returns storage-based helpers (created via UI/API), not YAML-defined helpers.\n\nFor detailed helper documentation, use: ha_get_domain_docs(\"input_number\"), etc.",
+    "inputSchema": {
+      "properties": {
+        "helper_type": {
+          "description": "Type of helper entity to list",
+          "enum": [
+            "input_button",
+            "input_boolean",
+            "input_select",
+            "input_number",
+            "input_text",
+            "input_datetime",
+            "counter",
+            "timer",
+            "schedule",
+            "zone",
+            "person",
+            "tag"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "helper_type"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='List Helpers' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['helper']"
+  },
+  {
+    "name": "ha_config_remove_area",
+    "description": "Delete a Home Assistant area.\n\nEntities and devices in the area are not deleted, just unassigned.\nMay break automations referencing this area.",
+    "inputSchema": {
+      "properties": {
+        "area_id": {
+          "description": "Area ID to delete (use ha_config_list_areas to find IDs)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "area_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Area' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['area']"
+  },
+  {
+    "name": "ha_config_remove_automation",
+    "description": "Delete a Home Assistant automation.\n\nEXAMPLES:\n- Delete automation: ha_config_remove_automation(\"automation.old_automation\")\n- Delete by unique_id: ha_config_remove_automation(\"my_unique_id\")\n\n**WARNING:** Deleting an automation removes it permanently from your Home Assistant configuration.",
+    "inputSchema": {
+      "properties": {
+        "identifier": {
+          "description": "Automation entity_id (e.g., 'automation.old_automation') or unique_id to delete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Automation' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['automation']"
+  },
+  {
+    "name": "ha_config_remove_calendar_event",
+    "description": "Delete an event from a calendar.\n\nDeletes a calendar event using the calendar.delete_event service.\n\n**Parameters:**\n- entity_id: Calendar entity ID (e.g., 'calendar.family')\n- uid: Unique identifier of the event to delete\n- recurrence_id: Optional recurrence ID for recurring events\n- recurrence_range: Optional recurrence range ('THIS_AND_FUTURE' to delete this and future occurrences)\n\n**Example Usage:**\n```python\n# Delete a single event\nresult = ha_config_remove_calendar_event(\n    \"calendar.family\",\n    uid=\"event-12345\"\n)\n\n# Delete a recurring event instance and future occurrences\nresult = ha_config_remove_calendar_event(\n    \"calendar.work\",\n    uid=\"recurring-event-67890\",\n    recurrence_id=\"20240115T100000\",\n    recurrence_range=\"THIS_AND_FUTURE\"\n)\n```\n\n**Note:**\nTo get the event UID, first use ha_config_get_calendar_events() to list events.\nThe UID is returned in each event's data.\n\n**Returns:**\n- Success status and deletion confirmation",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Calendar entity ID (e.g., 'calendar.family')",
+          "type": "string"
+        },
+        "uid": {
+          "description": "Unique identifier of the event to delete",
+          "type": "string"
+        },
+        "recurrence_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional recurrence ID for recurring events"
+        },
+        "recurrence_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional recurrence range ('THIS_AND_FUTURE' to delete this and future occurrences)"
+        }
+      },
+      "required": [
+        "entity_id",
+        "uid"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Calendar Event' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['calendar']"
+  },
+  {
+    "name": "ha_config_remove_floor",
+    "description": "Delete a Home Assistant floor.\n\nAreas on this floor are not deleted, just unassigned.\nMay break automations referencing this floor.",
+    "inputSchema": {
+      "properties": {
+        "floor_id": {
+          "description": "Floor ID to delete (use ha_config_list_floors to find IDs)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "floor_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Floor' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['floor']"
+  },
+  {
+    "name": "ha_config_remove_group",
+    "description": "Remove a Home Assistant entity group.\n\nUses the group.remove service to delete the group.\n\nEXAMPLES:\n- Remove group: ha_config_remove_group(\"living_room_lights\")\n\nUse ha_config_list_groups() to find existing groups.\n\n**WARNING:**\n- Removing a group used in automations may cause those automations to fail.\n- Groups defined in YAML can be removed at runtime but will reappear after restart.\n- This only removes old-style groups, not platform-specific groups.",
+    "inputSchema": {
+      "properties": {
+        "object_id": {
+          "description": "Group identifier without 'group.' prefix (e.g., 'living_room_lights')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Group' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['group']"
+  },
+  {
+    "name": "ha_config_remove_helper",
+    "description": "Delete a Home Assistant helper entity.\n\nSUPPORTED HELPER TYPES:\n- input_button, input_boolean, input_select, input_number, input_text, input_datetime\n- counter, timer, schedule, zone, person, tag\n\nEXAMPLES:\n- Delete button: ha_config_remove_helper(\"input_button\", \"my_button\")\n- Delete counter: ha_config_remove_helper(\"counter\", \"my_counter\")\n- Delete timer: ha_config_remove_helper(\"timer\", \"my_timer\")\n- Delete schedule: ha_config_remove_helper(\"schedule\", \"work_hours\")\n\n**WARNING:** Deleting a helper that is used by automations or scripts may cause those automations/scripts to fail.\nUse ha_search_entities() to verify the helper exists before attempting to delete it.",
+    "inputSchema": {
+      "properties": {
+        "helper_type": {
+          "description": "Type of helper entity to delete",
+          "enum": [
+            "input_button",
+            "input_boolean",
+            "input_select",
+            "input_number",
+            "input_text",
+            "input_datetime",
+            "counter",
+            "timer",
+            "schedule",
+            "zone",
+            "person",
+            "tag"
+          ],
+          "type": "string"
+        },
+        "helper_id": {
+          "description": "Helper ID to delete (e.g., 'my_button' or 'input_button.my_button')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "helper_type",
+        "helper_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Helper' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['helper']"
+  },
+  {
+    "name": "ha_config_remove_label",
+    "description": "Delete a Home Assistant label.\n\nRemoves the label from the label registry. This will also remove the label\nfrom all entities, devices, and areas that have it assigned.\n\nEXAMPLES:\n- Delete label: ha_config_remove_label(\"my_label_id\")\n\nUse ha_config_get_label() to find label IDs.\n\n**WARNING:** Deleting a label will remove it from all assigned entities.\nThis action cannot be undone.",
+    "inputSchema": {
+      "properties": {
+        "label_id": {
+          "description": "ID of the label to delete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Label' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['label']"
+  },
+  {
+    "name": "ha_config_remove_script",
+    "description": "Delete a Home Assistant script.\n\nEXAMPLES:\n- Delete script: ha_config_remove_script(\"old_script\")\n- Delete script: ha_config_remove_script(\"temporary_script\")\n\n**IMPORTANT LIMITATION:**\nThis tool can only delete scripts created via the Home Assistant UI.\nScripts defined in YAML configuration files (scripts.yaml or configuration.yaml)\ncannot be deleted through the API and will return a 405 Method Not Allowed error.\n\nTo remove YAML-defined scripts, you must edit the configuration file directly.\n\n**WARNING:** Deleting a script that is used by automations may cause those automations to fail.",
+    "inputSchema": {
+      "properties": {
+        "script_id": {
+          "description": "Script identifier to delete (e.g., 'old_script')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "script_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Script' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['script']"
+  },
+  {
+    "name": "ha_config_set_area",
+    "description": "Create or update a Home Assistant area (room).\n\nProvide name only to create a new area. Provide area_id to update existing.\nAreas organize entities by physical location for room-based control.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name for the area (required for create, optional for update, e.g., 'Living Room', 'Kitchen')"
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Area ID to update (omit to create new area, use ha_config_list_areas to find IDs)"
+        },
+        "floor_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Floor ID to assign this area to (use ha_config_list_floors to find IDs, empty string to remove)"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:sofa', 'mdi:bed', empty string to remove)"
+        },
+        "aliases": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Alternative names for voice assistant recognition (e.g., ['lounge', 'family room'], empty list to clear)"
+        },
+        "picture": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to a picture representing the area (empty string to remove)"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Area' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['area']"
+  },
+  {
+    "name": "ha_config_set_automation",
+    "description": "Create or update a Home Assistant automation.\n\nCreates a new automation (if identifier omitted) or updates existing automation with provided configuration.\n\nAUTOMATION TYPES:\n\n1. Regular Automations - Define triggers and actions directly\n2. Blueprint Automations - Use pre-built templates with customizable inputs\n\nREQUIRED FIELDS (Regular Automations):\n- alias: Human-readable automation name\n- trigger: List of trigger conditions (time, state, event, etc.)\n- action: List of actions to execute\n\nREQUIRED FIELDS (Blueprint Automations):\n- alias: Human-readable automation name\n- use_blueprint: Blueprint configuration\n  - path: Blueprint file path (e.g., \"motion_light.yaml\")\n  - input: Dictionary of input values for the blueprint\n\nOPTIONAL CONFIG FIELDS (Regular Automations):\n- description: Detailed description of the user's intent (RECOMMENDED: helps safely modify implementation later)\n- condition: Additional conditions that must be met\n- mode: 'single' (default), 'restart', 'queued', 'parallel'\n- max: Maximum concurrent executions (for queued/parallel modes)\n- initial_state: Whether automation starts enabled (true/false)\n- variables: Variables for use in automation\n\nBASIC EXAMPLES:\n\nSimple time-based automation:\nha_config_set_automation({\n    \"alias\": \"Morning Lights\",\n    \"description\": \"Turn on bedroom lights at 7 AM to help wake up\",\n    \"trigger\": [{\"platform\": \"time\", \"at\": \"07:00:00\"}],\n    \"action\": [{\"service\": \"light.turn_on\", \"target\": {\"area_id\": \"bedroom\"}}]\n})\n\nMotion-activated lighting with condition:\nha_config_set_automation({\n    \"alias\": \"Motion Light\",\n    \"trigger\": [{\"platform\": \"state\", \"entity_id\": \"binary_sensor.motion\", \"to\": \"on\"}],\n    \"condition\": [{\"condition\": \"sun\", \"after\": \"sunset\"}],\n    \"action\": [\n        {\"service\": \"light.turn_on\", \"target\": {\"entity_id\": \"light.hallway\"}},\n        {\"delay\": {\"minutes\": 5}},\n        {\"service\": \"light.turn_off\", \"target\": {\"entity_id\": \"light.hallway\"}}\n    ],\n    \"mode\": \"restart\"\n})\n\nUpdate existing automation:\nha_config_set_automation(\n    identifier=\"automation.morning_routine\",\n    config={\n        \"alias\": \"Updated Morning Routine\",\n        \"trigger\": [{\"platform\": \"time\", \"at\": \"06:30:00\"}],\n        \"action\": [\n            {\"service\": \"light.turn_on\", \"target\": {\"area_id\": \"bedroom\"}},\n            {\"service\": \"climate.set_temperature\", \"target\": {\"entity_id\": \"climate.bedroom\"}, \"data\": {\"temperature\": 22}}\n        ]\n    }\n)\n\nBLUEPRINT AUTOMATION EXAMPLES:\n\nCreate automation from blueprint:\nha_config_set_automation({\n    \"alias\": \"Motion Light Kitchen\",\n    \"use_blueprint\": {\n        \"path\": \"homeassistant/motion_light.yaml\",\n        \"input\": {\n            \"motion_entity\": \"binary_sensor.kitchen_motion\",\n            \"light_target\": {\"entity_id\": \"light.kitchen\"},\n            \"no_motion_wait\": 120\n        }\n    }\n})\n\nUpdate blueprint automation inputs:\nha_config_set_automation(\n    identifier=\"automation.motion_light_kitchen\",\n    config={\n        \"alias\": \"Motion Light Kitchen\",\n        \"use_blueprint\": {\n            \"path\": \"homeassistant/motion_light.yaml\",\n            \"input\": {\n                \"motion_entity\": \"binary_sensor.kitchen_motion\",\n                \"light_target\": {\"entity_id\": \"light.kitchen\"},\n                \"no_motion_wait\": 300\n            }\n        }\n    }\n})\n\nPREFER NATIVE SOLUTIONS OVER TEMPLATES:\nBefore using template triggers/conditions/actions, check if a native option exists:\n- Use `condition: state` with `state: [list]` instead of template for multiple states\n- Use `condition: state` with `attribute:` instead of template for attribute checks\n- Use `condition: numeric_state` instead of template for number comparisons\n- Use `wait_for_trigger` instead of `wait_template` when waiting for state changes\n- Use `choose` action instead of template-based service names\n\nTRIGGER TYPES: time, time_pattern, sun, state, numeric_state, event, device, zone, template, and more\nCONDITION TYPES: state, numeric_state, time, sun, template, device, zone, and more\nACTION TYPES: service calls, delays, wait_for_trigger, wait_template, if/then/else, choose, repeat, parallel\n\nFor comprehensive automation documentation with all trigger/condition/action types and advanced examples:\n- Use: ha_get_domain_docs(\"automation\")\n- Or visit: https://www.home-assistant.io/docs/automation/\n\nTROUBLESHOOTING:\n- Use ha_get_state() to verify entity_ids exist\n- Use ha_search_entities() to find correct entity_ids\n- Use ha_eval_template() to test Jinja2 templates before using in automations\n- Use ha_search_entities(domain_filter='automation') to find existing automations",
+    "inputSchema": {
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ],
+          "description": "Complete automation configuration with required fields: 'alias', 'trigger', 'action'. Optional: 'description', 'condition', 'mode', 'max', 'initial_state', 'variables'"
+        },
+        "identifier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Automation entity_id or unique_id for updates. Omit to create new automation with generated unique_id."
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Automation' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['automation']"
+  },
+  {
+    "name": "ha_config_set_calendar_event",
+    "description": "Create a new event in a calendar.\n\nCreates a calendar event using the calendar.create_event service.\n\n**Parameters:**\n- entity_id: Calendar entity ID (e.g., 'calendar.family')\n- summary: Event title/summary\n- start: Event start datetime in ISO format\n- end: Event end datetime in ISO format\n- description: Optional event description\n- location: Optional event location\n\n**Example Usage:**\n```python\n# Create a simple event\nresult = ha_config_set_calendar_event(\n    \"calendar.family\",\n    summary=\"Doctor appointment\",\n    start=\"2024-01-15T14:00:00\",\n    end=\"2024-01-15T15:00:00\"\n)\n\n# Create an event with details\nresult = ha_config_set_calendar_event(\n    \"calendar.work\",\n    summary=\"Team meeting\",\n    start=\"2024-01-16T10:00:00\",\n    end=\"2024-01-16T11:00:00\",\n    description=\"Weekly sync meeting\",\n    location=\"Conference Room A\"\n)\n```\n\n**Returns:**\n- Success status and event details",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Calendar entity ID (e.g., 'calendar.family')",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Event title/summary",
+          "type": "string"
+        },
+        "start": {
+          "description": "Event start datetime in ISO format",
+          "type": "string"
+        },
+        "end": {
+          "description": "Event end datetime in ISO format",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional event description"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional event location"
+        }
+      },
+      "required": [
+        "entity_id",
+        "summary",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Calendar Event' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['calendar']"
+  },
+  {
+    "name": "ha_config_set_dashboard",
+    "description": "Create or update a Home Assistant dashboard.\n\nCreates a new dashboard or updates an existing one with the provided configuration.\nSupports three modes: full config replacement, Python transformation, OR jq-based transformation.\n\nIMPORTANT: url_path must contain a hyphen (-) to be valid.\n\nWHEN TO USE WHICH MODE:\n- python_transform: RECOMMENDED for edits. Surgical/pattern-based updates, works on all platforms.\n- jq_transform: Legacy mode. Requires jq binary (not available on Windows ARM64).\n- config: New dashboards only, or full restructure. Replaces everything.\n\nJQ TRANSFORM EXAMPLES:\n- Update card icon: '.views[0].sections[1].cards[0].icon = \"mdi:thermometer\"'\n- Add card: '.views[0].cards += [{\"type\": \"button\", \"entity\": \"light.bedroom\"}]'\n- Delete card: 'del(.views[0].sections[0].cards[2])'\n- Update by selection: '(.views[0].cards[] | select(.entity == \"light.living_room\")).icon = \"mdi:lamp\"'\n\nMULTI-OPERATION (chain with |):\n- Delete then update: 'del(.views[0].cards[2]) | .views[0].cards[0].icon = \"mdi:new\"'\n- Multiple updates: '.views[0].cards[0].icon = \"mdi:a\" | .views[0].cards[1].icon = \"mdi:b\"'\n\nIMPORTANT: After delete/add operations, indices shift! Subsequent jq_transform calls\nmust use fresh config_hash from ha_dashboard_find_card() or ha_config_get_dashboard()\nto get updated structure. Chain multiple ops in ONE expression when possible.\n\nTIP: Use ha_dashboard_find_card() to get the jq_path for any card.\n\nPYTHON TRANSFORM EXAMPLES (RECOMMENDED):\n- Update card icon: 'config[\"views\"][0][\"cards\"][0][\"icon\"] = \"mdi:thermometer\"'\n- Add card: 'config[\"views\"][0][\"cards\"].append({\"type\": \"button\", \"entity\": \"light.bedroom\"})'\n- Delete card: 'del config[\"views\"][0][\"cards\"][2]'\n- Pattern-based update: 'for card in config[\"views\"][0][\"cards\"]: if \"light\" in card.get(\"entity\", \"\"): card[\"icon\"] = \"mdi:lightbulb\"'\n- Multi-operation: 'config[\"views\"][0][\"cards\"][0][\"icon\"] = \"mdi:a\"; config[\"views\"][0][\"cards\"][1][\"icon\"] = \"mdi:b\"'\n\nMODERN DASHBOARD BEST PRACTICES (2024+):\n- Use \"sections\" view type (default) with grid-based layouts\n- Use \"tile\" cards as primary card type (replaces legacy entity/light/climate cards)\n- Use \"grid\" cards for multi-column layouts within sections\n- Create multiple views with navigation paths (avoid single-view endless scrolling)\n- Use \"area\" cards with navigation for hierarchical organization\n\nDISCOVERING ENTITY IDs FOR DASHBOARDS:\nDo NOT guess entity IDs - use these tools to find exact entity IDs:\n1. ha_get_overview(include_entity_id=True) - Get all entities organized by domain/area\n2. ha_search_entities(query, domain_filter, area_filter) - Find specific entities\n3. ha_deep_search(query) - Comprehensive search across entities, areas, automations\n\nIf unsure about entity IDs, ALWAYS use one of these tools first.\n\nDASHBOARD DOCUMENTATION:\n- ha_get_dashboard_guide() - Complete guide (structure, views, cards, features, pitfalls)\n- ha_get_card_types() - List of all 41 available card types\n- ha_get_card_documentation(card_type) - Card-specific docs (e.g., \"tile\", \"grid\")\n\nEXAMPLES:\n\nCreate empty dashboard:\nha_config_set_dashboard(\n    url_path=\"mobile-dashboard\",\n    title=\"Mobile View\",\n    icon=\"mdi:cellphone\"\n)\n\nCreate dashboard with modern sections view:\nha_config_set_dashboard(\n    url_path=\"home-dashboard\",\n    title=\"Home Overview\",\n    config={\n        \"views\": [{\n            \"title\": \"Home\",\n            \"type\": \"sections\",\n            \"sections\": [{\n                \"title\": \"Climate\",\n                \"cards\": [{\n                    \"type\": \"tile\",\n                    \"entity\": \"climate.living_room\",\n                    \"features\": [{\"type\": \"target-temperature\"}]\n                }]\n            }]\n        }]\n    }\n)\n\nUpdate card using jq_transform (efficient for small changes):\nha_config_set_dashboard(\n    url_path=\"home-dashboard\",\n    jq_transform='.views[0].sections[0].cards[0].features += [{\"type\": \"climate-hvac-modes\"}]'\n)\n\nCreate strategy-based dashboard (auto-generated):\nha_config_set_dashboard(\n    url_path=\"my-home\",\n    title=\"My Home\",\n    config={\n        \"strategy\": {\n            \"type\": \"home\",\n            \"favorite_entities\": [\"light.bedroom\"]\n        }\n    }\n)\n\nNote: Strategy dashboards cannot be converted to custom dashboards via this tool.\nUse the \"Take Control\" feature in the Home Assistant interface to convert them.\n\nUpdate existing dashboard config:\nha_config_set_dashboard(\n    url_path=\"existing-dashboard\",\n    config={\n        \"views\": [{\n            \"title\": \"Updated View\",\n            \"type\": \"sections\",\n            \"sections\": [{\n                \"cards\": [{\"type\": \"markdown\", \"content\": \"Updated!\"}]\n            }]\n        }]\n    }\n)\n\nNote: If dashboard exists, only the config is updated. To change metadata\n(title, icon), use ha_config_update_dashboard_metadata().",
+    "inputSchema": {
+      "properties": {
+        "url_path": {
+          "description": "Unique URL path for dashboard (must contain hyphen, e.g., 'my-dashboard', 'mobile-view')",
+          "type": "string"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dashboard configuration with views and cards. Can be dict or JSON string. Omit or set to None to create dashboard without initial config. Mutually exclusive with jq_transform."
+        },
+        "jq_transform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "jq expression to transform existing dashboard config. Mutually exclusive with config and python_transform. Requires config_hash for validation. Examples: '.views[0].sections[1].cards[0].icon = \"mdi:thermometer\"', '.views[0].cards += [{\"type\": \"button\", \"entity\": \"light.bedroom\"}]', 'del(.views[0].sections[0].cards[2])'. MULTI-OP: Chain with '|': 'del(.views[0].cards[2]) | .views[0].cards[0].icon = \"mdi:new\"'. Use ha_dashboard_find_card() to get jq_path for targeted edits."
+        },
+        "python_transform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Python expression to transform existing dashboard config. Mutually exclusive with config and jq_transform. Requires config_hash for validation. See PYTHON TRANSFORM SECURITY below for allowed operations. Examples: Simple: python_transform=\"config['views'][0]['cards'][0]['icon'] = 'mdi:lamp'\" Pattern: python_transform=\"for card in config['views'][0]['cards']: if 'light' in card.get('entity', ''): card['icon'] = 'mdi:lightbulb'\" Multi-op: python_transform=\"config['views'][0]['cards'][0]['icon'] = 'mdi:lamp'; del config['views'][0]['cards'][2]\" \n\nPYTHON TRANSFORM SECURITY:\n\n\u2705 ALLOWED:\n- Dictionary/list access: config['views'][0]['cards'][1]\n- Assignment: config['key'] = 'value'\n- Deletion: del config['key'] or config.pop('key')\n- List methods: append, insert, pop, remove, clear, extend\n- Dict methods: update, get, setdefault, keys, values, items\n- Loops: for, while, if/else\n- Comprehensions: [x for x in ...]\n- String methods: startswith, endswith, lower, upper, split, join\n\n\u274c FORBIDDEN:\n- Imports: import, from, __import__\n- File operations: open, read, write\n- Dunder access: __class__, __bases__, __subclasses__\n- Dangerous builtins: eval, exec, compile\n- Function definitions: def, class\n- Exception handling: try/except (use validation instead)"
+        },
+        "config_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Config hash from ha_config_get_dashboard for optimistic locking. REQUIRED for jq_transform (validates dashboard unchanged). Optional for config (validates before full replacement if provided)."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dashboard display name shown in sidebar"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MDI icon name (e.g., 'mdi:home', 'mdi:cellphone'). Defaults to 'mdi:view-dashboard'"
+        },
+        "require_admin": {
+          "default": false,
+          "description": "Restrict dashboard to admin users only",
+          "type": "boolean"
+        },
+        "show_in_sidebar": {
+          "default": true,
+          "description": "Show dashboard in sidebar navigation",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "url_path"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Dashboard' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['dashboard']"
+  },
+  {
+    "name": "ha_config_set_dashboard_resource",
+    "description": "Create or update a dashboard resource from a URL.\n\nRegisters an external resource URL in Home Assistant. Use this for:\n- Files in /config/www/ directory (/local/...)\n- HACS-installed cards (/hacsfiles/...)\n- External CDN resources (https://...)\n\nFor inline code, use ha_config_set_inline_dashboard_resource instead.\n\nRESOURCE TYPES:\n- module: ES6 JavaScript modules (recommended for custom cards)\n- js: Legacy JavaScript files (older custom cards)\n- css: CSS stylesheets (themes, global styles)\n\nEXAMPLES:\n\nAdd custom card from www/ directory:\nha_config_set_dashboard_resource(\n    url=\"/local/my-custom-card.js\",\n    resource_type=\"module\"\n)\n\nAdd HACS card (after installing via ha_hacs_download):\nha_config_set_dashboard_resource(\n    url=\"/hacsfiles/lovelace-mushroom/mushroom.js\",\n    resource_type=\"module\"\n)\n\nUpdate to new version:\nha_config_set_dashboard_resource(\n    url=\"/local/my-card-v2.js\",\n    resource_type=\"module\",\n    resource_id=\"abc123\"\n)\n\nNote: After adding a resource, clear browser cache or hard refresh\n(Ctrl+Shift+R) to load changes.",
+    "inputSchema": {
+      "properties": {
+        "url": {
+          "description": "URL of the resource. Can be: /local/file.js (www/ directory), /hacsfiles/component/file.js (HACS), https://cdn.example.com/card.js (external)",
+          "type": "string"
+        },
+        "resource_type": {
+          "default": "module",
+          "description": "Resource type: 'module' for ES6 modules (modern cards), 'js' for legacy JavaScript, 'css' for stylesheets",
+          "enum": [
+            "module",
+            "js",
+            "css"
+          ],
+          "type": "string"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resource ID to update. If omitted, creates a new resource. Get IDs from ha_config_list_dashboard_resources()"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Set Dashboard Resource' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['dashboard', 'resources']"
+  },
+  {
+    "name": "ha_config_set_floor",
+    "description": "Create or update a Home Assistant floor.\n\nProvide name only to create a new floor. Provide floor_id to update existing.\nFloors organize areas into vertical levels for building-wide control.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name for the floor (required for create, optional for update, e.g., 'Ground Floor', 'Basement')"
+        },
+        "floor_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Floor ID to update (omit to create new floor, use ha_config_list_floors to find IDs)"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Numeric level for ordering (0=ground, 1=first, -1=basement, etc.)"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:home-floor-1', 'mdi:home-floor-b', empty string to remove)"
+        },
+        "aliases": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Alternative names for voice assistant recognition (e.g., ['downstairs', 'main level'], empty list to clear)"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Floor' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['floor']"
+  },
+  {
+    "name": "ha_config_set_group",
+    "description": "Create or update a Home Assistant entity group.\n\nUses the group.set service to create a new group or update an existing one.\nGroups are useful for organizing entities and controlling them together.\n\n**For NEW groups:** Provide object_id and entities (required).\n**For EXISTING groups:** Provide object_id and any fields to update.\n\nEXAMPLES:\n- Create group: ha_config_set_group(\"bedroom_lights\", entities=[\"light.lamp\", \"light.ceiling\"])\n- Create with name: ha_config_set_group(\"sensors\", entities=[\"sensor.temp\"], name=\"All Sensors\")\n- Update name: ha_config_set_group(\"lights\", name=\"Living Room Lights\")\n- Add entities: ha_config_set_group(\"lights\", add_entities=[\"light.extra\"])\n- Remove entities: ha_config_set_group(\"lights\", remove_entities=[\"light.old\"])\n- Replace all entities: ha_config_set_group(\"lights\", entities=[\"light.new1\", \"light.new2\"])\n\n**NOTE:** entities, add_entities, and remove_entities are mutually exclusive.",
+    "inputSchema": {
+      "properties": {
+        "object_id": {
+          "description": "Group identifier without 'group.' prefix (e.g., 'living_room_lights')",
+          "type": "string"
+        },
+        "entities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of entity IDs for the group. Required when creating new group. When updating, replaces all entities (mutually exclusive with add_entities/remove_entities)."
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Friendly display name for the group"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:lightbulb-group')"
+        },
+        "all_on": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "If True, all entities must be on for group to be on (default: False)"
+        },
+        "add_entities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Add these entities to an existing group (mutually exclusive with entities)"
+        },
+        "remove_entities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Remove these entities from an existing group (mutually exclusive with entities)"
+        }
+      },
+      "required": [
+        "object_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Group' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['group']"
+  },
+  {
+    "name": "ha_config_set_helper",
+    "description": "Create or update Home Assistant helper entities.\n\nCreates new helper if helper_id is omitted, updates existing if helper_id is provided.\nParameters are validated by Home Assistant - errors return clear messages.\n\nQUICK EXAMPLES:\n- ha_config_set_helper(\"input_boolean\", \"My Switch\", icon=\"mdi:toggle-switch\")\n- ha_config_set_helper(\"counter\", \"My Counter\", initial=0, step=1)\n- ha_config_set_helper(\"timer\", \"Laundry\", duration=\"0:45:00\")\n- ha_config_set_helper(\"zone\", \"Office\", latitude=37.77, longitude=-122.41, radius=100)\n- ha_config_set_helper(\"schedule\", \"Work\", monday=[{\"from\": \"09:00\", \"to\": \"17:00\"}])\n\nPREFER BUILT-IN HELPERS OVER TEMPLATE SENSORS:\nBefore creating a template sensor, check if a built-in helper/integration exists:\n- Use `min_max` integration (type: mean/min/max/sum) instead of template for combining sensors\n- Use `group` instead of template binary sensor for any/all logic\n- Use `counter` instead of template with math for counting\n- Use `input_number` instead of template for storing values\n- Use `schedule` instead of template with weekday checks\n\nFor detailed parameter info: ha_get_domain_docs(\"counter\"), ha_get_domain_docs(\"zone\"), etc.",
+    "inputSchema": {
+      "properties": {
+        "helper_type": {
+          "description": "Type of helper entity to create or update",
+          "enum": [
+            "input_button",
+            "input_boolean",
+            "input_select",
+            "input_number",
+            "input_text",
+            "input_datetime",
+            "counter",
+            "timer",
+            "schedule",
+            "zone",
+            "person",
+            "tag"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name for the helper",
+          "type": "string"
+        },
+        "helper_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Helper ID for updates (e.g., 'my_button' or 'input_button.my_button'). If not provided, creates a new helper."
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:bell', 'mdi:toggle-switch')"
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Area/room ID to assign the helper to"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Labels to categorize the helper"
+        },
+        "min_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum value (input_number/counter) or minimum length (input_text)"
+        },
+        "max_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum value (input_number/counter) or maximum length (input_text)"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step/increment value for input_number or counter"
+        },
+        "unit_of_measurement": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Unit of measurement for input_number (e.g., '\u00b0C', '%', 'W')"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of options for input_select (required for input_select)"
+        },
+        "initial": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Initial value for the helper (input_select, input_text, input_boolean, input_datetime, counter)"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Display mode: 'box'/'slider' for input_number, 'text'/'password' for input_text"
+        },
+        "has_date": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Include date component for input_datetime"
+        },
+        "has_time": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Include time component for input_datetime"
+        },
+        "restore": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Restore state after restart (counter, timer). Defaults to True for counter, False for timer"
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default duration for timer in format 'HH:MM:SS' or seconds (e.g., '0:05:00' for 5 minutes)"
+        },
+        "monday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Monday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "tuesday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Tuesday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "wednesday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Wednesday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "thursday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Thursday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "friday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Friday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "saturday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Saturday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "sunday": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schedule time ranges for Sunday. List of {'from': 'HH:MM', 'to': 'HH:MM'} dicts"
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Latitude for zone (required for zone)"
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longitude for zone (required for zone)"
+        },
+        "radius": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Radius in meters for zone (default: 100)"
+        },
+        "passive": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Passive zone (won't trigger state changes for person entities)"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "User ID to link to person entity"
+        },
+        "device_trackers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of device_tracker entity IDs for person"
+        },
+        "picture": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Picture URL for person entity"
+        },
+        "tag_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tag ID for tag (auto-generated if not provided)"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Description for tag"
+        }
+      },
+      "required": [
+        "helper_type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Helper' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['helper']"
+  },
+  {
+    "name": "ha_config_set_inline_dashboard_resource",
+    "description": "Create or update an inline dashboard resource from code.\n\nConverts inline JavaScript or CSS into a hosted URL and registers it\nin Home Assistant. The code is embedded in the URL (via Cloudflare Worker)\nso no file storage is needed.\n\nWHEN TO USE:\n- Custom card code you've written inline\n- CSS styling for dashboards\n- Small utility modules (<24KB)\n\nFor larger files or external cards, use ha_config_set_dashboard_resource\nwith a URL to /local/, /hacsfiles/, or external CDN.\n\nEXAMPLES:\n\nCreate a custom card:\nha_config_set_inline_dashboard_resource(\n    content=\"\"\"\n    class MyCard extends HTMLElement {\n      setConfig(config) { this.config = config; }\n      set hass(hass) {\n        this.innerHTML = `<ha-card>Hello ${hass.states[this.config.entity]?.state}</ha-card>`;\n      }\n    }\n    customElements.define('my-card', MyCard);\n    \"\"\",\n    resource_type=\"module\"\n)\n\nUpdate existing resource:\nha_config_set_inline_dashboard_resource(\n    content=\"/* updated CSS */\",\n    resource_type=\"css\",\n    resource_id=\"abc123\"\n)\n\nNotes:\n- URLs are deterministic (same content = same URL)\n- Content is decoded on-the-fly, not stored\n- Max size: ~24KB source code\n- Use ha_get_dashboard_guide for custom card patterns",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "JavaScript or CSS code to host (max ~24KB)",
+          "type": "string"
+        },
+        "resource_type": {
+          "default": "module",
+          "description": "Resource type: 'module' for ES6 JavaScript (custom cards), 'css' for stylesheets",
+          "enum": [
+            "module",
+            "css"
+          ],
+          "type": "string"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resource ID to update. If omitted, creates a new resource. Get IDs from ha_config_list_dashboard_resources()"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Set Inline Dashboard Resource' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['dashboard', 'resources']"
+  },
+  {
+    "name": "ha_config_set_label",
+    "description": "Create or update a Home Assistant label.\n\nCreates a new label if label_id is not provided, or updates an existing label if label_id is provided.\n\nLabels are a flexible tagging system that can be applied to entities,\ndevices, and areas for organization and automation purposes.\n\nEXAMPLES:\n- Create simple label: ha_config_set_label(\"Critical\")\n- Create colored label: ha_config_set_label(\"Outdoor\", color=\"green\")\n- Create label with icon: ha_config_set_label(\"Battery Powered\", icon=\"mdi:battery\")\n- Create full label: ha_config_set_label(\"Security\", color=\"red\", icon=\"mdi:shield\", description=\"Security-related devices\")\n- Update label: ha_config_set_label(\"Updated Name\", label_id=\"my_label_id\", color=\"blue\")\n\nAfter creating a label, use ha_set_entity(labels=[\"label_id\"]) to assign it to entities.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Display name for the label",
+          "type": "string"
+        },
+        "label_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Label ID for updates. If not provided, creates a new label."
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Color for the label (e.g., 'red', 'blue', 'green', or hex like '#FF5733')"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:tag', 'mdi:label')"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Description of the label's purpose"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Label' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['label']"
+  },
+  {
+    "name": "ha_config_set_script",
+    "description": "Create or update a Home Assistant script.\n\nCreates a new script or updates an existing one with the provided configuration.\nSupports both regular scripts (with sequence) and blueprint-based scripts.\n\nRequired config fields (choose one):\n    - sequence: List of actions to execute (for regular scripts)\n    - use_blueprint: Blueprint configuration (for blueprint-based scripts)\n\nOptional config fields:\n    - alias: Display name (defaults to script_id)\n    - description: Script description\n    - icon: Icon to display\n    - mode: Execution mode ('single', 'restart', 'queued', 'parallel')\n    - max: Maximum concurrent executions (for queued/parallel modes)\n    - fields: Input parameters for the script\n\nIMPORTANT: The 'config' parameter must be passed as a proper dictionary/object.\n\nEXAMPLES:\n\nCreate basic delay script:\nha_config_set_script(\"wait_script\", {\n    \"sequence\": [{\"delay\": {\"seconds\": 5}}],\n    \"alias\": \"Wait 5 Seconds\",\n    \"description\": \"Simple delay script\"\n})\n\nCreate service call script:\nha_config_set_script(\"blink_light\", {\n    \"sequence\": [\n        {\"service\": \"light.turn_on\", \"target\": {\"entity_id\": \"light.living_room\"}},\n        {\"delay\": {\"seconds\": 2}},\n        {\"service\": \"light.turn_off\", \"target\": {\"entity_id\": \"light.living_room\"}}\n    ],\n    \"alias\": \"Light Blink\",\n    \"mode\": \"single\"\n})\n\nCreate script with parameters:\nha_config_set_script(\"backup_script\", {\n    \"alias\": \"Backup with Reference\",\n    \"description\": \"Create backup with optional reference parameter\",\n    \"fields\": {\n        \"reference\": {\n            \"name\": \"Reference\",\n            \"description\": \"Optional reference for backup identification\",\n            \"selector\": {\"text\": None}\n        }\n    },\n    \"sequence\": [\n        {\n            \"action\": \"hassio.backup_partial\",\n            \"data\": {\n                \"compressed\": False,\n                \"homeassistant\": True,\n                \"homeassistant_exclude_database\": True,\n                \"name\": \"Backup_{{ reference | default('auto') }}_{{ now().strftime('%Y%m%d_%H%M%S') }}\"\n            }\n        }\n    ]\n})\n\nUpdate script:\nha_config_set_script(\"morning_routine\", {\n    \"sequence\": [\n        {\"service\": \"light.turn_on\", \"target\": {\"area_id\": \"bedroom\"}},\n        {\"service\": \"climate.set_temperature\", \"target\": {\"entity_id\": \"climate.bedroom\"}, \"data\": {\"temperature\": 22}}\n    ],\n    \"alias\": \"Updated Morning Routine\"\n})\n\nCreate blueprint-based script:\nha_config_set_script(\"notification_script\", {\n    \"alias\": \"My Notification Script\",\n    \"use_blueprint\": {\n        \"path\": \"notification_script.yaml\",\n        \"input\": {\n            \"message\": \"Hello World\",\n            \"title\": \"Test Notification\"\n        }\n    }\n})\n\nUpdate blueprint script inputs:\nha_config_set_script(\"notification_script\", {\n    \"alias\": \"My Notification Script\",\n    \"use_blueprint\": {\n        \"path\": \"notification_script.yaml\",\n        \"input\": {\n            \"message\": \"Updated message\",\n            \"title\": \"Updated Title\"\n        }\n    }\n})\n\nPREFER NATIVE ACTIONS OVER TEMPLATES:\nBefore using template-based logic in scripts, check if native actions exist:\n- Use `choose` action instead of template-based service names\n- Use `if/then/else` action instead of template conditions\n- Use `repeat` action with `for_each` instead of template loops\n- Use `wait_for_trigger` instead of `wait_template` when waiting for state changes\n- Use native action variables instead of complex template calculations\n\nFor detailed script configuration help, use: ha_get_domain_docs(\"script\")\n\nNote: Scripts use Home Assistant's action syntax. Check the documentation for advanced\nfeatures like conditions, variables, parallel execution, and service call options.",
+    "inputSchema": {
+      "properties": {
+        "script_id": {
+          "description": "Script identifier (e.g., 'morning_routine')",
+          "type": "string"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ],
+          "description": "Script configuration dictionary. Must include EITHER 'sequence' (for regular scripts) OR 'use_blueprint' (for blueprint-based scripts). Optional fields: 'alias', 'description', 'icon', 'mode', 'max', 'fields'"
+        }
+      },
+      "required": [
+        "script_id",
+        "config"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create or Update Script' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['script']"
+  },
+  {
+    "name": "ha_config_update_dashboard_metadata",
+    "description": "Update dashboard metadata (title, icon, permissions) without changing content.\n\nUpdates dashboard properties without modifying the actual configuration\n(views/cards). At least one field must be provided.\n\nEXAMPLES:\n\nChange dashboard title:\nha_config_update_dashboard_metadata(\n    dashboard_id=\"mobile-dashboard\",\n    title=\"Mobile View v2\"\n)\n\nUpdate multiple properties:\nha_config_update_dashboard_metadata(\n    dashboard_id=\"admin-panel\",\n    title=\"Admin Dashboard\",\n    icon=\"mdi:shield-account\",\n    require_admin=True\n)\n\nHide from sidebar:\nha_config_update_dashboard_metadata(\n    dashboard_id=\"hidden-dashboard\",\n    show_in_sidebar=False\n)",
+    "inputSchema": {
+      "properties": {
+        "dashboard_id": {
+          "description": "Dashboard ID (typically same as url_path)",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New dashboard title"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New MDI icon name"
+        },
+        "require_admin": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Update admin requirement"
+        },
+        "show_in_sidebar": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Update sidebar visibility"
+        }
+      },
+      "required": [
+        "dashboard_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Update Dashboard Metadata' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['dashboard']"
+  },
+  {
+    "name": "ha_create_config_entry_helper",
+    "description": "Create Config Entry Flow helper (template, group, utility_meter, etc.).\n\nSupports 15 helper types that use Config Entry Flow API.\nUse ha_get_helper_schema(helper_type) to discover required config fields.",
+    "inputSchema": {
+      "properties": {
+        "helper_type": {
+          "description": "Helper type",
+          "enum": [
+            "template",
+            "group",
+            "utility_meter",
+            "derivative",
+            "min_max",
+            "threshold",
+            "integration",
+            "statistics",
+            "trend",
+            "random",
+            "filter",
+            "tod",
+            "generic_thermostat",
+            "switch_as_x",
+            "generic_hygrostat"
+          ],
+          "type": "string"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ],
+          "description": "Helper config (JSON or dict)"
+        }
+      },
+      "required": [
+        "helper_type",
+        "config"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create Config Entry Helper' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['config']"
+  },
+  {
+    "name": "ha_create_zone",
+    "description": "Create a new Home Assistant zone for presence detection.\n\nZones are location-based areas that can trigger automations when\ndevices enter or exit. Common use cases include:\n- Home, Work, School locations\n- Gym, Shopping areas\n- Family members' locations\n\nEXAMPLES:\n- Create office zone: ha_create_zone(\"Office\", 40.7128, -74.0060, radius=150, icon=\"mdi:briefcase\")\n- Create gym zone: ha_create_zone(\"Gym\", 40.7580, -73.9855, radius=50, icon=\"mdi:dumbbell\")\n- Create passive zone: ha_create_zone(\"City Center\", 40.7484, -73.9857, radius=500, passive=True)\n\nNote: The 'home' zone is typically defined in configuration.yaml and cannot be created via this API.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Display name for the zone",
+          "type": "string"
+        },
+        "latitude": {
+          "description": "Latitude coordinate of the zone center",
+          "type": "number"
+        },
+        "longitude": {
+          "description": "Longitude coordinate of the zone center",
+          "type": "number"
+        },
+        "radius": {
+          "default": 100,
+          "description": "Radius of the zone in meters (default: 100)",
+          "type": "number"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Material Design Icon (e.g., 'mdi:briefcase', 'mdi:school')"
+        },
+        "passive": {
+          "default": false,
+          "description": "If True, zone will not trigger automations on enter/exit (default: False)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "latitude",
+        "longitude"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Create Zone' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['zone']"
+  },
+  {
+    "name": "ha_dashboard_find_card",
+    "description": "Find cards in a dashboard by entity_id, type, or heading text.\n\nReturns card locations (view_index, section_index, card_index) and jq_path\nfor use with ha_config_set_dashboard(jq_transform=...).\n\nUse this tool BEFORE targeted updates to find exact card positions without\nmanually parsing the full dashboard config.\n\nSEARCH CRITERIA (at least one required):\n- entity_id: Match cards containing this entity (supports wildcards with *)\n- card_type: Match cards of this type (e.g., 'tile', 'button', 'heading')\n- heading: Match cards with this text in heading/title (partial, case-insensitive)\n\nMultiple criteria are AND-ed together.\n\nEXAMPLES:\n\nFind all tile cards:\nha_dashboard_find_card(url_path=\"my-dashboard\", card_type=\"tile\")\n\nFind cards for a specific entity:\nha_dashboard_find_card(url_path=\"my-dashboard\", entity_id=\"light.living_room\")\n\nFind all temperature sensors (wildcard):\nha_dashboard_find_card(url_path=\"my-dashboard\", entity_id=\"sensor.temperature_*\")\n\nFind the \"Climate\" section heading:\nha_dashboard_find_card(url_path=\"my-dashboard\", heading=\"Climate\", card_type=\"heading\")\n\nWORKFLOW EXAMPLE:\n1. find = ha_dashboard_find_card(url_path=\"my-dash\", entity_id=\"light.bedroom\")\n2. # Use jq_path and config_hash from result to update:\n3. ha_config_set_dashboard(\n       url_path=\"my-dash\",\n       config_hash=find[\"config_hash\"],\n       jq_transform=f'{find[\"matches\"][0][\"jq_path\"]}.icon = \"mdi:lamp\"'\n   )",
+    "inputSchema": {
+      "properties": {
+        "url_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dashboard URL path, e.g. 'lovelace-home'. Omit for default."
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Find cards by entity ID. Supports wildcards, e.g. 'sensor.temperature_*'. Matches cards with this entity in 'entity' or 'entities' field."
+        },
+        "card_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Find cards by type, e.g. 'tile', 'button', 'heading'."
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Find cards by heading/title text (case-insensitive partial match). Useful for finding section headings (type: 'heading')."
+        },
+        "include_config": {
+          "default": false,
+          "description": "Include full card configuration in results (increases output size).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Find Dashboard Card' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard', 'card']"
+  },
+  {
+    "name": "ha_deep_search",
+    "description": "Deep search across automation, script, and helper definitions.\n\nSearches not only entity names but also within configuration definitions including\ntriggers, actions, sequences, and other config fields. Perfect for finding automations\nthat use specific services, helpers referenced in scripts, or tracking down where\nparticular entities are being used.\n\nArgs:\n    query: Search query (can be partial, with typos)\n    search_types: Types to search (list of strings, default: [\"automation\", \"script\", \"helper\"])\n    limit: Maximum total results to return (default: 20)\n\nExamples:\n    - Find automations using a service: ha_deep_search(\"light.turn_on\")\n    - Find scripts with delays: ha_deep_search(\"delay\")\n    - Find helpers with specific options: ha_deep_search(\"option_a\")\n    - Search all types for an entity: ha_deep_search(\"sensor.temperature\")\n    - Search only automations: ha_deep_search(\"motion\", search_types=[\"automation\"])\n\nReturns detailed matches with:\n    - match_in_name: True if query matched the entity name\n    - match_in_config: True if query matched within the configuration\n    - config: Full configuration for matched items\n    - score: Match quality score (higher is better)",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "search_types": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Types to search in: 'automation', 'script', 'helper'. Pass as a list of strings, e.g. ['automation'], or a JSON array string '[\"automation\"]'. Default: all types"
+        },
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Deep Search' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['search']"
+  },
+  {
+    "name": "ha_delete_config_entry",
+    "description": "Delete config entry permanently. Requires confirm=True.\n\nUse ha_get_integration() to find entry IDs.",
+    "inputSchema": {
+      "properties": {
+        "entry_id": {
+          "description": "Config entry ID",
+          "type": "string"
+        },
+        "confirm": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false,
+          "description": "Must be True to confirm deletion"
+        }
+      },
+      "required": [
+        "entry_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Delete Config Entry' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['integration']"
+  },
+  {
+    "name": "ha_delete_zone",
+    "description": "Delete a Home Assistant zone.\n\nEXAMPLES:\n- Delete zone: ha_delete_zone(\"abc123\")\n\n**WARNING:** Deleting a zone that is used in automations may cause those automations to fail.\nUse ha_get_zone() to get the zone_id for the zone you want to delete.\n\n**NOTE:** The 'home' zone cannot be deleted as it is typically defined in configuration.yaml.",
+    "inputSchema": {
+      "properties": {
+        "zone_id": {
+          "description": "Zone ID to delete (from ha_get_zone)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Delete Zone' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['zone']"
+  },
+  {
+    "name": "ha_eval_template",
+    "description": "Evaluate Jinja2 templates using Home Assistant's template engine.\n\nThis tool allows testing and debugging of Jinja2 template expressions that are commonly used in\nHome Assistant automations, scripts, and configurations. It provides real-time evaluation with\naccess to all Home Assistant states, functions, and template variables.\n\n**Parameters:**\n- template: The Jinja2 template string to evaluate\n- timeout: Maximum evaluation time in seconds (default: 3)\n- report_errors: Whether to return detailed error information (default: True)\n\n**Common Template Functions:**\n\n**State Access:**\n```jinja2\n{{ states('sensor.temperature') }}              # Get entity state value\n{{ states.sensor.temperature.state }}           # Alternative syntax\n{{ state_attr('light.bedroom', 'brightness') }} # Get entity attribute\n{{ is_state('light.living_room', 'on') }}       # Check if entity has specific state\n```\n\n**Numeric Operations:**\n```jinja2\n{{ states('sensor.temperature') | float(0) }}   # Convert to float with default\n{{ states('sensor.humidity') | int }}           # Convert to integer\n{{ (states('sensor.temp') | float + 5) | round(1) }} # Math operations\n```\n\n**Time and Date:**\n```jinja2\n{{ now() }}                                     # Current datetime\n{{ now().strftime('%H:%M:%S') }}               # Format current time\n{{ as_timestamp(now()) }}                      # Convert to Unix timestamp\n{{ now().hour }}                               # Current hour (0-23)\n{{ now().weekday() }}                          # Day of week (0=Monday)\n```\n\n**Conditional Logic:**\n```jinja2\n{{ 'Day' if now().hour < 18 else 'Night' }}    # Ternary operator\n{% if is_state('sun.sun', 'above_horizon') %}\n  It's daytime\n{% else %}\n  It's nighttime\n{% endif %}\n```\n\n**Lists and Loops:**\n```jinja2\n{% for entity in states.light %}\n  {{ entity.entity_id }}: {{ entity.state }}\n{% endfor %}\n\n{{ states.light | selectattr('state', 'eq', 'on') | list | count }} # Count on lights\n```\n\n**String Operations:**\n```jinja2\n{{ states('sensor.weather') | title }}         # Title case\n{{ 'Hello ' + states('input_text.name') }}     # String concatenation\n{{ states('sensor.data') | regex_replace('pattern', 'replacement') }}\n```\n\n**Device and Area Functions:**\n```jinja2\n{{ device_entities('device_id_here') }}        # Get entities for device\n{{ area_entities('living_room') }}             # Get entities in area\n{{ device_id('light.bedroom') }}               # Get device ID for entity\n```\n\n**Common Use Cases:**\n\n**Automation Conditions:**\n```jinja2\n# Check if it's a workday and after 7 AM\n{{ is_state('binary_sensor.workday', 'on') and now().hour >= 7 }}\n\n# Temperature-based condition\n{{ states('sensor.outdoor_temp') | float < 0 }}\n```\n\n**Dynamic Service Data:**\n```jinja2\n# Dynamic brightness based on time\n{{ 255 if now().hour < 22 else 50 }}\n\n# Message with current values\n\"Temperature is {{ states('sensor.temp') }}\u00b0C, humidity {{ states('sensor.humidity') }}%\"\n```\n\n**Examples:**\n\n**Test basic state access:**\n```python\nha_eval_template(\"{{ states('light.living_room') }}\")\n```\n\n**Test conditional logic:**\n```python\nha_eval_template(\"{{ 'Day' if now().hour < 18 else 'Night' }}\")\n```\n\n**Test mathematical operations:**\n```python\nha_eval_template(\"{{ (states('sensor.temperature') | float + 5) | round(1) }}\")\n```\n\n**Test complex automation condition:**\n```python\nha_eval_template(\"{{ is_state('binary_sensor.workday', 'on') and now().hour >= 7 and states('sensor.temperature') | float > 20 }}\")\n```\n\n**Test entity counting:**\n```python\nha_eval_template(\"{{ states.light | selectattr('state', 'eq', 'on') | list | count }}\")\n```\n\n**IMPORTANT NOTES:**\n- Templates have access to all current Home Assistant states and attributes\n- Use this tool to test templates before using them in automations or scripts\n- Template evaluation respects Home Assistant's security model and timeouts\n- Complex templates may affect Home Assistant performance - keep them efficient\n- Use default values (e.g., `| float(0)`) to handle missing or invalid states\n\n**For template documentation:** https://www.home-assistant.io/docs/configuration/templating/",
+    "inputSchema": {
+      "properties": {
+        "template": {
+          "type": "string"
+        },
+        "timeout": {
+          "default": 3,
+          "type": "integer"
+        },
+        "report_errors": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": true
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Evaluate Template' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['docs']"
+  },
+  {
+    "name": "ha_get_addon",
+    "description": "Get Home Assistant add-ons - list installed or available from store.\n\nThis tool retrieves add-on information based on the source parameter:\n- source='installed' (default): Lists currently installed add-ons\n- source='available': Lists add-ons available in the add-on store\n\n**Note:** This tool only works with Home Assistant OS or Supervised installations.\n\n**INSTALLED ADD-ONS (source='installed'):**\nReturns add-ons with version, state (started/stopped), and update availability.\n- include_stats: Optionally include CPU/memory usage statistics\n\n**AVAILABLE ADD-ONS (source='available'):**\nReturns add-ons from official and custom repositories that can be installed.\n- repository: Filter by repository slug (e.g., 'core', 'community')\n- query: Search by name or description (case-insensitive)\n\n**Example Usage:**\n- List installed add-ons: ha_get_addon()\n- List with resource usage: ha_get_addon(include_stats=True)\n- List available add-ons: ha_get_addon(source=\"available\")\n- Search for MQTT: ha_get_addon(source=\"available\", query=\"mqtt\")\n- List official add-ons: ha_get_addon(source=\"available\", repository=\"core\")\n\n**Use Cases:**\n- Check which add-ons are installed and running\n- Monitor add-on health and resource usage\n- Find add-ons with available updates\n- Find add-ons to recommend for user's needs\n- Check if a specific add-on is available",
+    "inputSchema": {
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Add-on source: 'installed' (default) for currently installed add-ons, 'available' for add-ons in the store that can be installed."
+        },
+        "include_stats": {
+          "default": false,
+          "description": "Include CPU/memory usage statistics (only for source='installed')",
+          "type": "boolean"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by repository slug, e.g., 'core', 'community' (only for source='available')"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Search filter for add-on names/descriptions (only for source='available')"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Add-ons' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['addon']"
+  },
+  {
+    "name": "ha_get_automation_traces",
+    "description": "Retrieve execution traces for automations and scripts to debug issues.\n\nTraces show what happened during automation/script runs:\n- What triggered the automation\n- Which conditions passed or failed\n- What actions were executed\n- Any errors that occurred\n- Variable values during execution\n\nUSAGE MODES:\n\n1. List recent traces (omit run_id):\n   ha_get_automation_traces(\"automation.motion_light\")\n   Returns a summary of recent execution runs with timestamps, triggers, and status.\n\n2. Get detailed trace (provide run_id):\n   ha_get_automation_traces(\"automation.motion_light\", run_id=\"1705312800.123456\")\n   Returns full execution details including trigger info, condition results,\n   action trace with timing, and context variables.\n\nDEBUGGING EXAMPLES:\n\nAutomation not triggering:\n- Check if traces exist (automation may not be triggered)\n- Look at trigger info to see what event was received\n\nAutomation runs but conditions fail:\n- Get detailed trace to see condition_results\n- Each condition shows whether it passed (true) or failed (false)\n\nUnexpected behavior in actions:\n- Get detailed trace to see action_trace\n- Shows each action step with result and any errors\n- For 'choose' actions, shows which branch was taken\n\nTemplate debugging:\n- Detailed trace shows evaluated template values in context\n- Trigger variables available under trigger_variables\n\nNOTES:\n- Traces are stored for a limited time by Home Assistant\n- Works for both automations and scripts (use full entity_id)\n- The 'state' field shows: 'stopped' (completed), 'running', or error state",
+    "inputSchema": {
+      "properties": {
+        "automation_id": {
+          "description": "Automation or script entity_id (e.g., 'automation.motion_light' or 'script.morning_routine')",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific trace run_id to retrieve detailed trace. Omit to list recent traces."
+        },
+        "limit": {
+          "default": 10,
+          "description": "Maximum number of traces to return when listing (default: 10, max: 50)",
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "automation_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Automation Traces' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['trace']"
+  },
+  {
+    "name": "ha_get_blueprint",
+    "description": "Get blueprint information - list all blueprints or get details for a specific one.\n\nWithout a path: Lists all installed blueprints for the specified domain.\nWith a path: Retrieves full blueprint configuration including inputs, triggers,\nconditions, and actions.\n\nEXAMPLES:\n- List all automation blueprints: ha_get_blueprint(domain=\"automation\")\n- List script blueprints: ha_get_blueprint(domain=\"script\")\n- Get specific blueprint: ha_get_blueprint(path=\"homeassistant/motion_light.yaml\", domain=\"automation\")\n\nRETURNS (when listing):\n- List of blueprints with path, name, and domain information\n- Count of blueprints found\n\nRETURNS (when getting specific blueprint):\n- Blueprint metadata (name, description, author, source_url)\n- Input definitions with selectors and defaults\n- Blueprint configuration (triggers, conditions, actions for automations; sequence for scripts)",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Blueprint path to get details for (e.g., 'homeassistant/motion_light.yaml'). If omitted, lists all blueprints in the domain."
+        },
+        "domain": {
+          "default": "automation",
+          "description": "Blueprint domain: 'automation' or 'script'",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Blueprint' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['blueprint']"
+  },
+  {
+    "name": "ha_get_bulk_status",
+    "description": "Check status of multiple device control operations.\n\nUse this tool to check the status of operations initiated by ha_bulk_control\nor control_device_smart. Each of these tools returns unique operation_ids\nthat can be tracked here.\n\n**IMPORTANT:** This tool is for tracking async device operations, NOT for\nchecking current entity states. To get current states of entities, use\nha_get_state instead.\n\n**Args:**\n    operation_ids: List of operation IDs returned by ha_bulk_control or\n                  control_device_smart (e.g., [\"op_1234\", \"op_5678\"])\n\n**Returns:**\n    Status summary with completion/pending/failed counts and detailed\n    results for each operation.\n\n**Example:**\n    # After calling control_device_smart\n    result = control_device_smart(\"light.kitchen\", \"on\")\n    op_id = result[\"operation_id\"]  # e.g., \"op_1234\"\n\n    # Check operation status\n    status = ha_get_bulk_status([op_id])",
+    "inputSchema": {
+      "properties": {
+        "operation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operation_ids"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Bulk Operation Status' readOnlyHint=True destructiveHint=None idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_get_camera_image",
+    "description": "Retrieve a snapshot image from a Home Assistant camera entity.\n\nThis tool fetches the current camera image and returns it directly for visual\nanalysis. Use this when you need to see what a camera is currently viewing.\n\n**Parameters:**\n- entity_id: Camera entity ID (e.g., 'camera.front_door', 'camera.living_room')\n- width: Optional width to resize the image (reduces token usage for large images)\n- height: Optional height to resize the image\n\n**Use Cases:**\n- Security checks: \"Is someone at the front door?\"\n- Pet monitoring: \"Is my dog still on the couch?\"\n- Delivery verification: \"Did my package get delivered?\"\n- Visual confirmation: \"Did the garage door actually close?\"\n- Incident investigation: \"What triggered the motion sensor?\"\n\n**Example Usage:**\n```python\n# Get current snapshot from front door camera\nha_get_camera_image(entity_id=\"camera.front_door\")\n\n# Get resized image to reduce token usage\nha_get_camera_image(entity_id=\"camera.backyard\", width=640, height=480)\n```\n\n**Notes:**\n- Only cameras exposed to Home Assistant are accessible\n- The existing HA authentication/authorization applies\n- Images are returned in their native format (JPEG, PNG, or GIF)\n- Use width/height parameters for large high-resolution cameras to reduce\n  token usage when full resolution is not needed\n\n**Related Services:**\n- camera.snapshot: Save snapshot to file on HA server\n- camera.turn_on/turn_off: Control camera power\n- camera.enable_motion_detection: Enable motion detection",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Camera Image' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['camera']"
+  },
+  {
+    "name": "ha_get_card_documentation",
+    "description": "Fetch detailed documentation for a specific dashboard card type.\n\nReturns the official Home Assistant documentation for the specified card type\nin markdown format, fetched directly from the Home Assistant documentation repository.\n\nEXAMPLES:\n- Get light card docs: ha_get_card_documentation(\"light\")\n- Get thermostat card docs: ha_get_card_documentation(\"thermostat\")\n- Get entity card docs: ha_get_card_documentation(\"entity\")\n\nFirst use ha_get_card_types() to see all 41 available card types.",
+    "inputSchema": {
+      "properties": {
+        "card_type": {
+          "description": "Card type name (e.g., 'light', 'thermostat', 'entity'). Use ha_get_card_types() to see all available types.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "card_type"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Card Documentation' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard', 'docs']"
+  },
+  {
+    "name": "ha_get_card_types",
+    "description": "Get list of all available Home Assistant dashboard card types.\n\nReturns all 41 card types that can be used in dashboard configurations.\n\nEXAMPLES:\n- Get card types: ha_get_card_types()\n\nUse ha_get_card_documentation(card_type) to get detailed docs for a specific card.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='Get Card Types' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard', 'docs']"
+  },
+  {
+    "name": "ha_get_dashboard_guide",
+    "description": "Get comprehensive guide for designing Home Assistant dashboards.\n\nCovers:\n- Part 1: Dashboard structure, views, sections, navigation\n- Part 2: Built-in cards (tile, grid, button), features, actions\n- Part 3: Custom cards (JavaScript modules, registration)\n- Part 4: CSS styling (themes, card-mod patterns)\n- Part 5: HACS integration (finding/installing community cards)\n- Part 6: Complete examples and workflows\n- Part 7: Visual iteration with Playwright/browser MCP for screenshots\n\nUse this guide before designing dashboards to understand\nall available options, from built-in cards to custom resources.\n\nRelated tools:\n- ha_create_dashboard_resource: Host inline JS/CSS\n- ha_hacs_search / ha_hacs_download: Community cards\n\nEXAMPLES:\n- Get full guide: ha_get_dashboard_guide()",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='Get Dashboard Guide' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['dashboard', 'docs', 'guide']"
+  },
+  {
+    "name": "ha_get_device",
+    "description": "Get device information - list all devices or get details for a specific one.\n\nWithout device_id/entity_id: Lists all devices with optional filters.\nWith device_id or entity_id: Returns detailed info for that specific device.\n\n**List all devices:**\n- All devices: ha_get_device()\n- By area: ha_get_device(area_id=\"living_room\")\n- By manufacturer: ha_get_device(manufacturer=\"Philips\")\n- By integration: ha_get_device(integration=\"zigbee2mqtt\")\n- Combined filters: ha_get_device(integration=\"zha\", area_id=\"kitchen\")\n\n**Single device lookup:**\n- By device_id: ha_get_device(device_id=\"abc123\")\n- By entity_id: ha_get_device(entity_id=\"light.living_room\")\n\n**Zigbee automation tips:**\n- ZHA triggers: Use `ieee_address` for zha_event triggers\n- Z2M triggers: Use `friendly_name` for MQTT topics (zigbee2mqtt/{friendly_name}/action)\n\n**Returns (list mode):**\n- List of devices with device_id, name, manufacturer, model, area_id\n\n**Returns (single device):**\n- Full device details including integration_type, ieee_address, entities",
+    "inputSchema": {
+      "properties": {
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Device ID to retrieve details for. If omitted, lists devices."
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Entity ID to find the associated device for (e.g., 'light.living_room')"
+        },
+        "integration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter devices by integration: 'zha', 'zigbee2mqtt', 'mqtt', 'hue', etc."
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter devices by area ID (e.g., 'living_room')"
+        },
+        "manufacturer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter devices by manufacturer name (e.g., 'Philips')"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Device' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['system', 'zigbee']"
+  },
+  {
+    "name": "ha_get_domain_docs",
+    "description": "Get comprehensive documentation for Home Assistant entity domains.",
+    "inputSchema": {
+      "properties": {
+        "domain": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Domain Docs' readOnlyHint=True destructiveHint=None idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_get_entity",
+    "description": "Get entity registry information for one or more entities.\n\nReturns detailed entity registry metadata including area assignment,\ncustom name/icon, enabled/hidden state, aliases, labels, and more.\n\nRELATED TOOLS:\n- ha_set_entity(): Modify entity properties (area, name, icon, enabled, hidden, aliases)\n- ha_get_state(): Get current state/attributes (on/off, temperature, etc.)\n- ha_search_entities(): Find entities by name, domain, or area\n\nEXAMPLES:\n- Single entity: ha_get_entity(\"sensor.temperature\")\n- Multiple entities: ha_get_entity([\"light.living_room\", \"switch.porch\"])\n\nRESPONSE FIELDS:\n- entity_id: Full entity identifier\n- name: Custom display name (null if using original_name)\n- original_name: Default name from integration\n- icon: Custom icon (null if using default)\n- area_id: Assigned area/room ID (null if unassigned)\n- disabled_by: Why disabled (null=enabled, \"user\"/\"integration\"/etc)\n- hidden_by: Why hidden (null=visible, \"user\"/\"integration\"/etc)\n- enabled: Boolean shorthand (True if disabled_by is null)\n- hidden: Boolean shorthand (True if hidden_by is not null)\n- aliases: Voice assistant aliases\n- labels: Assigned label IDs\n- platform: Integration platform (e.g., \"hue\", \"zwave_js\")\n- device_id: Associated device ID (null if standalone)\n- unique_id: Integration's unique identifier",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Entity ID or list of entity IDs to retrieve (e.g., 'sensor.temperature' or ['light.living_room', 'switch.porch'])"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Entity' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['entity']"
+  },
+  {
+    "name": "ha_get_entity_exposure",
+    "description": "Get entity exposure settings - list all or get settings for a specific entity.\n\nWithout an entity_id: Lists all entities and their exposure status to\nvoice assistants (Alexa, Google Assistant, Assist).\n\nWith an entity_id: Returns which voice assistants the specific entity\nis exposed to.\n\nEXAMPLES:\n- List all exposures: ha_get_entity_exposure()\n- Filter by assistant: ha_get_entity_exposure(assistant=\"cloud.alexa\")\n- Get specific entity: ha_get_entity_exposure(entity_id=\"light.living_room\")\n\nRETURNS (when listing):\n- exposed_entities: Dict mapping entity_ids to their exposure status\n- summary: Count of entities exposed to each assistant\n\nRETURNS (when getting specific entity):\n- exposed_to: Dict of assistant -> True/False for each assistant\n- is_exposed_anywhere: True if exposed to at least one assistant",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Entity ID to check exposure settings for. If omitted, lists all entities with exposure settings."
+        },
+        "assistant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by assistant: 'conversation', 'cloud.alexa', or 'cloud.google_assistant'. If not specified, returns all."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Entity Exposure' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None"
+  },
+  {
+    "name": "ha_get_helper_schema",
+    "description": "Get configuration schema for a helper type.\n\nReturns the form fields and their types needed to create this helper.\nUse before ha_create_config_entry_helper to understand required config.",
+    "inputSchema": {
+      "properties": {
+        "helper_type": {
+          "description": "Helper type",
+          "enum": [
+            "template",
+            "group",
+            "utility_meter",
+            "derivative",
+            "min_max",
+            "threshold",
+            "integration",
+            "statistics",
+            "trend",
+            "random",
+            "filter",
+            "tod",
+            "generic_thermostat",
+            "switch_as_x",
+            "generic_hygrostat"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "helper_type"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Helper Schema' readOnlyHint=True destructiveHint=None idempotentHint=None openWorldHint=None tags=['config']"
+  },
+  {
+    "name": "ha_get_history",
+    "description": "Retrieve raw state change history for entities (last ~10 days).\n\nReturns the full-resolution state history from Home Assistant's recorder.\nThis data shows every individual state change for the specified entities.\n\n**Data Characteristics:**\n- Full resolution: Every state transition captured\n- Retention: ~10 days (configurable via recorder.purge_keep_days)\n- Best for: Troubleshooting, pattern analysis, specific event queries\n\n**Parameters:**\n- entity_ids: Entity ID(s) to query (required)\n- start_time: Start of period - ISO datetime or relative ('24h', '7d', '2w'). Default: 24h ago\n- end_time: End of period - ISO datetime. Default: now\n- minimal_response: Omit attributes for smaller response. Default: true\n- significant_changes_only: Filter to actual state changes. Default: true\n- limit: Max entries per entity. Default: 100, Max: 1000\n\n**Use Cases:**\n- \"Why was my bedroom cold last night?\" - Query temperature sensor history\n- \"Did my garage door open while I was away?\" - Check cover state changes\n- \"What time does motion usually trigger?\" - Analyze binary sensor patterns\n- \"Debug automation triggers\" - See exact state change sequence\n\n**Example:**\n```python\n# Get temperature history for the last 24 hours\nha_get_history(entity_ids=\"sensor.bedroom_temperature\")\n\n# Get multiple entity history for last 7 days\nha_get_history(\n    entity_ids=[\"sensor.temperature\", \"sensor.humidity\"],\n    start_time=\"7d\",\n    limit=500\n)\n\n# Get full attributes for debugging\nha_get_history(\n    entity_ids=\"light.living_room\",\n    start_time=\"2025-01-25T00:00:00Z\",\n    end_time=\"2025-01-26T00:00:00Z\",\n    minimal_response=False\n)\n```\n\n**Note:** For long-term trends (>10 days), use ha_get_statistics() instead.\n\n**Returns:**\n- List of entities with their state history\n- Each entity includes: entity_id, period, states array, count",
+    "inputSchema": {
+      "properties": {
+        "entity_ids": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Entity ID(s) to query. Can be a single ID, comma-separated string, or JSON array."
+        },
+        "start_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start time: ISO datetime or relative (e.g., '24h', '7d', '2w'). Default: 24h ago"
+        },
+        "end_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End time: ISO datetime. Default: now"
+        },
+        "minimal_response": {
+          "default": true,
+          "description": "Return only states/timestamps without attributes. Default: true",
+          "type": "boolean"
+        },
+        "significant_changes_only": {
+          "default": true,
+          "description": "Filter to significant state changes only. Default: true",
+          "type": "boolean"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max state changes per entity. Default: 100, Max: 1000"
+        }
+      },
+      "required": [
+        "entity_ids"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Entity History' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['history']"
+  },
+  {
+    "name": "ha_get_integration",
+    "description": "Get integration (config entry) information - list all or get a specific one.\n\nWithout an entry_id: Lists all configured integrations with optional filters.\nWith an entry_id: Returns detailed information including full options/configuration.\n\nUse this to audit existing configurations (e.g. template sensor Jinja code).\nWhen creating new functionality, prefer UI-based helpers over templates when possible.\n\nEXAMPLES:\n- List all integrations: ha_get_integration()\n- Search integrations: ha_get_integration(query=\"zigbee\")\n- Get specific entry: ha_get_integration(entry_id=\"abc123\")\n- List template entries with definitions: ha_get_integration(domain=\"template\")\n- List all with options: ha_get_integration(include_options=True)\n\nSTATES: 'loaded' (running), 'setup_error', 'setup_retry', 'not_loaded',\n'failed_unload', 'migration_error'.\n\nRETURNS (when listing):\n- entries: List of integrations with domain, title, state, capabilities\n- state_summary: Count of entries in each state\n- When domain filter or include_options is set, each entry includes the 'options' object\n\nRETURNS (when getting specific entry):\n- entry: Full config entry details including options/configuration",
+    "inputSchema": {
+      "properties": {
+        "entry_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Config entry ID to get details for. If omitted, lists all integrations."
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When listing, fuzzy search by domain or title."
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by integration domain (e.g. 'template', 'group'). When set, includes the full options/configuration for each entry."
+        },
+        "include_options": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false,
+          "description": "Include the options object for each entry. Automatically enabled when domain filter is set. Useful for auditing template definitions and helper configurations."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Integration' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['integration']"
+  },
+  {
+    "name": "ha_get_logbook",
+    "description": "Get Home Assistant logbook entries for the specified time period.\n\nReturns paginated logbook entries to prevent excessively large responses.\n\n**Parameters:**\n- hours_back: Number of hours to look back (default: 1)\n- entity_id: Optional entity ID to filter entries\n- end_time: Optional end time in ISO format (defaults to now)\n- limit: Maximum number of entries to return (default: 50, max: 500)\n- offset: Number of entries to skip for pagination (default: 0)\n\n**Pagination:**\nWhen the logbook has more entries than the limit, use offset to get\nadditional pages. The response includes `has_more` to indicate if\nmore entries are available.\n\n**IMPORTANT - Pagination Stability:**\nPagination is performed client-side on the full result set returned\nby Home Assistant. If new logbook entries are created between page\nrequests, results may shift and items could be missed or duplicated\nacross pages. For best results, use consistent time ranges (start/end)\nand retrieve pages in quick succession.\n\n**Example:**\n- First page: ha_get_logbook(hours_back=24, limit=50, offset=0)\n- Second page: ha_get_logbook(hours_back=24, limit=50, offset=50)",
+    "inputSchema": {
+      "properties": {
+        "hours_back": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 1
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 0
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Logbook Entries' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['history']"
+  },
+  {
+    "name": "ha_get_operation_status",
+    "description": "Check status of device operation with real-time WebSocket verification.",
+    "inputSchema": {
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 10,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Operation Status' readOnlyHint=True destructiveHint=None idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_get_overview",
+    "description": "Get AI-friendly system overview with intelligent categorization.\n\nReturns comprehensive system information at the requested detail level,\nincluding Home Assistant base_url, version, location, timezone, and entity overview.\nUse 'standard' (default) for most queries. Optionally customize entity fields and limits.",
+    "inputSchema": {
+      "properties": {
+        "detail_level": {
+          "default": "standard",
+          "description": "Level of detail - 'minimal': 10 random entities per domain (friendly_name only); 'standard': ALL entities per domain (friendly_name only, default); 'full': ALL entities with entity_id + friendly_name + state",
+          "enum": [
+            "minimal",
+            "standard",
+            "full"
+          ],
+          "type": "string"
+        },
+        "max_entities_per_domain": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override max entities per domain (None = all). Minimal defaults to 10."
+        },
+        "include_state": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Include state field for entities (None = auto based on level). Full defaults to True."
+        },
+        "include_entity_id": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Include entity_id field for entities (None = auto based on level). Full defaults to True."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get System Overview' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['search']"
+  },
+  {
+    "name": "ha_get_state",
+    "description": "Get detailed state information for a Home Assistant entity with timezone metadata.",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Entity State' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['search']"
+  },
+  {
+    "name": "ha_get_statistics",
+    "description": "Retrieve pre-aggregated long-term statistics for trend analysis.\n\nReturns aggregated statistical data from Home Assistant's long-term statistics\ntable. This data is pre-computed and stored permanently, allowing analysis\nof historical trends beyond the standard ~10 day recorder retention.\n\n**Data Characteristics:**\n- Pre-aggregated: Hourly/daily/monthly statistics\n- Retention: Permanent - never purged\n- Entities: Only those with state_class (measurement, total, total_increasing)\n- Best for: Long-term trends, energy consumption, period comparisons\n\n**Parameters:**\n- entity_ids: Entity ID(s) with state_class attribute (required)\n- start_time: Start of period - ISO datetime or relative ('30d', '6m', '12m'). Default: 30d ago\n- end_time: End of period - ISO datetime. Default: now\n- period: Aggregation: '5minute', 'hour', 'day', 'week', 'month'. Default: 'day'\n- statistic_types: Types to include: 'mean', 'min', 'max', 'sum', 'state', 'change'. Default: all\n\n**Statistic Types Explained:**\n- mean: Average value over the period\n- min: Minimum value during the period\n- max: Maximum value during the period\n- sum: Running total (for total_increasing entities like energy)\n- state: Last known state value\n- change: Change from previous period\n\n**Use Cases:**\n- \"How much electricity did I use this month vs last month?\" - Monthly sum\n- \"What's my average living room temperature?\" - Daily/monthly mean\n- \"Show daily energy consumption for the past 2 weeks\" - Daily sum\n- \"Has my solar production declined year over year?\" - Monthly comparison\n\n**Example:**\n```python\n# Get daily energy statistics for last 30 days\nha_get_statistics(entity_ids=\"sensor.total_energy_kwh\")\n\n# Get monthly temperature averages for 6 months\nha_get_statistics(\n    entity_ids=\"sensor.living_room_temperature\",\n    start_time=\"6m\",\n    period=\"month\",\n    statistic_types=[\"mean\", \"min\", \"max\"]\n)\n\n# Compare multiple sensors\nha_get_statistics(\n    entity_ids=[\"sensor.solar_production\", \"sensor.grid_consumption\"],\n    start_time=\"12m\",\n    period=\"month\",\n    statistic_types=[\"sum\"]\n)\n```\n\n**Note:** Only entities with state_class attribute support statistics.\nUse ha_search_entities() to find entities and check their state_class.\n\n**Returns:**\n- List of entities with their statistics\n- Each includes: entity_id, period type, statistics array, unit_of_measurement",
+    "inputSchema": {
+      "properties": {
+        "entity_ids": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Entity ID(s) to query. Must have state_class attribute. Can be single ID, comma-separated, or JSON array."
+        },
+        "start_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start time: ISO datetime or relative (e.g., '30d', '6m', '12m'). Default: 30d ago"
+        },
+        "end_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End time: ISO datetime. Default: now"
+        },
+        "period": {
+          "default": "day",
+          "description": "Aggregation period: '5minute', 'hour', 'day', 'week', 'month'. Default: 'day'",
+          "type": "string"
+        },
+        "statistic_types": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Statistics types: 'mean', 'min', 'max', 'sum', 'state', 'change'. Default: all"
+        }
+      },
+      "required": [
+        "entity_ids"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get Statistics' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['history']"
+  },
+  {
+    "name": "ha_get_system_health",
+    "description": "Get Home Assistant system health information.\n\nReturns health check results from integrations, system resources, and connectivity.\nAvailable information varies by installation type and loaded integrations.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='Get System Health' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_get_todo",
+    "description": "Get todo lists or items - list all todo lists or get items from a specific list.\n\nWithout an entity_id: Lists all todo list entities in Home Assistant.\nWith an entity_id: Gets items from that specific todo list, optionally filtered by status.\n\n**LISTING TODO LISTS (entity_id omitted):**\nReturns all entities in the 'todo' domain, including shopping lists\nand any other todo-type integrations.\n\nEach todo list includes:\n- entity_id: The unique identifier (e.g., 'todo.shopping_list')\n- friendly_name: Human-readable name\n- state: Number of incomplete items or current status\n\n**GETTING TODO ITEMS (entity_id provided):**\nRetrieves items from the specified todo list.\n\nStatus filter values:\n- needs_action: Items that still need to be done\n- completed: Items that have been marked as done\n- None (default): Returns all items regardless of status\n\nItem properties:\n- uid: Unique identifier for the item\n- summary: The item text/description\n- status: Current status (needs_action or completed)\n- description: Optional detailed description\n- due: Optional due date (if supported)\n\nEXAMPLES:\n- List all todo lists: ha_get_todo()\n- Get all items: ha_get_todo(\"todo.shopping_list\")\n- Get incomplete items: ha_get_todo(\"todo.shopping_list\", status=\"needs_action\")\n- Get completed items: ha_get_todo(\"todo.shopping_list\", status=\"completed\")\n\nUSE CASES:\n- \"What todo lists do I have?\"\n- \"Show me my shopping list\"\n- \"What's on my todo list?\"\n- \"Show completed items\"",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Todo list entity ID (e.g., 'todo.shopping_list'). If omitted, lists all todo list entities."
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "needs_action",
+                "completed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter items by status: 'needs_action' for incomplete, 'completed' for done. Only applies when entity_id is provided."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Todo' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['todo']"
+  },
+  {
+    "name": "ha_get_updates",
+    "description": "Get update information - list all updates or get details for a specific one.\n\nWithout an entity_id: Lists all available updates across the system including\nHome Assistant Core, add-ons, device firmware, HACS, and OS updates.\n\nWith an entity_id: Returns detailed information about a specific update including\nversion info, category, and release notes (if available).\n\nEXAMPLES:\n- List all updates: ha_get_updates()\n- List including skipped: ha_get_updates(include_skipped=True)\n- Get specific update: ha_get_updates(entity_id=\"update.home_assistant_core_update\")\n\nRETURNS (when listing):\n- updates_available: Count of available updates\n- updates: List of update entities with version info\n- categories: Updates grouped by category (core, addons, devices, hacs, os)\n\nRETURNS (when getting specific update):\n- Update details including installed/latest versions\n- Release notes (fetched from WebSocket API or GitHub)\n- Category and installation status",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Update entity ID to get details for (e.g., 'update.home_assistant_core_update'). If omitted, lists all available updates."
+        },
+        "include_skipped": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false,
+          "description": "When listing all updates, include updates that have been skipped (default: False)"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Updates' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=True tags=['update']"
+  },
+  {
+    "name": "ha_get_zone",
+    "description": "Get zone information - list all zones or get details for a specific one.\n\nWithout a zone_id: Lists all Home Assistant zones with their coordinates and radius.\nWith a zone_id: Returns detailed configuration for a specific zone.\n\nZONE PROPERTIES:\n- ID, name, icon\n- Latitude, longitude, radius\n- Passive mode setting\n\nEXAMPLES:\n- List all zones: ha_get_zone()\n- Get specific zone: ha_get_zone(zone_id=\"abc123\")\n\n**NOTE:** This returns storage-based zones (created via UI/API), not YAML-defined zones.\nThe 'home' zone is typically defined in YAML and may not appear in this list.",
+    "inputSchema": {
+      "properties": {
+        "zone_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Zone ID to get details for (from ha_get_zone() list). If omitted, lists all zones."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Get Zone' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['zone']"
+  },
+  {
+    "name": "ha_hacs_add_repository",
+    "description": "Add a custom GitHub repository to HACS.\n\nAllows adding custom repositories that are not in the default HACS store.\nThis is useful for:\n- Adding custom integrations from GitHub\n- Installing custom Lovelace cards\n- Adding custom themes\n- Installing beta/development versions\n\n**Requirements:**\n- Repository must be a valid GitHub repository\n- Repository must follow HACS structure guidelines\n- Category must match the repository type\n\n**Examples:**\n```python\n# Add custom integration\nha_hacs_add_repository(\"owner/custom-integration\", category=\"integration\")\n\n# Add custom card\nha_hacs_add_repository(\"owner/custom-card\", category=\"lovelace\")\n\n# Add custom theme\nha_hacs_add_repository(\"owner/custom-theme\", category=\"theme\")\n```\n\nArgs:\n    repository: GitHub repository in format \"owner/repo\"\n    category: Repository category (integration, lovelace, theme, appdaemon, python_script)\n\nReturns:\n    Success status and repository ID if added successfully.",
+    "inputSchema": {
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "category": {
+          "description": "Repository category (required)",
+          "enum": [
+            "integration",
+            "lovelace",
+            "theme",
+            "appdaemon",
+            "python_script"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "category"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Add HACS Repository' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['hacs', 'management']"
+  },
+  {
+    "name": "ha_hacs_download",
+    "description": "Download and install a HACS repository.\n\nThis installs a repository from HACS to your Home Assistant instance.\nFor integrations, a restart of Home Assistant may be required after installation.\n\n**Prerequisites:**\n- The repository must already be in HACS (either from the default store or added via `ha_hacs_add_repository`)\n- Use `ha_hacs_search()` or `ha_hacs_list_installed()` to find the repository ID\n\n**Examples:**\n```python\n# Install latest version of a repository\nha_hacs_download(\"441028036\")\n\n# Install specific version\nha_hacs_download(\"441028036\", version=\"v2.0.0\")\n\n# Install by GitHub path (will look up the numeric ID)\nha_hacs_download(\"piitaya/lovelace-mushroom\", version=\"v4.0.0\")\n```\n\n**Note:** For integrations, you may need to restart Home Assistant after installation.\nFor Lovelace cards, clear your browser cache to see the new card.\n\nArgs:\n    repository_id: Repository numeric ID or GitHub path (e.g., \"441028036\" or \"owner/repo\")\n    version: Specific version to install (optional, defaults to latest)\n\nReturns:\n    Success status and installation details.",
+    "inputSchema": {
+      "properties": {
+        "repository_id": {
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific version to install (e.g., 'v1.2.3'). If not specified, installs the latest version."
+        }
+      },
+      "required": [
+        "repository_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Download/Install HACS Repository' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['hacs', 'management']"
+  },
+  {
+    "name": "ha_hacs_info",
+    "description": "Get HACS status, version, and enabled categories.\n\nReturns information about the HACS installation including:\n- Version number\n- Enabled categories (integration, lovelace, theme, etc.)\n- Stage (running, startup, etc.)\n- Lovelace mode\n- Disabled reason (if any)\n\nThis is useful for validating that HACS is installed and operational\nbefore using other HACS tools.\n\n**HACS Installation:**\nIf HACS is not installed, visit https://hacs.xyz/ for installation instructions.\n\nReturns:\n    Dictionary with HACS status information or error if HACS is not available.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": "title='Get HACS Info' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['hacs', 'info']"
+  },
+  {
+    "name": "ha_hacs_list_installed",
+    "description": "List installed HACS repositories with focused, small response.\n\n**DASHBOARD TIP:** Use `category=\"lovelace\"` to discover installed custom cards\nfor use with `ha_config_set_dashboard()`.\n\nReturns a list of installed repositories with key information:\n- name: Repository name\n- full_name: Full GitHub repository name (owner/repo)\n- category: Type of repository (integration, lovelace, theme, etc.)\n- installed_version: Currently installed version\n- available_version: Latest available version\n- pending_update: Whether an update is available\n- description: Repository description\n\n**Categories:**\n- `integration`: Custom integrations and components\n- `lovelace`: Custom dashboard cards and panels\n- `theme`: Custom themes for the UI\n- `appdaemon`: AppDaemon apps\n- `python_script`: Python scripts\n\nArgs:\n    category: Filter results by category (default: all categories)\n\nReturns:\n    List of installed HACS repositories or error if HACS is not available.",
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "integration",
+                "lovelace",
+                "theme",
+                "appdaemon",
+                "python_script"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by category: 'integration', 'lovelace', 'theme', 'appdaemon', or 'python_script'. Use None for all categories."
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='List HACS Installed' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['hacs', 'search']"
+  },
+  {
+    "name": "ha_hacs_repository_info",
+    "description": "Get detailed repository information including README and documentation.\n\nReturns comprehensive information about a HACS repository:\n- Basic info (name, description, category, authors)\n- Installation status and versions\n- README content (useful for configuration examples)\n- Available releases and versions\n- GitHub stats (stars, issues)\n- Configuration examples (if available)\n\n**Use Cases:**\n- Get card configuration examples: `ha_hacs_repository_info(\"441028036\")`\n- Check integration setup instructions\n- Find theme customization options\n\n**Note:** The repository_id is the numeric ID from HACS, not the GitHub path.\nUse `ha_hacs_list_installed()` or `ha_hacs_search()` to find the numeric ID.\n\nArgs:\n    repository_id: Repository numeric ID (e.g., \"441028036\") or GitHub path (e.g., \"dvd-dev/hilo\")\n\nReturns:\n    Detailed repository information or error if not found.",
+    "inputSchema": {
+      "properties": {
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Get HACS Repository Info' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['hacs', 'info']"
+  },
+  {
+    "name": "ha_hacs_search",
+    "description": "Search HACS store for repositories by keyword with pagination.\n\nSearches the HACS store for repositories matching the query string.\nReturns repository information including stars, downloads, and descriptions.\n\n**Use Cases:**\n- Find custom cards: `ha_hacs_search(\"mushroom\", category=\"lovelace\")`\n- Find integrations: `ha_hacs_search(\"nest\", category=\"integration\")`\n- Browse themes: `ha_hacs_search(\"dark\", category=\"theme\")`\n\nResults include:\n- name: Repository name\n- full_name: Full GitHub repository name\n- description: Repository description\n- category: Type of repository\n- stars: GitHub stars count\n- downloads: Number of HACS installations\n- authors: Repository authors\n- installed: Whether already installed\n\nArgs:\n    query: Search query (repository name, description, author)\n    category: Filter by category (optional)\n    max_results: Maximum results to return (default: 10, max: 100)\n\nReturns:\n    Search results from HACS store or error if HACS is not available.",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "integration",
+                "lovelace",
+                "theme",
+                "appdaemon",
+                "python_script"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by category (optional)"
+        },
+        "max_results": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 10,
+          "description": "Maximum number of results to return (default: 10, max: 100)"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Search HACS Store' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['hacs', 'search']"
+  },
+  {
+    "name": "ha_import_blueprint",
+    "description": "Import a blueprint from a URL.\n\nImports a blueprint from GitHub, Home Assistant Community forums,\nor any direct URL to a blueprint YAML file.\n\nEXAMPLES:\n- Import from GitHub: ha_import_blueprint(\"https://github.com/user/repo/blob/main/blueprint.yaml\")\n- Import from HA Community: ha_import_blueprint(\"https://community.home-assistant.io/t/motion-light/123456\")\n- Import direct YAML: ha_import_blueprint(\"https://example.com/my-blueprint.yaml\")\n\nSUPPORTED SOURCES:\n- GitHub repository URLs (will be converted to raw URLs)\n- Home Assistant Community forum posts with blueprint code\n- Direct URLs to YAML blueprint files\n\nRETURNS:\n- Import result with the blueprint path where it was saved\n- Blueprint metadata (name, domain, description)\n- Error details if import fails",
+    "inputSchema": {
+      "properties": {
+        "url": {
+          "description": "URL to import blueprint from (GitHub, Home Assistant Community, or direct YAML URL)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Import Blueprint' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['blueprint']"
+  },
+  {
+    "name": "ha_list_services",
+    "description": "List available Home Assistant services with their parameters.\n\nDiscovers services/actions that can be called via ha_call_service.\nReturns service definitions including field names, types, and descriptions.\n\nArgs:\n    domain: Filter by domain (e.g., 'light', 'switch', 'climate').\n           If not provided, returns services from all domains.\n    query: Search in service names and descriptions.\n           Matches against service IDs and their descriptions.\n\nReturns:\n    Dictionary with:\n    - success: Whether the operation succeeded\n    - domains: List of available domains (when no domain filter)\n    - services: Dictionary of service definitions keyed by domain.service\n    - total_count: Total number of services returned\n\nExamples:\n    # List all light services\n    ha_list_services(domain=\"light\")\n\n    # Search for services related to temperature\n    ha_list_services(query=\"temperature\")\n\n    # Get all available services (may be large)\n    ha_list_services()",
+    "inputSchema": {
+      "properties": {
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='List Available Services' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['service']"
+  },
+  {
+    "name": "ha_reload_core",
+    "description": "Reload Home Assistant configuration without full restart.\n\nThis tool reloads specific configuration components, allowing changes\nto take effect without restarting the entire Home Assistant instance.\nThis is much faster than a full restart.\n\n**Parameters:**\n- target: What to reload. Options:\n  - \"all\": Reload all reloadable components\n  - \"automations\": Reload automation configurations\n  - \"scripts\": Reload script configurations\n  - \"scenes\": Reload scene configurations\n  - \"groups\": Reload group configurations\n  - \"input_booleans\": Reload input_boolean helpers\n  - \"input_numbers\": Reload input_number helpers\n  - \"input_texts\": Reload input_text helpers\n  - \"input_selects\": Reload input_select helpers\n  - \"input_datetimes\": Reload input_datetime helpers\n  - \"input_buttons\": Reload input_button helpers\n  - \"timers\": Reload timer helpers\n  - \"counters\": Reload counter helpers\n  - \"templates\": Reload template sensors/entities\n  - \"persons\": Reload person configurations\n  - \"zones\": Reload zone configurations\n  - \"core\": Reload core configuration (customize, packages)\n  - \"themes\": Reload frontend themes\n\n**Example Usage:**\n```python\n# Reload just automations after editing\nha_reload_core(target=\"automations\")\n\n# Reload all configurations\nha_reload_core(target=\"all\")\n\n# Reload input helpers after adding new ones\nha_reload_core(target=\"input_booleans\")\n```\n\n**When to Use:**\n- After editing automation/script YAML files\n- After adding new input helpers via YAML\n- After modifying customize.yaml\n- After theme changes",
+    "inputSchema": {
+      "properties": {
+        "target": {
+          "default": "all",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Reload Core Components' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_remove_device",
+    "description": "Remove an orphaned device from the Home Assistant device registry.\n\nWARNING: This removes the device entry from the registry.\n- Use only for orphaned devices that are no longer connected\n- Active devices will typically be re-added by their integration\n- Associated entities may also be removed\n\nThis uses the config entry removal which is the safe way to remove devices.\nIf the device has multiple config entries, they must all be removed.\n\nEXAMPLES:\n- Remove orphaned device: ha_remove_device(\"abc123def456\")\n\nNOTE: For most use cases, consider disabling the device instead:\nha_update_device(device_id=\"abc123\", disabled_by=\"user\")",
+    "inputSchema": {
+      "properties": {
+        "device_id": {
+          "description": "Device ID to remove from the registry",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Device' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_remove_todo_item",
+    "description": "Remove an item from a Home Assistant todo list.\n\nPermanently deletes an item from the specified todo list.\n\nIDENTIFYING ITEMS:\n- Use the item's UID (from ha_get_todo)\n- Or use the exact item summary/name text\n\nEXAMPLES:\n- Remove by name: ha_remove_todo_item(\"todo.shopping_list\", \"Buy milk\")\n- Remove by UID: ha_remove_todo_item(\"todo.shopping_list\", \"abc123-uid\")\n\nUSE CASES:\n- \"Remove milk from my shopping list\"\n- \"Delete the eggs item\"\n- \"Clear 'call mom' from my todo\"\n\nWARNING: This permanently removes the item. To mark as completed instead,\nuse ha_update_todo_item() with status=\"completed\".",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Todo list entity ID (e.g., 'todo.shopping_list')",
+          "type": "string"
+        },
+        "item": {
+          "description": "Item to remove - can be the item UID or the exact item summary/name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "item"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Remove Todo Item' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['todo']"
+  },
+  {
+    "name": "ha_rename_entity",
+    "description": "Rename a Home Assistant entity by changing its entity_id.\n\nChanges the entity_id (e.g., light.old_name -> light.new_name).\nThe domain must remain the same - you cannot change a light to a switch.\n\nVOICE ASSISTANT EXPOSURE:\nBy default, this function preserves voice assistant exposure settings\n(Alexa, Google Assistant, Assist) when renaming. The exposure settings\nare stored separately from the entity registry and must be migrated\nmanually. Set preserve_voice_exposure=False to skip this migration.\n\nIMPORTANT LIMITATIONS:\n- References in automations/scripts/dashboards are NOT automatically updated\n- Entity history is preserved (HA 2022.4+)\n- Some entities cannot be renamed:\n  - Entities without unique IDs\n  - Entities disabled by integration\n\nEXAMPLES:\n- Rename light: ha_rename_entity(\"light.bedroom_1\", \"light.master_bedroom\")\n- Rename with friendly name: ha_rename_entity(\"sensor.temp\", \"sensor.living_room_temp\", name=\"Living Room Temperature\")\n- Rename without exposure migration: ha_rename_entity(\"light.old\", \"light.new\", preserve_voice_exposure=False)\n\nNOTE: This is different from renaming a device. Device and entity renaming are independent.\nRenaming a device does NOT rename its entities. See ha_update_device() for device renaming.\nFor renaming both entity and device together, use ha_rename_entity_and_device().",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Current entity ID to rename (e.g., 'light.old_name')",
+          "type": "string"
+        },
+        "new_entity_id": {
+          "description": "New entity ID (e.g., 'light.new_name'). Domain must match the original.",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional: New friendly name for the entity"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional: New icon (e.g., 'mdi:lightbulb')"
+        },
+        "preserve_voice_exposure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Migrate voice assistant exposure settings to the new entity_id. Defaults to True. Set to False to skip exposure migration."
+        }
+      },
+      "required": [
+        "entity_id",
+        "new_entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Rename Entity' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_rename_entity_and_device",
+    "description": "Convenience tool to rename both an entity and its associated device in one operation.\n\nThis tool:\n1. Finds the device associated with the entity\n2. Renames the entity (changing entity_id)\n3. Renames the device (changing display name)\n4. Preserves voice assistant exposure settings (by default)\n\nWHEN TO USE:\n- When you want to rename a device and its primary entity together\n- For smart home devices where device and entity should have matching names\n\nIMPORTANT:\n- If the entity has multiple associated entities (e.g., a smart bulb with brightness, color, etc.),\n  only the specified entity is renamed. Other entities retain their original IDs.\n- If the entity has no associated device, only the entity is renamed.\n\nEXAMPLES:\n- Rename lamp: ha_rename_entity_and_device(\"light.bedroom_1\", \"light.master_bedroom\", \"Master Bedroom Lamp\")\n- Rename only entity_id: ha_rename_entity_and_device(\"sensor.temp\", \"sensor.living_room_temp\")\n\nSee also:\n- ha_rename_entity() - Rename only the entity\n- ha_update_device() - Update only the device",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Entity ID to rename (e.g., 'light.bedroom_lamp'). Used to find associated device.",
+          "type": "string"
+        },
+        "new_entity_id": {
+          "description": "New entity ID (e.g., 'light.master_bedroom_lamp'). Domain must match.",
+          "type": "string"
+        },
+        "new_device_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New display name for the device. If not provided, device name is not changed."
+        },
+        "new_entity_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New friendly name for the entity. If not provided, entity name is not changed."
+        },
+        "preserve_voice_exposure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Migrate voice assistant exposure settings to the new entity_id. Defaults to True."
+        }
+      },
+      "required": [
+        "entity_id",
+        "new_entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Rename Entity and Device' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None"
+  },
+  {
+    "name": "ha_report_issue",
+    "description": "Collect diagnostic information for filing issue reports or feedback.\n\nThis tool generates templates for TWO types of reports:\n1. **Runtime Bug Report** - For ha-mcp errors, failures, unexpected behavior\n2. **Agent Behavior Feedback** - For AI agent inefficiency, wrong tool usage\n\n**IMPORTANT FOR AI AGENTS:**\nYou MUST analyze the conversation context to determine which template to present:\n\n\ud83d\udc1b **Present RUNTIME BUG template if:**\n   - User reports an error, failure, or unexpected behavior\n   - A tool returned an error or incorrect result\n   - Something is broken or not working in ha-mcp\n\n\ud83e\udd16 **Present AGENT BEHAVIOR template if:**\n   - User mentions YOU (the agent) used the wrong tool\n   - User suggests a more efficient workflow\n   - User reports YOUR inefficiency or mistakes\n   - User says you should have done something differently\n\n**If unclear which type, ASK the user:**\n\"Are you reporting a bug in ha-mcp, or providing feedback on how I used the tools?\"\n\n**WHEN TO USE THIS TOOL:**\n- \"I want to file a bug/issue/report\"\n- \"This isn't working\"\n- \"You should have used [other tool]\"\n- \"That was inefficient\"\n\n**OUTPUT:**\nReturns both templates. Choose the appropriate one based on context.",
+    "inputSchema": {
+      "properties": {
+        "tool_call_count": {
+          "default": 10,
+          "description": "Number of tool calls made since the issue started. This determines how many log entries to include. Count how many ha_* tools were called from when the issue began. Default: 10. Max: 16 (limited by 200-entry log buffer: 16*4*3=192)",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Report Issue or Feedback' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['system', 'diagnostics', 'feedback']"
+  },
+  {
+    "name": "ha_restart",
+    "description": "Restart Home Assistant.\n\n**WARNING: This will restart the entire Home Assistant instance!**\nAll automations will be temporarily unavailable during restart.\nThe restart typically takes 1-5 minutes depending on your setup.\n\n**Parameters:**\n- confirm: Must be set to True to confirm the restart. This is a safety\n           measure to prevent accidental restarts.\n\n**Best Practices:**\n1. Always run ha_check_config() first to ensure configuration is valid\n2. Notify users before restarting (if applicable)\n3. Schedule restarts during low-activity periods\n\n**Example Usage:**\n```python\n# Always check config first\nconfig = ha_check_config()\nif config[\"result\"] == \"valid\":\n    # Restart with confirmation\n    result = ha_restart(confirm=True)\n```\n\n**Alternative:** For configuration changes, consider using ha_reload_core()\ninstead, which reloads specific components without a full restart.",
+    "inputSchema": {
+      "properties": {
+        "confirm": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false
+        }
+      },
+      "type": "object"
+    },
+    "annotations": "title='Restart Home Assistant' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_search_entities",
+    "description": "Comprehensive entity search with fuzzy matching, domain/area filtering, and optional grouping.\n\n**Listing Entities by Domain:**\nUse domain_filter with an empty query to list all entities of a specific type:\n- ha_search_entities(query=\"\", domain_filter=\"calendar\") - List all calendars\n- ha_search_entities(query=\"\", domain_filter=\"todo\") - List all todo lists\n- ha_search_entities(query=\"\", domain_filter=\"scene\") - List all scenes\n- ha_search_entities(query=\"\", domain_filter=\"zone\") - List all zones (as entities)\n\n**BEST PRACTICE:** Before performing searches, call ha_get_overview() first to understand:\n- Smart home size and scale (total entities, domains, areas)\n- Language used in entity naming (French/English/mixed)\n- Available areas/rooms and their entity distribution\n\nChoose overview detail level based on task:\n- 'minimal': Quick orientation (10 entities per domain sample) - RECOMMENDED for searches\n- 'standard': Complete picture (all entities, friendly names only) - for comprehensive tasks\n- 'full': Maximum detail (includes states, device types, services) - for deep analysis",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "domain_filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "area_filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "group_by_domain": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Search Entities' readOnlyHint=True destructiveHint=None idempotentHint=True openWorldHint=None tags=['search']"
+  },
+  {
+    "name": "ha_set_entity",
+    "description": "Update entity properties in the entity registry.\n\nAllows modifying entity metadata such as area assignment, display name,\nicon, enabled/disabled state, visibility, aliases, labels, and voice\nassistant exposure in a single call.\n\nBULK OPERATIONS:\nWhen entity_id is a list, only labels and expose_to parameters are supported.\nOther parameters (area_id, name, icon, enabled, hidden, aliases) require single entity.\n\nLABEL OPERATIONS:\n- label_operation=\"set\" (default): Replace all labels with the provided list. Use [] to clear.\n- label_operation=\"add\": Add labels to existing ones without removing any.\n- label_operation=\"remove\": Remove specified labels from the entity.\n\nUse ha_search_entities() or ha_get_device() to find entity IDs.\nUse ha_config_get_label() to find available label IDs.\n\nEXAMPLES:\nSingle entity:\n- Assign to area: ha_set_entity(\"sensor.temp\", area_id=\"living_room\")\n- Rename: ha_set_entity(\"sensor.temp\", name=\"Living Room Temperature\")\n- Set labels: ha_set_entity(\"light.lamp\", labels=[\"outdoor\", \"smart\"])\n- Add labels: ha_set_entity(\"light.lamp\", labels=[\"new_label\"], label_operation=\"add\")\n- Remove labels: ha_set_entity(\"light.lamp\", labels=[\"old_label\"], label_operation=\"remove\")\n- Clear labels: ha_set_entity(\"light.lamp\", labels=[])\n- Expose to Alexa: ha_set_entity(\"light.lamp\", expose_to={\"cloud.alexa\": True})\n\nBulk operations:\n- Set labels on multiple: ha_set_entity([\"light.a\", \"light.b\"], labels=[\"outdoor\"])\n- Add labels to multiple: ha_set_entity([\"light.a\", \"light.b\"], labels=[\"new\"], label_operation=\"add\")\n- Expose multiple to Alexa: ha_set_entity([\"light.a\", \"light.b\"], expose_to={\"cloud.alexa\": True})\n\nNOTE: To rename an entity_id (e.g., sensor.old -> sensor.new), use ha_rename_entity() instead.",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Entity ID or list of entity IDs to update. Bulk operations (list) only support labels and expose_to parameters."
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Area/room ID to assign the entity to. Use empty string '' to unassign from current area. Single entity only."
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Display name for the entity. Use empty string '' to remove custom name and revert to default. Single entity only."
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Icon for the entity (e.g., 'mdi:thermometer'). Use empty string '' to remove custom icon. Single entity only."
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "True to enable the entity, False to disable it. Single entity only."
+        },
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "True to hide the entity from UI, False to show it. Single entity only."
+        },
+        "aliases": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of voice assistant aliases for the entity (replaces existing aliases). Single entity only."
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of label IDs for the entity. Behavior depends on label_operation parameter. Supports bulk operations."
+        },
+        "label_operation": {
+          "default": "set",
+          "description": "How to apply labels: 'set' replaces all labels, 'add' adds to existing, 'remove' removes specified labels.",
+          "enum": [
+            "set",
+            "add",
+            "remove"
+          ],
+          "type": "string"
+        },
+        "expose_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Control voice assistant exposure. Pass a dict mapping assistant IDs to booleans. Valid assistants: 'conversation' (Assist), 'cloud.alexa', 'cloud.google_assistant'. Example: {\"conversation\": true, \"cloud.alexa\": false}. Supports bulk operations."
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Set Entity' readOnlyHint=None destructiveHint=True idempotentHint=True openWorldHint=None tags=['entity']"
+  },
+  {
+    "name": "ha_set_integration_enabled",
+    "description": "Enable/disable integration (config entry).\n\nUse ha_get_integration() to find entry IDs.",
+    "inputSchema": {
+      "properties": {
+        "entry_id": {
+          "description": "Config entry ID",
+          "type": "string"
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "True to enable, False to disable"
+        }
+      },
+      "required": [
+        "entry_id",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Set Integration Enabled' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['integration']"
+  },
+  {
+    "name": "ha_update_device",
+    "description": "Update device properties such as name, area, disabled state, or labels.\n\nIMPORTANT: Renaming a device does NOT rename its entities!\nDevice and entity names are independent. To rename entities, use ha_rename_entity().\n\nCommon workflow for full rename:\n1. ha_update_device(device_id=\"abc\", name=\"Living Room Sensor\")  # Rename device\n2. ha_rename_entity(entity_id=\"sensor.old\", new_entity_id=\"sensor.living_room\")  # Rename entities separately\n\nPARAMETERS:\n- name: Sets the user-defined display name (name_by_user)\n- area_id: Assigns device to an area/room. Use '' to remove from area.\n- disabled_by: Set to 'user' to disable, or empty to enable\n- labels: List of labels (replaces existing labels)\n\nEXAMPLES:\n- Rename device: ha_update_device(\"abc123\", name=\"Living Room Hub\")\n- Move to area: ha_update_device(\"abc123\", area_id=\"living_room\")\n- Disable device: ha_update_device(\"abc123\", disabled_by=\"user\")\n- Enable device: ha_update_device(\"abc123\", disabled_by=\"\")\n- Add labels: ha_update_device(\"abc123\", labels=[\"important\", \"sensor\"])",
+    "inputSchema": {
+      "properties": {
+        "device_id": {
+          "description": "Device ID to update",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New display name for the device (sets name_by_user)"
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Area/room ID to assign the device to. Use empty string '' to unassign."
+        },
+        "disabled_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set to 'user' to disable, or None/empty string to enable"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Labels to assign to the device (replaces existing labels)"
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Update Device' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['system']"
+  },
+  {
+    "name": "ha_update_todo_item",
+    "description": "Update or complete a todo item in Home Assistant.\n\nModifies an existing item in the specified todo list. Can be used to:\n- Mark items as completed or incomplete\n- Rename items\n- Update descriptions and due dates\n\nIDENTIFYING ITEMS:\n- Use the item's UID (from ha_get_todo)\n- Or use the exact item summary/name text\n\nSTATUS VALUES:\n- completed: Mark the item as done\n- needs_action: Mark the item as not done (reopen)\n\nEXAMPLES:\n- Complete item: ha_update_todo_item(\"todo.shopping_list\", \"Buy milk\", status=\"completed\")\n- Rename item: ha_update_todo_item(\"todo.tasks\", \"Old task\", rename=\"New task name\")\n- Update due date: ha_update_todo_item(\"todo.tasks\", \"Pay bills\", due_date=\"2024-12-31\")\n- Reopen item: ha_update_todo_item(\"todo.tasks\", \"Task to redo\", status=\"needs_action\")\n\nUSE CASES:\n- \"Mark milk as bought\"\n- \"Complete the eggs on my shopping list\"\n- \"Change the due date for my task\"\n- \"Rename 'call mom' to 'video call with mom'\"\n\nNOTE: At least one update field (rename, status, description, due_date, due_datetime) must be provided.",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "description": "Todo list entity ID (e.g., 'todo.shopping_list')",
+          "type": "string"
+        },
+        "item": {
+          "description": "Item to update - can be the item UID or the exact item summary/name",
+          "type": "string"
+        },
+        "rename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New name/summary for the item"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "needs_action",
+                "completed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New status: 'completed' to mark done, 'needs_action' to mark incomplete"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New description for the item"
+        },
+        "due_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New due date in YYYY-MM-DD format"
+        },
+        "due_datetime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New due datetime in ISO format"
+        }
+      },
+      "required": [
+        "entity_id",
+        "item"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Update Todo Item' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['todo']"
+  },
+  {
+    "name": "ha_update_zone",
+    "description": "Update an existing Home Assistant zone.\n\nOnly the fields you specify will be updated. Other fields remain unchanged.\n\nEXAMPLES:\n- Update zone name: ha_update_zone(\"abc123\", name=\"New Office\")\n- Update zone radius: ha_update_zone(\"abc123\", radius=200)\n- Update zone location: ha_update_zone(\"abc123\", latitude=40.7128, longitude=-74.0060)\n- Update multiple fields: ha_update_zone(\"abc123\", name=\"Gym\", radius=75, icon=\"mdi:dumbbell\")\n\n**TIP:** Use ha_get_zone() to get the zone_id for the zone you want to update.",
+    "inputSchema": {
+      "properties": {
+        "zone_id": {
+          "description": "Zone ID to update (from ha_get_zone)",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New display name for the zone"
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New latitude coordinate"
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New longitude coordinate"
+        },
+        "radius": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New radius in meters"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New Material Design Icon"
+        },
+        "passive": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New passive mode setting"
+        }
+      },
+      "required": [
+        "zone_id"
+      ],
+      "type": "object"
+    },
+    "annotations": "title='Update Zone' readOnlyHint=None destructiveHint=True idempotentHint=None openWorldHint=None tags=['zone']"
+  }
+]
