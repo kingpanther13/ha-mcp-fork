@@ -1,0 +1,30 @@
+name: "Home Assistant MCP Server (Fork)"
+description: "Fork - AI assistant integration for Home Assistant via MCP"
+version: "dev5"
+slug: "ha_mcp_fork"
+url: "https://github.com/kingpanther13/ha-mcp-fork"
+stage: experimental
+arch:
+  - aarch64  # 64-bit ARM (Raspberry Pi 4+, modern ARM devices)
+  - amd64    # 64-bit x86 (most PCs and servers)
+init: false
+startup: application
+boot: manual
+# Enable access to Supervisor API for auto-discovery
+hassio_api: true
+hassio_role: default
+# Enable access to Home Assistant API
+homeassistant_api: true
+# Disable host_network so Docker port mapping works (avoids port conflict with live add-on)
+host_network: false
+# No image: line - forces local build from Dockerfile
+# Options for user configuration
+options:
+  backup_hint: "normal"
+schema:
+  backup_hint: list(strong|normal|weak|auto)
+  secret_path: str?
+  access_token: password?
+# Internal port 9583 mapped to external 9584 to avoid conflict with live add-on on 9583
+ports:
+  9583/tcp: 9584
