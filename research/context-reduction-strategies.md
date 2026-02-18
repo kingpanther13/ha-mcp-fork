@@ -15,8 +15,8 @@ The proxy/meta-tool approaches (Tool Search, Semantic Search) add 2-3 extra roun
 
 **Current system (96 tools always loaded):**
 ```
-Every API turn pays ~35,000 tokens for tool definitions sitting in context.
-20-turn conversation: 20 × 35K = ~700K tokens just for idle tool defs.
+Every API turn pays ~44,722 tokens for tool definitions sitting in context.
+20-turn conversation: 20 × 44.7K = ~894K tokens just for idle tool defs.
 ```
 
 **Proxy pattern (3 meta-tools + on-demand lookups):**
@@ -27,7 +27,7 @@ Every API turn pays ~2K tokens for 3 meta-tool definitions.
 Total: ~45K tokens.
 ```
 
-**Result: ~93% fewer tokens overall.** The extra round trips add a small amount of tokens for the schema lookups, but this is dwarfed by eliminating 35K tokens of dead weight from every single turn. The dominant cost in the current system is paying for 96 tool definitions on every turn regardless of whether any of them get used.
+**Result: ~95% fewer tokens overall.** The extra round trips add a small amount of tokens for the schema lookups, but this is dwarfed by eliminating ~44.7K tokens of dead weight from every single turn. The dominant cost in the current system is paying for 96 tool definitions on every turn regardless of whether any of them get used.
 
 ---
 
@@ -37,11 +37,11 @@ ha-mcp v6.6.1 registers 96 tools. Their combined definitions consume:
 
 | Metric | Value |
 |--------|-------|
-| Total tokens (compact JSON) | ~35,500 |
+| Total tokens (compact JSON) | ~44,722 |
 | Total characters | ~89,000 |
-| Context consumed on Claude (200K) | 17.8% |
-| Context consumed on GPT-4o (128K) | 27.8% |
-| Cost per request on Opus ($15/M input) | $0.53 |
+| Context consumed on Claude (200K) | 22.4% |
+| Context consumed on GPT-4o (128K) | 34.9% |
+| Cost per request on Opus ($15/M input) | $0.67 |
 
 ### Where tokens go:
 | Component | Tokens | % |
@@ -78,6 +78,41 @@ This creates two problems:
 
 **Maintainer feedback:** Concern about tool descriptions being "deleted or overlooked by the AI." Wants LLM testing before merge.
 
+**Estimated impact if applied to 80% of tools (77 of 96):**
+
+PR #616's phase 1 targeted the 10 most verbose tools, achieving 64–89% description reduction per tool (avg ~80%). The approach trims descriptions to 1–2 sentence summaries and strips verbose inputSchema parameter descriptions, moving full docs to `ha_get_tool_guide()`.
+
+Token breakdown for 80% coverage estimate:
+```
+Baseline idle context: 44,722 tokens
+
+Descriptions (21,487 tokens):
+  - 77 tools treated × avg ~80% description reduction
+  - 80% of tools likely covers ~85-90% of description tokens (skewed toward verbose tools)
+  - ~18,500 tokens of descriptions targeted → reduced to ~3,700 tokens
+  - Remaining 19 tools keep full descriptions: ~3,000 tokens
+  - New description total: ~6,700 tokens (vs 21,487 baseline)
+  - Description savings: ~14,800 tokens
+
+Parameter schemas (18,215 tokens):
+  - #616 also strips verbose parameter descriptions from inputSchema
+  - Estimated ~25-30% of schema tokens are parameter descriptions/examples
+  - 80% of tools: saves ~3,600-4,400 tokens
+  - New schema total: ~14,000 tokens (vs 18,215 baseline)
+  - Schema savings: ~4,200 tokens
+
+Unchanged components:
+  - Annotations: 2,382 tokens (unchanged)
+  - Structural JSON overhead: 2,101 tokens (unchanged)
+  - Tool names: 537 tokens (unchanged)
+  - ha_get_tool_guide meta-tool overhead: ~200 tokens (new)
+
+Estimated idle context at 80% coverage: ~26,000 tokens
+Reduction: ~18,700 tokens saved (~42% reduction from 44,722 baseline)
+```
+
+For comparison, full 100% coverage would push idle context to roughly ~20,000–22,000 tokens.
+
 ### 2. Tool Search Tool Pattern (Proxy)
 
 **What it does:** Replace 96 individual tool registrations with 2-3 meta-tools:
@@ -87,7 +122,7 @@ ha_get_tool_schema(tool_name)      → returns full schema + docs for one tool
 ha_execute_tool(tool_name, args)   → proxies the call to the real tool
 ```
 
-**Results:** ~1-2K tokens idle (3 tool definitions) vs ~35K today. **95%+ reduction.**
+**Results:** ~1-2K tokens idle (3 tool definitions) vs ~44.7K today. **95%+ reduction.**
 
 **Pros:**
 - Works with every client and every model — just standard tool calls with simple parameters
@@ -200,7 +235,7 @@ Not loaded until discovered via ha_find_tools:
 
 | Approach | Token Reduction | Works All Models | Works All Clients | Complexity | Round Trips |
 |----------|----------------|-----------------|-------------------|------------|-------------|
-| PR #616 (guide tool) | ~24% (expandable) | Strong models only | Yes | Low | +1 per guided tool |
+| PR #616 (guide tool) | ~42% at 80% coverage | Strong models only | Yes | Low | +1 per guided tool |
 | Tool Search Proxy | ~95% | Yes | Yes | High | +2-3 per call |
 | Semantic Search | ~95%+ | Yes | Yes | High | +1-2 per call |
 | Hybrid (core + proxy) | ~80-90% | Yes | Yes | Medium-High | +2-3 for proxied tools |
