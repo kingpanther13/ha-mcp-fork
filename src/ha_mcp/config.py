@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # Disable when using clients with programmatic tool use (future).
     enable_dashboard_partial_tools: bool = Field(True, alias="ENABLE_DASHBOARD_PARTIAL_TOOLS")
 
+    # First-call docs middleware - compresses tool descriptions and enforces
+    # mandatory documentation delivery on first use per session
+    enable_first_call_docs: bool = Field(True, alias="ENABLE_FIRST_CALL_DOCS")
+
     @property
     def env_file_name(self) -> str:
         """Get the current environment file name."""

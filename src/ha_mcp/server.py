@@ -74,6 +74,13 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         # Create FastMCP server with Home Assistant icons for client UI display
         self.mcp = FastMCP(name=server_name, version=server_version, icons=SERVER_ICONS)
 
+        # Add first-call docs middleware (must be registered before tools)
+        if self.settings.enable_first_call_docs:
+            from .middleware.first_call_docs import FirstCallDocsMiddleware
+
+            self.mcp.add_middleware(FirstCallDocsMiddleware())
+            logger.info("First-call docs middleware enabled")
+
         # Register all tools and expert prompts
         self._initialize_server()
 

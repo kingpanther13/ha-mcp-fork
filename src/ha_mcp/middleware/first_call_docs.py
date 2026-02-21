@@ -1,0 +1,183 @@
+"""First-Call Docs middleware for progressive disclosure of tool documentation.
+
+Compresses tool descriptions in tools/list responses and enforces mandatory
+documentation delivery on the first call to each tool per session. Tools
+cannot execute until the LLM has received their full documentation.
+
+Tools with short descriptions (below a configurable character threshold)
+are exempt and execute immediately without a documentation gate.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from collections.abc import Sequence
+from typing import Any, override
+
+import mcp.types as mt
+from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools.tool import Tool, ToolResult
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_first_line(description: str) -> str:
+    """Extract the first meaningful sentence from a tool description.
+
+    Returns the first non-empty line, truncated at the first sentence
+    boundary (period followed by space or newline) if found.
+    """
+    # Skip leading whitespace and blank lines
+    lines = description.strip().splitlines()
+    if not lines:
+        return ""
+
+    first_line = lines[0].strip()
+    if not first_line:
+        # First line was blank, try the next non-empty line
+        for line in lines[1:]:
+            first_line = line.strip()
+            if first_line:
+                break
+        else:
+            return ""
+
+    # Truncate at first sentence boundary (period followed by space or end)
+    match = re.match(r"^(.+?\.)(?:\s|$)", first_line)
+    if match:
+        return match.group(1)
+
+    return first_line
+
+
+class FirstCallDocsMiddleware(Middleware):
+    """Middleware that enforces documentation delivery before tool execution.
+
+    On first call to a gated tool in a session, returns full documentation
+    instead of executing. The tool CANNOT execute until docs have been
+    delivered. Tools with short descriptions are exempt.
+
+    Args:
+        min_description_length: Character threshold for gating. Tools with
+            descriptions shorter than this execute immediately without a
+            documentation gate. Default: 500.
+        exclude_tools: Optional set of tool names that should always bypass
+            the documentation gate regardless of description length.
+    """
+
+    def __init__(
+        self,
+        min_description_length: int = 500,
+        exclude_tools: set[str] | None = None,
+    ) -> None:
+        self._min_length = min_description_length
+        self._exclude_tools = exclude_tools or set()
+        # tool_name -> full description text (captured on first tools/list)
+        self._full_descriptions: dict[str, str] = {}
+        # session_key -> set of tool names that have received docs
+        self._docs_delivered: dict[str, set[str]] = {}
+
+    def _get_session_key(self, context: MiddlewareContext[Any]) -> str:
+        """Get a stable session key for tracking docs delivery.
+
+        Uses Context.session_id when available (HTTP transports).
+        Falls back to "__default__" for stdio (single concurrent session).
+        """
+        ctx = context.fastmcp_context
+        if ctx is not None and ctx.request_context is not None:
+            try:
+                return ctx.session_id
+            except (RuntimeError, AttributeError):
+                pass
+        return "__default__"
+
+    def _should_gate(self, tool: Tool) -> bool:
+        """Check if a tool should be gated behind first-call docs."""
+        if tool.name in self._exclude_tools:
+            return False
+        desc = tool.description or ""
+        return len(desc) >= self._min_length
+
+    @override
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        """Compress descriptions for gated tools, capture full docs."""
+        tools = await call_next(context)
+        result: list[Tool] = []
+
+        for tool in tools:
+            if self._should_gate(tool):
+                # Capture full description (idempotent — first capture wins)
+                if tool.name not in self._full_descriptions:
+                    self._full_descriptions[tool.name] = tool.description or ""
+                    logger.debug(
+                        "Captured docs for %s (%d chars)",
+                        tool.name,
+                        len(self._full_descriptions[tool.name]),
+                    )
+
+                # Compress to first line + mandatory hint
+                short = _extract_first_line(tool.description or "")
+                compressed_desc = (
+                    f"{short} "
+                    f"(IMPORTANT: You must call this tool once to receive "
+                    f"required documentation before it can execute.)"
+                )
+                result.append(tool.model_copy(update={"description": compressed_desc}))
+            else:
+                result.append(tool)
+
+        if self._full_descriptions:
+            logger.info(
+                "First-call docs active: %d tools gated, %d tools exempt",
+                len(self._full_descriptions),
+                len(tools) - len(self._full_descriptions),
+            )
+
+        return result
+
+    @override
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        """Enforce mandatory docs delivery before tool execution."""
+        tool_name = context.message.name
+
+        # Tools not in our docs map execute immediately (short desc or excluded)
+        if tool_name not in self._full_descriptions:
+            return await call_next(context)
+
+        session_key = self._get_session_key(context)
+        seen = self._docs_delivered.setdefault(session_key, set())
+
+        # MANDATORY: block execution until docs have been delivered
+        if tool_name not in seen:
+            seen.add(tool_name)
+            docs = self._full_descriptions[tool_name]
+            logger.debug(
+                "Delivering first-call docs for %s (session=%s)",
+                tool_name,
+                session_key[:12],
+            )
+            return ToolResult(
+                content=(
+                    f"REQUIRED DOCUMENTATION \u2014 {tool_name}\n"
+                    f"{'=' * 50}\n\n"
+                    f"{docs}\n\n"
+                    f"{'=' * 50}\n\n"
+                    f"ACTION REQUIRED: You have received the documentation "
+                    f"for {tool_name}. You MUST now call {tool_name} again "
+                    f"with your arguments to execute it. Do not call a "
+                    f"different tool \u2014 call {tool_name} with the correct "
+                    f"arguments based on the documentation above."
+                )
+            )
+
+        # Docs already delivered — execute normally
+        return await call_next(context)
