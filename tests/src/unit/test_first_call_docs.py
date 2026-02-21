@@ -341,3 +341,60 @@ class TestOnCallTool:
         assert "call ha_my_tool again" in content
         assert "Do not call a different tool" in content
         assert "ACTION REQUIRED" in content
+
+    @pytest.mark.asyncio
+    async def test_docs_response_includes_structured_content(self):
+        """Docs response includes structured_content for outputSchema validation."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50)
+        middleware._full_descriptions["ha_my_tool"] = "Full documentation here."
+
+        call_next = AsyncMock()
+        context = _make_context(tool_name="ha_my_tool")
+
+        result = await middleware.on_call_tool(context, call_next)
+
+        assert result.structured_content is not None
+        assert result.structured_content["status"] == "documentation_required"
+        assert result.structured_content["tool"] == "ha_my_tool"
+        assert result.structured_content["documentation"] == "Full documentation here."
+
+    @pytest.mark.asyncio
+    async def test_docs_response_has_meta_for_schema_bypass(self):
+        """Docs response sets meta={} so to_mcp_result() returns CallToolResult."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50)
+        middleware._full_descriptions["ha_my_tool"] = "Docs here."
+
+        call_next = AsyncMock()
+        context = _make_context(tool_name="ha_my_tool")
+
+        result = await middleware.on_call_tool(context, call_next)
+
+        # meta={} causes ToolResult.to_mcp_result() to return CallToolResult,
+        # which bypasses outputSchema validation in the MCP low-level server
+        assert result.meta is not None
+        assert isinstance(result.meta, dict)
+
+    @pytest.mark.asyncio
+    async def test_session_lru_eviction(self):
+        """Oldest sessions are evicted when the cache reaches capacity."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50)
+        middleware._MAX_SESSIONS = 3  # Small cap for testing
+        middleware._full_descriptions["ha_tool"] = "docs " * 100
+
+        call_next = AsyncMock()
+
+        # Fill up 3 sessions
+        for i in range(3):
+            ctx = _make_context(tool_name="ha_tool", session_id=f"session-{i}")
+            await middleware.on_call_tool(ctx, call_next)
+
+        assert len(middleware._docs_delivered) == 3
+        assert "session-0" in middleware._docs_delivered
+
+        # Add a 4th session — should evict session-0
+        ctx4 = _make_context(tool_name="ha_tool", session_id="session-3")
+        await middleware.on_call_tool(ctx4, call_next)
+
+        assert len(middleware._docs_delivered) == 3
+        assert "session-0" not in middleware._docs_delivered
+        assert "session-3" in middleware._docs_delivered

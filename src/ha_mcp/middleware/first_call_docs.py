@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any, override
 
@@ -66,6 +67,10 @@ class FirstCallDocsMiddleware(Middleware):
             the documentation gate regardless of description length.
     """
 
+    # Maximum number of sessions to track before evicting the oldest.
+    # Prevents unbounded memory growth in long-running HTTP servers.
+    _MAX_SESSIONS = 1000
+
     def __init__(
         self,
         min_description_length: int = 500,
@@ -76,7 +81,8 @@ class FirstCallDocsMiddleware(Middleware):
         # tool_name -> full description text (captured on first tools/list)
         self._full_descriptions: dict[str, str] = {}
         # session_key -> set of tool names that have received docs
-        self._docs_delivered: dict[str, set[str]] = {}
+        # OrderedDict for LRU eviction of oldest sessions
+        self._docs_delivered: OrderedDict[str, set[str]] = OrderedDict()
 
     def _get_session_key(self, context: MiddlewareContext[Any]) -> str:
         """Get a stable session key for tracking docs delivery.
@@ -149,12 +155,22 @@ class FirstCallDocsMiddleware(Middleware):
         """Enforce mandatory docs delivery before tool execution."""
         tool_name = context.message.name
 
-        # Tools not in our docs map execute immediately (short desc or excluded)
+        # Only gate tools we captured during on_list_tools (acts as allow-list)
         if tool_name not in self._full_descriptions:
             return await call_next(context)
 
         session_key = self._get_session_key(context)
-        seen = self._docs_delivered.setdefault(session_key, set())
+        if session_key in self._docs_delivered:
+            # Move to end (most recently used)
+            self._docs_delivered.move_to_end(session_key)
+            seen = self._docs_delivered[session_key]
+        else:
+            # Evict oldest session if at capacity
+            while len(self._docs_delivered) >= self._MAX_SESSIONS:
+                evicted_key, _ = self._docs_delivered.popitem(last=False)
+                logger.debug("Evicted oldest session from docs cache: %s", evicted_key[:12])
+            seen: set[str] = set()
+            self._docs_delivered[session_key] = seen
 
         # MANDATORY: block execution until docs have been delivered
         if tool_name not in seen:
@@ -165,18 +181,32 @@ class FirstCallDocsMiddleware(Middleware):
                 tool_name,
                 session_key[:12],
             )
+            docs_text = (
+                f"REQUIRED DOCUMENTATION \u2014 {tool_name}\n"
+                f"{'=' * 50}\n\n"
+                f"{docs}\n\n"
+                f"{'=' * 50}\n\n"
+                f"ACTION REQUIRED: You have received the documentation "
+                f"for {tool_name}. You MUST now call {tool_name} again "
+                f"with your arguments to execute it. Do not call a "
+                f"different tool \u2014 call {tool_name} with the correct "
+                f"arguments based on the documentation above."
+            )
+            # meta={} causes to_mcp_result() to return a CallToolResult,
+            # which bypasses outputSchema validation in the MCP low-level
+            # server. Without this, tools with return type annotations
+            # would reject our docs payload as schema-invalid.
             return ToolResult(
-                content=(
-                    f"REQUIRED DOCUMENTATION \u2014 {tool_name}\n"
-                    f"{'=' * 50}\n\n"
-                    f"{docs}\n\n"
-                    f"{'=' * 50}\n\n"
-                    f"ACTION REQUIRED: You have received the documentation "
-                    f"for {tool_name}. You MUST now call {tool_name} again "
-                    f"with your arguments to execute it. Do not call a "
-                    f"different tool \u2014 call {tool_name} with the correct "
-                    f"arguments based on the documentation above."
-                )
+                content=docs_text,
+                structured_content={
+                    "status": "documentation_required",
+                    "tool": tool_name,
+                    "documentation": docs,
+                    "message": (
+                        f"Call {tool_name} again with your arguments to execute."
+                    ),
+                },
+                meta={},
             )
 
         # Docs already delivered — execute normally
