@@ -102,11 +102,14 @@ class FirstCallDocsMiddleware(Middleware):
     # Prevents unbounded memory growth in long-running HTTP servers.
     _MAX_SESSIONS = 1000
 
+    _BUILD = "2026-02-22-B"
+
     def __init__(
         self,
         min_description_length: int = 500,
         exclude_tools: set[str] | None = None,
     ) -> None:
+        logger.warning("FirstCallDocsMiddleware init — build %s", self._BUILD)
         self._min_length = min_description_length
         self._exclude_tools = exclude_tools or set()
         # tool_name -> full description text (captured on first tools/list)
