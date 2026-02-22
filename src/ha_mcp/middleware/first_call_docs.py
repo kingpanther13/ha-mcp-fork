@@ -195,7 +195,21 @@ class FirstCallDocsMiddleware(Middleware):
                     f"(IMPORTANT: You must call this tool once to receive "
                     f"required documentation before it can execute.)"
                 )
-                result.append(tool.model_copy(update={"description": compressed_desc}))
+
+                # Inject _docs_ack into schema so clients with
+                # additionalProperties: false can pass it back.
+                params = dict(tool.parameters) if tool.parameters else {}
+                props = dict(params.get("properties", {}))
+                props[_DOCS_ACK_PARAM] = {
+                    "type": "string",
+                    "description": "Documentation acknowledgment token.",
+                }
+                params["properties"] = props
+
+                result.append(tool.model_copy(update={
+                    "description": compressed_desc,
+                    "parameters": params,
+                }))
             else:
                 result.append(tool)
 

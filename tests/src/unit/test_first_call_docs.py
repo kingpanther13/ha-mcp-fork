@@ -24,10 +24,16 @@ class FakeTool:
 
     name: str
     description: str | None
+    parameters: dict[str, Any] | None = None
 
     def model_copy(self, *, update: dict[str, Any] | None = None) -> FakeTool:
-        desc = update.get("description", self.description) if update else self.description
-        return FakeTool(name=self.name, description=desc)
+        if not update:
+            return FakeTool(name=self.name, description=self.description, parameters=self.parameters)
+        return FakeTool(
+            name=update.get("name", self.name),
+            description=update.get("description", self.description),
+            parameters=update.get("parameters", self.parameters),
+        )
 
 
 def _make_context(
@@ -131,6 +137,50 @@ class TestOnListTools:
         assert result[0].description.startswith(
             "Create or update a Home Assistant automation."
         )
+
+    @pytest.mark.asyncio
+    async def test_gated_tools_get_docs_ack_in_schema(self):
+        """Gated tools have _docs_ack injected into their parameter schema."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50)
+        long_desc = "Create automation. " + "x" * 500
+        tool = FakeTool(
+            name="ha_config_set_automation",
+            description=long_desc,
+            parameters={
+                "type": "object",
+                "properties": {"config": {"type": "object"}},
+                "required": ["config"],
+                "additionalProperties": False,
+            },
+        )
+
+        call_next = AsyncMock(return_value=[tool])
+        result = await middleware.on_list_tools(_make_list_context(), call_next)
+
+        params = result[0].parameters
+        assert "_docs_ack" in params["properties"]
+        assert params["properties"]["_docs_ack"]["type"] == "string"
+        # Original properties preserved
+        assert "config" in params["properties"]
+
+    @pytest.mark.asyncio
+    async def test_short_tools_no_docs_ack_in_schema(self):
+        """Short-description tools do NOT get _docs_ack injected."""
+        middleware = FirstCallDocsMiddleware(min_description_length=500)
+        tool = FakeTool(
+            name="ha_get_state",
+            description="Get entity state.",
+            parameters={
+                "type": "object",
+                "properties": {"entity_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        )
+
+        call_next = AsyncMock(return_value=[tool])
+        result = await middleware.on_list_tools(_make_list_context(), call_next)
+
+        assert "_docs_ack" not in result[0].parameters["properties"]
 
     @pytest.mark.asyncio
     async def test_full_description_captured(self):
