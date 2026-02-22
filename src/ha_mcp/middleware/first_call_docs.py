@@ -83,6 +83,11 @@ class FirstCallDocsMiddleware(Middleware):
         # session_key -> set of tool names that have received docs
         # OrderedDict for LRU eviction of oldest sessions
         self._docs_delivered: OrderedDict[str, set[str]] = OrderedDict()
+        # Global fallback: tracks tools that have had docs delivered to ANY
+        # session. Handles transports with unstable sessions (e.g., proxied
+        # connections where each HTTP request gets a new session_id).
+        # Resets on server restart, which is correct (fresh context = re-deliver).
+        self._docs_ever_delivered: set[str] = set()
 
     def _get_session_key(self, context: MiddlewareContext[Any]) -> str:
         """Get a stable session key for tracking docs delivery.
@@ -172,9 +177,13 @@ class FirstCallDocsMiddleware(Middleware):
             seen: set[str] = set()
             self._docs_delivered[session_key] = seen
 
-        # MANDATORY: block execution until docs have been delivered
-        if tool_name not in seen:
+        # Block execution only if docs have NEVER been delivered for this tool
+        # (neither in the current session nor globally). The global fallback
+        # handles transports with unstable sessions where each request gets
+        # a new session_id (e.g., proxied/tunneled connections).
+        if tool_name not in seen and tool_name not in self._docs_ever_delivered:
             seen.add(tool_name)
+            self._docs_ever_delivered.add(tool_name)
             docs = self._full_descriptions[tool_name]
             logger.debug(
                 "Delivering first-call docs for %s (session=%s)",
@@ -210,4 +219,5 @@ class FirstCallDocsMiddleware(Middleware):
             )
 
         # Docs already delivered — execute normally
+        seen.add(tool_name)  # Sync to current session
         return await call_next(context)
