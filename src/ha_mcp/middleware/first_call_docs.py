@@ -196,8 +196,9 @@ class FirstCallDocsMiddleware(Middleware):
                     f"required documentation before it can execute.)"
                 )
 
-                # Inject _docs_ack into schema so clients with
-                # additionalProperties: false can pass it back.
+                # Inject _docs_ack into schema so clients can pass it back,
+                # and allow additional properties so transports that
+                # enforce schema validation won't reject it.
                 params = dict(tool.parameters) if tool.parameters else {}
                 props = dict(params.get("properties", {}))
                 props[_DOCS_ACK_PARAM] = {
@@ -205,6 +206,7 @@ class FirstCallDocsMiddleware(Middleware):
                     "description": "Documentation acknowledgment token.",
                 }
                 params["properties"] = props
+                params["additionalProperties"] = True
 
                 result.append(tool.model_copy(update={
                     "description": compressed_desc,
