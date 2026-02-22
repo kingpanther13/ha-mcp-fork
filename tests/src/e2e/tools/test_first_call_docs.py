@@ -136,8 +136,8 @@ async def test_first_call_returns_docs_not_execution(fcd_mcp_client):
         assert "call ha_list_services again" in response_text, (
             "Docs response should instruct to call the same tool again"
         )
-        assert "Do not call a different tool" in response_text, (
-            "Docs response should warn against calling a different tool"
+        assert "_docs_ack" in response_text, (
+            "Docs response should include ack token for acknowledgment"
         )
         logger.info("First call correctly returned documentation (not execution)")
     else:

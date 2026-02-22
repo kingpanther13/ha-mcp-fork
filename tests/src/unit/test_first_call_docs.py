@@ -498,3 +498,33 @@ class TestOnCallTool:
         assert len(middleware._docs_delivered) == 3
         assert "session-0" not in middleware._docs_delivered
         assert "session-3" in middleware._docs_delivered
+
+    @pytest.mark.asyncio
+    async def test_expired_ack_token_rejected(self):
+        """An expired ack token (>4 hours old) is rejected."""
+        from ha_mcp.middleware.first_call_docs import _TOKEN_TTL_SECONDS
+
+        middleware = FirstCallDocsMiddleware(min_description_length=50)
+        middleware._full_descriptions["ha_tool"] = "docs " * 100
+
+        call_next = AsyncMock(return_value="executed")
+
+        # Request 1 — get docs + token
+        ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
+        result1 = await middleware.on_call_tool(ctx1, call_next)
+        call_next.assert_not_awaited()
+        token = result1.structured_content["_docs_ack"]
+
+        # Backdate the token's timestamp so it looks older than the TTL
+        middleware._ack_tokens["ha_tool"][token] -= _TOKEN_TTL_SECONDS + 1
+
+        # Request 2 with expired token — should get docs again, not execute
+        call_next.reset_mock()
+        ctx2 = _make_context(
+            tool_name="ha_tool",
+            session_id="ephemeral-2",
+            arguments={"entity_id": "light.kitchen", "_docs_ack": token},
+        )
+        result2 = await middleware.on_call_tool(ctx2, call_next)
+        call_next.assert_not_awaited()
+        assert "REQUIRED DOCUMENTATION" in result2.content[0].text

@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import time
 from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any, override
@@ -35,6 +36,9 @@ _DOCS_ACK_PARAM = "_docs_ack"
 
 # Maximum number of outstanding ack tokens per tool before oldest are pruned.
 _MAX_TOKENS_PER_TOOL = 100
+
+# Token time-to-live in seconds (4 hours).
+_TOKEN_TTL_SECONDS = 4 * 60 * 60
 
 
 def _extract_first_line(description: str) -> str:
@@ -110,8 +114,8 @@ class FirstCallDocsMiddleware(Middleware):
         # session_key -> set of tool names that have received docs
         # OrderedDict for LRU eviction of oldest sessions
         self._docs_delivered: OrderedDict[str, set[str]] = OrderedDict()
-        # tool_name -> set of valid ack tokens (for unstable-session fallback)
-        self._ack_tokens: dict[str, set[str]] = {}
+        # tool_name -> {token: monotonic_timestamp} (for unstable-session fallback)
+        self._ack_tokens: dict[str, dict[str, float]] = {}
 
     def _get_session_key(self, context: MiddlewareContext[Any]) -> str:
         """Get a stable session key for tracking docs delivery.
@@ -137,21 +141,31 @@ class FirstCallDocsMiddleware(Middleware):
     def _generate_ack_token(self, tool_name: str) -> str:
         """Generate and store an ack token for a tool.
 
-        Returns a short hex token. Prunes oldest tokens if the per-tool
-        limit is exceeded.
+        Returns a short hex token. Tokens expire after ``_TOKEN_TTL_SECONDS``.
+        Prunes oldest tokens if the per-tool limit is exceeded.
         """
+        now = time.monotonic()
         token = secrets.token_hex(3)  # 6-char hex string
-        tokens = self._ack_tokens.setdefault(tool_name, set())
-        # Prune if at capacity (simple: clear and start fresh)
+        tokens = self._ack_tokens.setdefault(tool_name, {})
+        # Prune expired tokens first
+        tokens = {t: ts for t, ts in tokens.items() if now - ts < _TOKEN_TTL_SECONDS}
+        # Prune if still at capacity (clear and start fresh)
         if len(tokens) >= _MAX_TOKENS_PER_TOOL:
             tokens.clear()
-        tokens.add(token)
+        tokens[token] = now
+        self._ack_tokens[tool_name] = tokens
         return token
 
     def _validate_ack_token(self, tool_name: str, token: str) -> bool:
-        """Check if an ack token is valid for a tool."""
+        """Check if an ack token is valid and not expired for a tool."""
         tokens = self._ack_tokens.get(tool_name)
-        return tokens is not None and token in tokens
+        if tokens is None or token not in tokens:
+            return False
+        # Check expiry
+        if time.monotonic() - tokens[token] >= _TOKEN_TTL_SECONDS:
+            del tokens[token]
+            return False
+        return True
 
     @override
     async def on_list_tools(
