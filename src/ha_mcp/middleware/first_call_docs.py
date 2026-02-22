@@ -208,10 +208,22 @@ class FirstCallDocsMiddleware(Middleware):
                 params["properties"] = props
                 params["additionalProperties"] = True
 
-                result.append(tool.model_copy(update={
+                modified = tool.model_copy(update={
                     "description": compressed_desc,
                     "parameters": params,
-                }))
+                })
+                result.append(modified)
+
+                # Debug: log one example to verify schema injection
+                if tool.name == "ha_list_services":
+                    logger.warning(
+                        "SCHEMA DEBUG ha_list_services — "
+                        "additionalProperties=%s, properties_keys=%s, "
+                        "full_params=%s",
+                        modified.parameters.get("additionalProperties"),
+                        list(modified.parameters.get("properties", {}).keys()),
+                        modified.parameters,
+                    )
             else:
                 result.append(tool)
 
