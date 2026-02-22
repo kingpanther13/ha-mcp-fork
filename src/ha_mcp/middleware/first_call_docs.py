@@ -277,16 +277,18 @@ class FirstCallDocsMiddleware(Middleware):
             session_key[:12],
             token,
         )
+        # Embed the ack token directly in the documentation text so it
+        # survives any field-level filtering by MCP transports/clients.
+        docs_with_ack = (
+            f"{docs}\n\n"
+            f"ACTION REQUIRED: Call {tool_name} again with your intended "
+            f"arguments. You MUST include _docs_ack: {token} to confirm "
+            f"you have read this documentation."
+        )
         docs_text = (
             f"REQUIRED DOCUMENTATION \u2014 {tool_name}\n"
             f"{'=' * 50}\n\n"
-            f"{docs}\n\n"
-            f"{'=' * 50}\n\n"
-            f"ACTION REQUIRED: You have received the documentation "
-            f"for {tool_name}. You MUST now call {tool_name} again "
-            f"with your intended arguments AND include the parameter "
-            f'`_docs_ack: "{token}"` to confirm you have read the '
-            f"documentation."
+            f"{docs_with_ack}\n"
         )
         # meta={} causes to_mcp_result() to return a CallToolResult,
         # which bypasses outputSchema validation in the MCP low-level
@@ -297,12 +299,7 @@ class FirstCallDocsMiddleware(Middleware):
             structured_content={
                 "status": "documentation_required",
                 "tool": tool_name,
-                "documentation": docs,
-                "_docs_ack": token,
-                "message": (
-                    f"Call {tool_name} again with your arguments to execute. "
-                    f'Include `_docs_ack: "{token}"` in your arguments.'
-                ),
+                "documentation": docs_with_ack,
             },
             meta={},
         )

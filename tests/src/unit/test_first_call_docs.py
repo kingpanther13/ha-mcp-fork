@@ -8,10 +8,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import re
+
 from ha_mcp.middleware.first_call_docs import (
     FirstCallDocsMiddleware,
     _extract_first_line,
 )
+
+
+def _extract_ack_token(result) -> str:
+    """Extract the ack token from a docs delivery ToolResult."""
+    text = result.structured_content["documentation"]
+    match = re.search(r"_docs_ack: ([a-f0-9]{6})", text)
+    assert match, f"No ack token found in documentation text: {text[-200:]}"
+    return match.group(1)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -339,7 +349,7 @@ class TestOnCallTool:
 
     @pytest.mark.asyncio
     async def test_ack_token_in_docs_response(self):
-        """Docs response includes an ack token in structured_content."""
+        """Docs response includes an ack token in the documentation text."""
         middleware = FirstCallDocsMiddleware(min_description_length=50)
         middleware._full_descriptions["ha_tool"] = "docs " * 100
 
@@ -348,11 +358,11 @@ class TestOnCallTool:
         ctx = _make_context(tool_name="ha_tool", session_id="session-A")
         result = await middleware.on_call_tool(ctx, call_next)
 
-        # structured_content should include the ack token
         sc = result.structured_content
         assert sc["status"] == "documentation_required"
-        assert "_docs_ack" in sc
-        assert len(sc["_docs_ack"]) == 6  # token_hex(3) = 6 chars
+        # Token is embedded in the documentation text
+        token = _extract_ack_token(result)
+        assert len(token) == 6  # token_hex(3) = 6 chars
 
     @pytest.mark.asyncio
     async def test_ack_token_unlocks_unstable_session(self):
@@ -371,7 +381,7 @@ class TestOnCallTool:
         ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
         result1 = await middleware.on_call_tool(ctx1, call_next)
         call_next.assert_not_awaited()
-        token = result1.structured_content["_docs_ack"]
+        token = _extract_ack_token(result1)
 
         # Request 2 (session X2, different!) — includes ack token → executes
         call_next.reset_mock()
@@ -399,7 +409,7 @@ class TestOnCallTool:
         # First call — get docs + token
         ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
         result1 = await middleware.on_call_tool(ctx1, call_next)
-        token = result1.structured_content["_docs_ack"]
+        token = _extract_ack_token(result1)
 
         # Second call with token — verify it's stripped
         call_next.reset_mock()
@@ -488,7 +498,7 @@ class TestOnCallTool:
         result = await middleware.on_call_tool(context, call_next)
         content = result.content[0].text
 
-        assert "call ha_my_tool again" in content
+        assert "Call ha_my_tool again" in content
         assert "_docs_ack" in content
         assert "ACTION REQUIRED" in content
 
@@ -505,8 +515,8 @@ class TestOnCallTool:
 
         assert result.structured_content is not None
         assert result.structured_content["status"] == "documentation_required"
-        assert result.structured_content["tool"] == "ha_my_tool"
-        assert result.structured_content["documentation"] == "Full documentation here."
+        assert "Full documentation here." in result.structured_content["documentation"]
+        assert "_docs_ack" in result.structured_content["documentation"]
 
     @pytest.mark.asyncio
     async def test_docs_response_has_meta_for_schema_bypass(self):
@@ -563,7 +573,7 @@ class TestOnCallTool:
         ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
         result1 = await middleware.on_call_tool(ctx1, call_next)
         call_next.assert_not_awaited()
-        token = result1.structured_content["_docs_ack"]
+        token = _extract_ack_token(result1)
 
         # Backdate the token's timestamp so it looks older than the TTL
         middleware._ack_tokens["ha_tool"][token] -= _TOKEN_TTL_SECONDS + 1

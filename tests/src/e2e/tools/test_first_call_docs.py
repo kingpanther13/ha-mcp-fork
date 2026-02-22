@@ -133,7 +133,7 @@ async def test_first_call_returns_docs_not_execution(fcd_mcp_client):
         assert "REQUIRED DOCUMENTATION" in response_text, (
             f"First call should return docs, got: {response_text[:200]}..."
         )
-        assert "call ha_list_services again" in response_text, (
+        assert "Call ha_list_services again" in response_text, (
             "Docs response should instruct to call the same tool again"
         )
         assert "_docs_ack" in response_text, (
