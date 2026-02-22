@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-import re
 
 from ha_mcp.middleware.first_call_docs import (
     FirstCallDocsMiddleware,
@@ -297,7 +296,7 @@ class TestOnCallTool:
         assert "REQUIRED DOCUMENTATION" in content
         assert "ha_config_set_automation" in content
         assert "detailed docs" in content
-        assert "call ha_config_set_automation again" in content
+        assert "Call ha_config_set_automation again" in content
         assert "_docs_ack" in content
 
     @pytest.mark.asyncio
