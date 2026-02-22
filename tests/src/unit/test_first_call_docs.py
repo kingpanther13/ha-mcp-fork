@@ -261,8 +261,13 @@ class TestOnCallTool:
         assert result == "execution result"
 
     @pytest.mark.asyncio
-    async def test_different_sessions_independent(self):
-        """Two different sessions each need their own docs delivery."""
+    async def test_different_sessions_global_fallback(self):
+        """After docs delivered to one session, other sessions execute immediately.
+
+        This handles proxied/tunneled transports (e.g., Cloudflare) where each
+        HTTP request gets a new session_id. Without the global fallback, docs
+        would be re-delivered on every call, creating an infinite loop.
+        """
         middleware = FirstCallDocsMiddleware(min_description_length=50)
         middleware._full_descriptions["ha_tool"] = "docs " * 100
 
@@ -274,18 +279,41 @@ class TestOnCallTool:
         call_next.assert_not_awaited()
         assert "REQUIRED DOCUMENTATION" in result1.content[0].text
 
-        # Session 2 — also gets docs (independent)
+        # Session 2 — executes immediately (global fallback)
         call_next.reset_mock()
         ctx2 = _make_context(tool_name="ha_tool", session_id="session-B")
         result2 = await middleware.on_call_tool(ctx2, call_next)
-        call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
+        call_next.assert_awaited_once()
+        assert result2 == "executed"
 
-        # Session 1 — second call executes
+        # Session 1 — also executes (docs already delivered in this session)
         call_next.reset_mock()
         result3 = await middleware.on_call_tool(ctx1, call_next)
         call_next.assert_awaited_once()
         assert result3 == "executed"
+
+    @pytest.mark.asyncio
+    async def test_fresh_middleware_delivers_docs_again(self):
+        """A new middleware instance delivers docs independently (server restart)."""
+        mw1 = FirstCallDocsMiddleware(min_description_length=50)
+        mw1._full_descriptions["ha_tool"] = "docs " * 100
+
+        call_next = AsyncMock(return_value="executed")
+
+        # First middleware instance — delivers docs
+        ctx = _make_context(tool_name="ha_tool", session_id="session-A")
+        result1 = await mw1.on_call_tool(ctx, call_next)
+        call_next.assert_not_awaited()
+        assert "REQUIRED DOCUMENTATION" in result1.content[0].text
+
+        # Second middleware instance (simulates server restart) — also delivers docs
+        mw2 = FirstCallDocsMiddleware(min_description_length=50)
+        mw2._full_descriptions["ha_tool"] = "docs " * 100
+
+        call_next.reset_mock()
+        result2 = await mw2.on_call_tool(ctx, call_next)
+        call_next.assert_not_awaited()
+        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
 
     @pytest.mark.asyncio
     async def test_excluded_tool_executes_immediately(self):
