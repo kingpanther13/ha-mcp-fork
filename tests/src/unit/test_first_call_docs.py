@@ -238,7 +238,7 @@ class TestOnCallTool:
         assert "ha_config_set_automation" in content
         assert "detailed docs" in content
         assert "call ha_config_set_automation again" in content
-        assert "Do not call a different tool" in content
+        assert "_docs_ack" in content
 
     @pytest.mark.asyncio
     async def test_second_call_executes(self):
@@ -439,7 +439,7 @@ class TestOnCallTool:
         content = result.content[0].text
 
         assert "call ha_my_tool again" in content
-        assert "Do not call a different tool" in content
+        assert "_docs_ack" in content
         assert "ACTION REQUIRED" in content
 
     @pytest.mark.asyncio
