@@ -227,6 +227,13 @@ class FirstCallDocsMiddleware(Middleware):
                         list(modified.parameters.get("properties", {}).keys()),
                         modified.parameters,
                     )
+                    # Also log what to_mcp_tool produces (the actual wire format)
+                    mcp_tool = modified.to_mcp_tool(name=modified.name)
+                    logger.warning(
+                        "MCP WIRE DEBUG ha_list_services — "
+                        "inputSchema=%s",
+                        mcp_tool.inputSchema,
+                    )
             else:
                 result.append(tool)
 
