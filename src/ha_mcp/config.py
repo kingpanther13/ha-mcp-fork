@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # Disable when using clients with programmatic tool use (future).
     enable_dashboard_partial_tools: bool = Field(True, alias="ENABLE_DASHBOARD_PARTIAL_TOOLS")
 
+    # Bundled skills provider - serves HA best-practice skills as MCP resources
+    # so any connected client gets them automatically without manual installation
+    enable_skills: bool = Field(True, alias="ENABLE_SKILLS")
+
     @property
     def env_file_name(self) -> str:
         """Get the current environment file name."""

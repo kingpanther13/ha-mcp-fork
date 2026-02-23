@@ -74,6 +74,10 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         # Create FastMCP server with Home Assistant icons for client UI display
         self.mcp = FastMCP(name=server_name, version=server_version, icons=SERVER_ICONS)
 
+        # Register bundled skills provider (HA best-practice skills as MCP resources)
+        if self.settings.enable_skills:
+            self._register_skills_provider()
+
         # Register all tools and expert prompts
         self._initialize_server()
 
@@ -114,6 +118,26 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
             )
             logger.debug("Lazily created ToolsRegistry")
         return self._tools_registry
+
+    def _register_skills_provider(self) -> None:
+        """Register bundled HA best-practice skills as MCP resources.
+
+        Uses FastMCP's SkillsDirectoryProvider to serve skills from
+        homeassistant-ai/skills, bundled in resources/skills/.
+        Any connected MCP client can discover and read these skills
+        without manual installation.
+        """
+        from pathlib import Path
+
+        from fastmcp.server.providers.skills import SkillsDirectoryProvider
+
+        skills_dir = Path(__file__).parent / "resources" / "skills"
+        if not skills_dir.is_dir():
+            logger.warning("Skills directory not found: %s", skills_dir)
+            return
+
+        self.mcp.add_provider(SkillsDirectoryProvider(roots=skills_dir))
+        logger.info("Bundled skills provider registered from %s", skills_dir)
 
     def _initialize_server(self) -> None:
         """Initialize all server components."""
