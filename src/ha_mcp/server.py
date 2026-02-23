@@ -80,6 +80,7 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
 
             self.mcp.add_middleware(FirstCallDocsMiddleware(
                 docs_expiry_seconds=self.settings.first_call_docs_expiry,
+                exclude_tools={"ha_report_issue"},
             ))
             logger.info(
                 "First-call docs middleware enabled (expiry=%ds)",
