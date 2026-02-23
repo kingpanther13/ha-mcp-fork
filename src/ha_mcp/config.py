@@ -85,7 +85,7 @@ class Settings(BaseSettings):
 
     # How long (seconds) before first-call docs expire and are re-delivered.
     # New conversations after this timeout get fresh docs automatically.
-    first_call_docs_expiry: int = Field(120, alias="FIRST_CALL_DOCS_EXPIRY")
+    first_call_docs_expiry: int = Field(600, alias="FIRST_CALL_DOCS_EXPIRY")
 
     @property
     def env_file_name(self) -> str:
