@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import re
+import time
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,13 +14,6 @@ from ha_mcp.middleware.first_call_docs import (
     _extract_first_line,
 )
 
-
-def _extract_ack_token(result) -> str:
-    """Extract the ack token from a docs delivery ToolResult."""
-    text = result.structured_content["documentation"]
-    match = re.search(r"_docs_ack: ([a-f0-9]{6})", text)
-    assert match, f"No ack token found in documentation text: {text[-200:]}"
-    return match.group(1)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,19 +41,13 @@ class FakeTool:
 def _make_context(
     tool_name: str = "",
     arguments: dict | None = None,
-    session_id: str = "test-session-1",
 ) -> MagicMock:
     """Create a mock MiddlewareContext for on_call_tool."""
     ctx = MagicMock()
     ctx.message = MagicMock()
     ctx.message.name = tool_name
     ctx.message.arguments = arguments or {}
-
-    # Simulate fastmcp_context with session_id
-    fastmcp_ctx = MagicMock()
-    fastmcp_ctx.request_context = MagicMock()
-    fastmcp_ctx.session_id = session_id
-    ctx.fastmcp_context = fastmcp_ctx
+    ctx.fastmcp_context = None
     return ctx
 
 
@@ -148,8 +135,8 @@ class TestOnListTools:
         )
 
     @pytest.mark.asyncio
-    async def test_gated_tools_get_docs_ack_in_schema(self):
-        """Gated tools have _docs_ack injected into their parameter schema."""
+    async def test_gated_tools_schema_unchanged(self):
+        """Gated tools do NOT get schema modifications (no _docs_ack injection)."""
         middleware = FirstCallDocsMiddleware(min_description_length=50)
         long_desc = "Create automation. " + "x" * 500
         tool = FakeTool(
@@ -167,14 +154,14 @@ class TestOnListTools:
         result = await middleware.on_list_tools(_make_list_context(), call_next)
 
         params = result[0].parameters
-        assert "_docs_ack" in params["properties"]
-        assert params["properties"]["_docs_ack"]["type"] == "string"
+        # Schema should be unchanged — no _docs_ack injection
+        assert "_docs_ack" not in params.get("properties", {})
         # Original properties preserved
         assert "config" in params["properties"]
 
     @pytest.mark.asyncio
-    async def test_short_tools_no_docs_ack_in_schema(self):
-        """Short-description tools do NOT get _docs_ack injected."""
+    async def test_short_tools_schema_unchanged(self):
+        """Short-description tools keep their original schema."""
         middleware = FirstCallDocsMiddleware(min_description_length=500)
         tool = FakeTool(
             name="ha_get_state",
@@ -292,17 +279,16 @@ class TestOnCallTool:
         call_next.assert_not_awaited()
 
         # Result should contain the full docs
-        content = result.content[0].text
+        content = result.content
         assert "REQUIRED DOCUMENTATION" in content
         assert "ha_config_set_automation" in content
         assert "detailed docs" in content
         assert "Call ha_config_set_automation again" in content
-        assert "_docs_ack" in content
 
     @pytest.mark.asyncio
-    async def test_second_call_executes(self):
-        """Second call to a gated tool (after docs delivered) executes normally."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
+    async def test_second_call_executes_within_expiry(self):
+        """Second call to a gated tool (within expiry) executes normally."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50, docs_expiry_seconds=60)
         middleware._full_descriptions["ha_config_set_automation"] = "docs " * 100
 
         call_next = AsyncMock(return_value="execution result")
@@ -312,7 +298,7 @@ class TestOnCallTool:
         await middleware.on_call_tool(context, call_next)
         call_next.assert_not_awaited()
 
-        # Second call — should execute
+        # Second call — should execute (within expiry window)
         call_next.reset_mock()
         result = await middleware.on_call_tool(context, call_next)
 
@@ -320,131 +306,55 @@ class TestOnCallTool:
         assert result == "execution result"
 
     @pytest.mark.asyncio
-    async def test_different_sessions_independent(self):
-        """Two different sessions each need their own docs delivery."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
+    async def test_expired_docs_redeliver(self):
+        """After expiry, docs are delivered again."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50, docs_expiry_seconds=60)
         middleware._full_descriptions["ha_tool"] = "docs " * 100
 
         call_next = AsyncMock(return_value="executed")
 
-        # Session 1 — first call gets docs
-        ctx1 = _make_context(tool_name="ha_tool", session_id="session-A")
-        result1 = await middleware.on_call_tool(ctx1, call_next)
+        # First call — gets docs
+        ctx = _make_context(tool_name="ha_tool")
+        result1 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result1.content[0].text
+        assert "REQUIRED DOCUMENTATION" in result1.content
 
-        # Session 2 — also gets docs (independent)
+        # Simulate expiry by backdating the timestamp
+        middleware._docs_delivered_at["ha_tool"] -= 61
+
+        # Next call — docs expired, should get docs again
         call_next.reset_mock()
-        ctx2 = _make_context(tool_name="ha_tool", session_id="session-B")
-        result2 = await middleware.on_call_tool(ctx2, call_next)
+        result2 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
+        assert "REQUIRED DOCUMENTATION" in result2.content
 
-        # Session 1 — second call executes
+    @pytest.mark.asyncio
+    async def test_per_tool_independent_tracking(self):
+        """Each tool has its own independent expiry timestamp."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50, docs_expiry_seconds=60)
+        middleware._full_descriptions["ha_tool_a"] = "docs A " * 100
+        middleware._full_descriptions["ha_tool_b"] = "docs B " * 100
+
+        call_next = AsyncMock(return_value="executed")
+
+        # Tool A — first call gets docs
+        ctx_a = _make_context(tool_name="ha_tool_a")
+        result_a1 = await middleware.on_call_tool(ctx_a, call_next)
+        call_next.assert_not_awaited()
+        assert "REQUIRED DOCUMENTATION" in result_a1.content
+
+        # Tool A — second call executes
         call_next.reset_mock()
-        result3 = await middleware.on_call_tool(ctx1, call_next)
+        result_a2 = await middleware.on_call_tool(ctx_a, call_next)
         call_next.assert_awaited_once()
-        assert result3 == "executed"
+        assert result_a2 == "executed"
 
-    @pytest.mark.asyncio
-    async def test_ack_token_in_docs_response(self):
-        """Docs response includes an ack token in the documentation text."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        call_next = AsyncMock(return_value="executed")
-
-        ctx = _make_context(tool_name="ha_tool", session_id="session-A")
-        result = await middleware.on_call_tool(ctx, call_next)
-
-        sc = result.structured_content
-        assert sc["status"] == "documentation_required"
-        # Token is embedded in the documentation text
-        token = _extract_ack_token(result)
-        assert len(token) == 6  # token_hex(3) = 6 chars
-
-    @pytest.mark.asyncio
-    async def test_ack_token_unlocks_unstable_session(self):
-        """Ack token allows execution even when session_id changes (proxy/tunnel).
-
-        Simulates the Cloudflare tunnel scenario: each HTTP request gets a
-        new session_id, but the LLM echoes back the ack token to prove it
-        received the documentation.
-        """
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        call_next = AsyncMock(return_value="executed")
-
-        # Request 1 (session X1) — gets docs + token
-        ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
-        result1 = await middleware.on_call_tool(ctx1, call_next)
+        # Tool B — first call still gets docs (independent of Tool A)
+        call_next.reset_mock()
+        ctx_b = _make_context(tool_name="ha_tool_b")
+        result_b1 = await middleware.on_call_tool(ctx_b, call_next)
         call_next.assert_not_awaited()
-        token = _extract_ack_token(result1)
-
-        # Request 2 (session X2, different!) — includes ack token → executes
-        call_next.reset_mock()
-        ctx2 = _make_context(
-            tool_name="ha_tool",
-            session_id="ephemeral-2",
-            arguments={"entity_id": "light.kitchen", "_docs_ack": token},
-        )
-        result2 = await middleware.on_call_tool(ctx2, call_next)
-        call_next.assert_awaited_once()
-        assert result2 == "executed"
-
-    @pytest.mark.asyncio
-    async def test_ack_token_stripped_from_arguments(self):
-        """The _docs_ack parameter is stripped before forwarding to the tool."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        # Capture what arguments call_next receives
-        async def capture_call_next(ctx):
-            return ctx.message.arguments
-
-        call_next = AsyncMock(side_effect=capture_call_next)
-
-        # First call — get docs + token
-        ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
-        result1 = await middleware.on_call_tool(ctx1, call_next)
-        token = _extract_ack_token(result1)
-
-        # Second call with token — verify it's stripped
-        call_next.reset_mock()
-        args = {"entity_id": "light.kitchen", "_docs_ack": token}
-        ctx2 = _make_context(
-            tool_name="ha_tool",
-            session_id="ephemeral-2",
-            arguments=args,
-        )
-        await middleware.on_call_tool(ctx2, call_next)
-        call_next.assert_awaited_once()
-        # The original args dict should have _docs_ack popped
-        assert "_docs_ack" not in args
-
-    @pytest.mark.asyncio
-    async def test_invalid_ack_token_delivers_docs_again(self):
-        """An invalid ack token triggers fresh docs delivery."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        call_next = AsyncMock(return_value="executed")
-
-        # First call — get docs
-        ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
-        await middleware.on_call_tool(ctx1, call_next)
-
-        # Second call with WRONG token — gets docs again
-        call_next.reset_mock()
-        ctx2 = _make_context(
-            tool_name="ha_tool",
-            session_id="ephemeral-2",
-            arguments={"_docs_ack": "wrong!"},
-        )
-        result2 = await middleware.on_call_tool(ctx2, call_next)
-        call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
+        assert "REQUIRED DOCUMENTATION" in result_b1.content
 
     @pytest.mark.asyncio
     async def test_excluded_tool_executes_immediately(self):
@@ -453,8 +363,6 @@ class TestOnCallTool:
             min_description_length=50,
             exclude_tools={"ha_special"},
         )
-        # Even if somehow docs are captured, excluded tools should bypass
-        # (in practice they won't be captured because on_list_tools checks too)
 
         call_next = AsyncMock(return_value="executed")
         context = _make_context(tool_name="ha_special")
@@ -463,27 +371,6 @@ class TestOnCallTool:
 
         call_next.assert_awaited_once()
         assert result == "executed"
-
-    @pytest.mark.asyncio
-    async def test_session_id_fallback(self):
-        """When session_id is unavailable, falls back to __default__."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        call_next = AsyncMock()
-
-        # Context with no fastmcp_context
-        ctx = MagicMock()
-        ctx.message = MagicMock()
-        ctx.message.name = "ha_tool"
-        ctx.message.arguments = {}
-        ctx.fastmcp_context = None
-
-        result = await middleware.on_call_tool(ctx, call_next)
-
-        # Should still work — using __default__ session key
-        assert "REQUIRED DOCUMENTATION" in result.content[0].text
-        assert "__default__" in middleware._docs_delivered
 
     @pytest.mark.asyncio
     async def test_docs_response_instructs_to_call_same_tool(self):
@@ -495,10 +382,9 @@ class TestOnCallTool:
         context = _make_context(tool_name="ha_my_tool")
 
         result = await middleware.on_call_tool(context, call_next)
-        content = result.content[0].text
+        content = result.content
 
         assert "Call ha_my_tool again" in content
-        assert "_docs_ack" in content
         assert "ACTION REQUIRED" in content
 
     @pytest.mark.asyncio
@@ -515,7 +401,6 @@ class TestOnCallTool:
         assert result.structured_content is not None
         assert result.structured_content["status"] == "documentation_required"
         assert "Full documentation here." in result.structured_content["documentation"]
-        assert "_docs_ack" in result.structured_content["documentation"]
 
     @pytest.mark.asyncio
     async def test_docs_response_has_meta_for_schema_bypass(self):
@@ -534,56 +419,21 @@ class TestOnCallTool:
         assert isinstance(result.meta, dict)
 
     @pytest.mark.asyncio
-    async def test_session_lru_eviction(self):
-        """Oldest sessions are evicted when the cache reaches capacity."""
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
-        middleware._MAX_SESSIONS = 3  # Small cap for testing
-        middleware._full_descriptions["ha_tool"] = "docs " * 100
-
-        call_next = AsyncMock()
-
-        # Fill up 3 sessions
-        for i in range(3):
-            ctx = _make_context(tool_name="ha_tool", session_id=f"session-{i}")
-            await middleware.on_call_tool(ctx, call_next)
-
-        assert len(middleware._docs_delivered) == 3
-        assert "session-0" in middleware._docs_delivered
-
-        # Add a 4th session — should evict session-0
-        ctx4 = _make_context(tool_name="ha_tool", session_id="session-3")
-        await middleware.on_call_tool(ctx4, call_next)
-
-        assert len(middleware._docs_delivered) == 3
-        assert "session-0" not in middleware._docs_delivered
-        assert "session-3" in middleware._docs_delivered
-
-    @pytest.mark.asyncio
-    async def test_expired_ack_token_rejected(self):
-        """An expired ack token (>4 hours old) is rejected."""
-        from ha_mcp.middleware.first_call_docs import _TOKEN_TTL_SECONDS
-
-        middleware = FirstCallDocsMiddleware(min_description_length=50)
+    async def test_zero_expiry_always_delivers_docs(self):
+        """With expiry=0, docs are delivered on every call."""
+        middleware = FirstCallDocsMiddleware(min_description_length=50, docs_expiry_seconds=0)
         middleware._full_descriptions["ha_tool"] = "docs " * 100
 
         call_next = AsyncMock(return_value="executed")
 
-        # Request 1 — get docs + token
-        ctx1 = _make_context(tool_name="ha_tool", session_id="ephemeral-1")
-        result1 = await middleware.on_call_tool(ctx1, call_next)
+        # First call — docs
+        ctx = _make_context(tool_name="ha_tool")
+        result1 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        token = _extract_ack_token(result1)
+        assert "REQUIRED DOCUMENTATION" in result1.content
 
-        # Backdate the token's timestamp so it looks older than the TTL
-        middleware._ack_tokens["ha_tool"][token] -= _TOKEN_TTL_SECONDS + 1
-
-        # Request 2 with expired token — should get docs again, not execute
+        # Second call — still docs (expiry=0 means always expired)
         call_next.reset_mock()
-        ctx2 = _make_context(
-            tool_name="ha_tool",
-            session_id="ephemeral-2",
-            arguments={"entity_id": "light.kitchen", "_docs_ack": token},
-        )
-        result2 = await middleware.on_call_tool(ctx2, call_next)
+        result2 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
+        assert "REQUIRED DOCUMENTATION" in result2.content

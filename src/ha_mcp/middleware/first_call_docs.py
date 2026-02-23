@@ -20,7 +20,7 @@ import logging
 import re
 import time
 from collections.abc import Sequence
-from typing import Any, override
+from typing import override
 
 import mcp.types as mt
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
