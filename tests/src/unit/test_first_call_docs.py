@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -136,7 +135,7 @@ class TestOnListTools:
 
     @pytest.mark.asyncio
     async def test_gated_tools_schema_unchanged(self):
-        """Gated tools do NOT get schema modifications (no _docs_ack injection)."""
+        """Gated tools keep their original schema (only description changes)."""
         middleware = FirstCallDocsMiddleware(min_description_length=50)
         long_desc = "Create automation. " + "x" * 500
         tool = FakeTool(
@@ -154,10 +153,9 @@ class TestOnListTools:
         result = await middleware.on_list_tools(_make_list_context(), call_next)
 
         params = result[0].parameters
-        # Schema should be unchanged — no _docs_ack injection
-        assert "_docs_ack" not in params.get("properties", {})
-        # Original properties preserved
-        assert "config" in params["properties"]
+        # Schema should be unchanged — no extra properties injected
+        assert params["properties"] == {"config": {"type": "object"}}
+        assert params["required"] == ["config"]
 
     @pytest.mark.asyncio
     async def test_short_tools_schema_unchanged(self):
@@ -176,7 +174,7 @@ class TestOnListTools:
         call_next = AsyncMock(return_value=[tool])
         result = await middleware.on_list_tools(_make_list_context(), call_next)
 
-        assert "_docs_ack" not in result[0].parameters["properties"]
+        assert result[0].parameters["properties"] == {"entity_id": {"type": "string"}}
 
     @pytest.mark.asyncio
     async def test_full_description_captured(self):
@@ -279,7 +277,7 @@ class TestOnCallTool:
         call_next.assert_not_awaited()
 
         # Result should contain the full docs
-        content = result.content
+        content = result.content[0].text
         assert "REQUIRED DOCUMENTATION" in content
         assert "ha_config_set_automation" in content
         assert "detailed docs" in content
@@ -317,7 +315,7 @@ class TestOnCallTool:
         ctx = _make_context(tool_name="ha_tool")
         result1 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result1.content
+        assert "REQUIRED DOCUMENTATION" in result1.content[0].text
 
         # Simulate expiry by backdating the timestamp
         middleware._docs_delivered_at["ha_tool"] -= 61
@@ -326,7 +324,7 @@ class TestOnCallTool:
         call_next.reset_mock()
         result2 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content
+        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
 
     @pytest.mark.asyncio
     async def test_per_tool_independent_tracking(self):
@@ -341,7 +339,7 @@ class TestOnCallTool:
         ctx_a = _make_context(tool_name="ha_tool_a")
         result_a1 = await middleware.on_call_tool(ctx_a, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result_a1.content
+        assert "REQUIRED DOCUMENTATION" in result_a1.content[0].text
 
         # Tool A — second call executes
         call_next.reset_mock()
@@ -354,7 +352,7 @@ class TestOnCallTool:
         ctx_b = _make_context(tool_name="ha_tool_b")
         result_b1 = await middleware.on_call_tool(ctx_b, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result_b1.content
+        assert "REQUIRED DOCUMENTATION" in result_b1.content[0].text
 
     @pytest.mark.asyncio
     async def test_excluded_tool_executes_immediately(self):
@@ -382,7 +380,7 @@ class TestOnCallTool:
         context = _make_context(tool_name="ha_my_tool")
 
         result = await middleware.on_call_tool(context, call_next)
-        content = result.content
+        content = result.content[0].text
 
         assert "Call ha_my_tool again" in content
         assert "ACTION REQUIRED" in content
@@ -430,10 +428,10 @@ class TestOnCallTool:
         ctx = _make_context(tool_name="ha_tool")
         result1 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result1.content
+        assert "REQUIRED DOCUMENTATION" in result1.content[0].text
 
         # Second call — still docs (expiry=0 means always expired)
         call_next.reset_mock()
         result2 = await middleware.on_call_tool(ctx, call_next)
         call_next.assert_not_awaited()
-        assert "REQUIRED DOCUMENTATION" in result2.content
+        assert "REQUIRED DOCUMENTATION" in result2.content[0].text
