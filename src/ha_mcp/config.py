@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # mandatory documentation delivery on first use per session
     enable_first_call_docs: bool = Field(True, alias="ENABLE_FIRST_CALL_DOCS")
 
+    # How long (seconds) before first-call docs expire and are re-delivered.
+    # New conversations after this timeout get fresh docs automatically.
+    first_call_docs_expiry: int = Field(120, alias="FIRST_CALL_DOCS_EXPIRY")
+
     @property
     def env_file_name(self) -> str:
         """Get the current environment file name."""

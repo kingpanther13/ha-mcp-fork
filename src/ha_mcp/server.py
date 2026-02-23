@@ -78,8 +78,13 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         if self.settings.enable_first_call_docs:
             from .middleware.first_call_docs import FirstCallDocsMiddleware
 
-            self.mcp.add_middleware(FirstCallDocsMiddleware())
-            logger.info("First-call docs middleware enabled")
+            self.mcp.add_middleware(FirstCallDocsMiddleware(
+                docs_expiry_seconds=self.settings.first_call_docs_expiry,
+            ))
+            logger.info(
+                "First-call docs middleware enabled (expiry=%ds)",
+                self.settings.first_call_docs_expiry,
+            )
 
         # Register all tools and expert prompts
         self._initialize_server()

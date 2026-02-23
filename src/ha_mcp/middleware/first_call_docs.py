@@ -1,27 +1,24 @@
 """First-Call Docs middleware for progressive disclosure of tool documentation.
 
 Compresses tool descriptions in tools/list responses and enforces mandatory
-documentation delivery on the first call to each tool per session. Tools
-cannot execute until the LLM has received their full documentation.
+documentation delivery on the first call to each tool. Tools cannot execute
+until the LLM has received their full documentation.
 
 Tools with short descriptions (below a configurable character threshold)
 are exempt and execute immediately without a documentation gate.
 
-For transports with unstable sessions (e.g., proxied/tunneled connections
-where each HTTP request gets a new session_id), the middleware uses a
-token-based acknowledgment mechanism: docs include a short token that the
-LLM must echo back via a ``_docs_ack`` argument to prove it received the
-documentation. This is analogous to the ATIS pattern in aviation — pilots
-report the ATIS code to prove they have current information.
+Tracking uses a global time-based expiry: after docs are delivered for a
+tool, the entry expires after a configurable timeout (default 10 minutes).
+This ensures new conversations get fresh docs even when the server process
+persists across multiple chat sessions, while avoiding redundant docs
+delivery within a single conversation.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-import secrets
 import time
-from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any, override
 
@@ -31,14 +28,8 @@ from fastmcp.tools.tool import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-# Argument name used by LLMs to acknowledge documentation receipt.
-_DOCS_ACK_PARAM = "_docs_ack"
-
-# Maximum number of outstanding ack tokens per tool before oldest are pruned.
-_MAX_TOKENS_PER_TOOL = 100
-
-# Token time-to-live in seconds (4 hours).
-_TOKEN_TTL_SECONDS = 4 * 60 * 60
+# Default docs expiry in seconds (10 minutes).
+_DEFAULT_DOCS_EXPIRY_SECONDS = 10 * 60
 
 
 def _extract_first_line(description: str) -> str:
@@ -73,22 +64,12 @@ def _extract_first_line(description: str) -> str:
 class FirstCallDocsMiddleware(Middleware):
     """Middleware that enforces documentation delivery before tool execution.
 
-    On first call to a gated tool in a session, returns full documentation
-    instead of executing. The tool CANNOT execute until docs have been
-    delivered. Tools with short descriptions are exempt.
+    On first call to a gated tool, returns full documentation instead of
+    executing. The tool executes normally on subsequent calls within the
+    expiry window. After the window expires, docs are delivered again
+    (for new conversations that start after the previous one ended).
 
-    Two mechanisms are used to track docs delivery:
-
-    1. **Session-based** (primary): For transports with stable session IDs,
-       the middleware tracks which tools have received docs per session.
-       Second call from the same session executes without a token.
-
-    2. **Token-based** (fallback): For transports with unstable sessions
-       (e.g., each HTTP request gets a new session_id through a proxy),
-       the docs response includes a short acknowledgment token. The LLM
-       echoes it back via a ``_docs_ack`` argument to prove it read the
-       docs. The middleware strips ``_docs_ack`` before forwarding to the
-       actual tool handler.
+    Tools with short descriptions are exempt and execute immediately.
 
     Args:
         min_description_length: Character threshold for gating. Tools with
@@ -96,43 +77,30 @@ class FirstCallDocsMiddleware(Middleware):
             documentation gate. Default: 500.
         exclude_tools: Optional set of tool names that should always bypass
             the documentation gate regardless of description length.
+        docs_expiry_seconds: How long (in seconds) before docs delivery
+            tracking expires. After this time, the next call will deliver
+            docs again. Default: 600 (10 minutes).
     """
-
-    # Maximum number of sessions to track before evicting the oldest.
-    # Prevents unbounded memory growth in long-running HTTP servers.
-    _MAX_SESSIONS = 1000
-
-    _BUILD = "2026-02-22-B"
 
     def __init__(
         self,
         min_description_length: int = 500,
         exclude_tools: set[str] | None = None,
+        docs_expiry_seconds: float = _DEFAULT_DOCS_EXPIRY_SECONDS,
     ) -> None:
-        logger.warning("FirstCallDocsMiddleware init — build %s", self._BUILD)
         self._min_length = min_description_length
         self._exclude_tools = exclude_tools or set()
+        self._docs_expiry = docs_expiry_seconds
         # tool_name -> full description text (captured on first tools/list)
         self._full_descriptions: dict[str, str] = {}
-        # session_key -> set of tool names that have received docs
-        # OrderedDict for LRU eviction of oldest sessions
-        self._docs_delivered: OrderedDict[str, set[str]] = OrderedDict()
-        # tool_name -> {token: monotonic_timestamp} (for unstable-session fallback)
-        self._ack_tokens: dict[str, dict[str, float]] = {}
+        # tool_name -> monotonic timestamp of when docs were delivered
+        self._docs_delivered_at: dict[str, float] = {}
 
-    def _get_session_key(self, context: MiddlewareContext[Any]) -> str:
-        """Get a stable session key for tracking docs delivery.
-
-        Uses Context.session_id when available (HTTP transports).
-        Falls back to "__default__" for stdio (single concurrent session).
-        """
-        ctx = context.fastmcp_context
-        if ctx is not None and ctx.request_context is not None:
-            try:
-                return ctx.session_id
-            except (RuntimeError, AttributeError):
-                pass
-        return "__default__"
+        logger.info(
+            "FirstCallDocsMiddleware initialized (min_length=%d, expiry=%ds)",
+            self._min_length,
+            int(self._docs_expiry),
+        )
 
     def _should_gate(self, tool: Tool) -> bool:
         """Check if a tool should be gated behind first-call docs."""
@@ -141,34 +109,12 @@ class FirstCallDocsMiddleware(Middleware):
         desc = tool.description or ""
         return len(desc) >= self._min_length
 
-    def _generate_ack_token(self, tool_name: str) -> str:
-        """Generate and store an ack token for a tool.
-
-        Returns a short hex token. Tokens expire after ``_TOKEN_TTL_SECONDS``.
-        Prunes oldest tokens if the per-tool limit is exceeded.
-        """
-        now = time.monotonic()
-        token = secrets.token_hex(3)  # 6-char hex string
-        tokens = self._ack_tokens.setdefault(tool_name, {})
-        # Prune expired tokens first
-        tokens = {t: ts for t, ts in tokens.items() if now - ts < _TOKEN_TTL_SECONDS}
-        # Prune if still at capacity (clear and start fresh)
-        if len(tokens) >= _MAX_TOKENS_PER_TOOL:
-            tokens.clear()
-        tokens[token] = now
-        self._ack_tokens[tool_name] = tokens
-        return token
-
-    def _validate_ack_token(self, tool_name: str, token: str) -> bool:
-        """Check if an ack token is valid and not expired for a tool."""
-        tokens = self._ack_tokens.get(tool_name)
-        if tokens is None or token not in tokens:
+    def _docs_are_fresh(self, tool_name: str) -> bool:
+        """Check if docs were delivered recently (within expiry window)."""
+        delivered_at = self._docs_delivered_at.get(tool_name)
+        if delivered_at is None:
             return False
-        # Check expiry
-        if time.monotonic() - tokens[token] >= _TOKEN_TTL_SECONDS:
-            del tokens[token]
-            return False
-        return True
+        return (time.monotonic() - delivered_at) < self._docs_expiry
 
     @override
     async def on_list_tools(
@@ -199,41 +145,10 @@ class FirstCallDocsMiddleware(Middleware):
                     f"required documentation before it can execute.)"
                 )
 
-                # Inject _docs_ack into schema so clients can pass it back,
-                # and allow additional properties so transports that
-                # enforce schema validation won't reject it.
-                params = dict(tool.parameters) if tool.parameters else {}
-                props = dict(params.get("properties", {}))
-                props[_DOCS_ACK_PARAM] = {
-                    "type": "string",
-                    "description": "Documentation acknowledgment token.",
-                }
-                params["properties"] = props
-                params["additionalProperties"] = True
-
                 modified = tool.model_copy(update={
                     "description": compressed_desc,
-                    "parameters": params,
                 })
                 result.append(modified)
-
-                # Debug: log one example to verify schema injection
-                if tool.name == "ha_list_services":
-                    logger.warning(
-                        "SCHEMA DEBUG ha_list_services — "
-                        "additionalProperties=%s, properties_keys=%s, "
-                        "full_params=%s",
-                        modified.parameters.get("additionalProperties"),
-                        list(modified.parameters.get("properties", {}).keys()),
-                        modified.parameters,
-                    )
-                    # Also log what to_mcp_tool produces (the actual wire format)
-                    mcp_tool = modified.to_mcp_tool(name=modified.name)
-                    logger.warning(
-                        "MCP WIRE DEBUG ha_list_services — "
-                        "inputSchema=%s",
-                        mcp_tool.inputSchema,
-                    )
             else:
                 result.append(tool)
 
@@ -259,60 +174,25 @@ class FirstCallDocsMiddleware(Middleware):
         if tool_name not in self._full_descriptions:
             return await call_next(context)
 
-        # Check for ack token in arguments (strip before forwarding)
-        args = context.message.arguments or {}
-        ack_token = args.pop(_DOCS_ACK_PARAM, None)
-
-        # Session-based tracking (works for stable sessions)
-        session_key = self._get_session_key(context)
-        if session_key in self._docs_delivered:
-            # Move to end (most recently used)
-            self._docs_delivered.move_to_end(session_key)
-            seen = self._docs_delivered[session_key]
-        else:
-            # Evict oldest session if at capacity
-            while len(self._docs_delivered) >= self._MAX_SESSIONS:
-                evicted_key, _ = self._docs_delivered.popitem(last=False)
-                logger.debug("Evicted oldest session from docs cache: %s", evicted_key[:12])
-            seen: set[str] = set()
-            self._docs_delivered[session_key] = seen
-
-        # Path 1: Session already has docs for this tool — execute
-        if tool_name in seen:
+        # If docs were delivered recently, execute normally
+        if self._docs_are_fresh(tool_name):
             return await call_next(context)
 
-        # Path 2: Valid ack token — docs were received (unstable session fallback)
-        if ack_token and self._validate_ack_token(tool_name, str(ack_token)):
-            seen.add(tool_name)
-            logger.debug(
-                "Ack token validated for %s (session=%s)",
-                tool_name,
-                session_key[:12],
-            )
-            return await call_next(context)
-
-        # Path 3: No proof of docs delivery — deliver docs with ack token
-        seen.add(tool_name)
-        token = self._generate_ack_token(tool_name)
+        # First call (or expired) — deliver docs and record timestamp
+        self._docs_delivered_at[tool_name] = time.monotonic()
         docs = self._full_descriptions[tool_name]
         logger.debug(
-            "Delivering first-call docs for %s (session=%s, ack=%s)",
+            "Delivering first-call docs for %s (expiry=%ds)",
             tool_name,
-            session_key[:12],
-            token,
+            int(self._docs_expiry),
         )
-        # Embed the ack token directly in the documentation text so it
-        # survives any field-level filtering by MCP transports/clients.
-        docs_with_ack = (
-            f"{docs}\n\n"
-            f"ACTION REQUIRED: Call {tool_name} again with your intended "
-            f"arguments. You MUST include _docs_ack: {token} to confirm "
-            f"you have read this documentation."
-        )
+
         docs_text = (
             f"REQUIRED DOCUMENTATION \u2014 {tool_name}\n"
             f"{'=' * 50}\n\n"
-            f"{docs_with_ack}\n"
+            f"{docs}\n\n"
+            f"ACTION REQUIRED: Call {tool_name} again with your intended "
+            f"arguments to execute."
         )
         # meta={} causes to_mcp_result() to return a CallToolResult,
         # which bypasses outputSchema validation in the MCP low-level
@@ -323,7 +203,7 @@ class FirstCallDocsMiddleware(Middleware):
             structured_content={
                 "status": "documentation_required",
                 "tool": tool_name,
-                "documentation": docs_with_ack,
+                "documentation": docs,
             },
             meta={},
         )
