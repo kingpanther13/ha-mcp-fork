@@ -1,3 +1,9 @@
+> **This is a personal fork.** The `addon-repo` branch (default) is used to test PR branches on a real HA instance.
+> PRs go to [`upstream/master`](https://github.com/homeassistant-ai/ha-mcp), not this branch.
+> **See [`FORK-DEV.md`](FORK-DEV.md) for the addon-repo workflow and critical build steps.**
+
+---
+
 <div align="center">
   <img src="docs/img/ha-mcp-logo.png" alt="Home Assistant MCP Server Logo" width="300"/>
 
