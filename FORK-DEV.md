@@ -4,11 +4,28 @@ This branch (`addon-repo`) is the **default branch** on this fork. It serves as 
 
 **PRs are NOT based on this branch.** Feature branches go to `upstream/master` independently. This branch is always force-pushed to mirror whatever feature branch is being tested.
 
+> **A backup of this file lives at `~/.ha-mcp-fork-dev.md`.**
+> If `git reset --hard` wipes it, restore with: `cp ~/.ha-mcp-fork-dev.md ~/ha-mcp-fork/FORK-DEV.md`
+
 ## How It Works
 
 1. HA Supervisor clones this repo's default branch (`addon-repo`)
 2. It finds `homeassistant-addon-dev/config.yaml` and builds the Docker image from `homeassistant-addon-dev/Dockerfile`
 3. The addon runs the code from `homeassistant-addon-dev/src/ha_mcp/`
+
+## Dual `src/` Directories - READ THIS
+
+The repo has **two separate `src/ha_mcp/` directories**:
+
+```
+ha-mcp-fork/
+  src/ha_mcp/                          <-- repo root source (what PRs modify)
+  homeassistant-addon-dev/src/ha_mcp/  <-- addon source (what HA actually runs)
+```
+
+**The Dockerfile copies from `homeassistant-addon-dev/src/`, NOT from the root `src/`.** If you only edit files in the root `src/`, the addon will still run the OLD code. You must always sync changes into `homeassistant-addon-dev/src/ha_mcp/`.
+
+This is the #1 cause of "I pushed but the old code is still running" issues.
 
 ## Switching to a Different PR Branch
 
@@ -25,20 +42,25 @@ git reset --hard <feature-branch>
 The reset wipes addon-specific files that don't exist on feature branches. You **must** restore them:
 
 ```bash
-# 1. Copy build files into the addon directory
+# 1. Restore this documentation (gets wiped by reset!)
+cp ~/.ha-mcp-fork-dev.md FORK-DEV.md
+
+# 2. Restore the README banner
+#    Add at the very top of README.md:
+#    > **This is a personal fork.** See [`FORK-DEV.md`](FORK-DEV.md) for the addon-repo workflow.
+
+# 3. Copy build files into the addon directory
 cp pyproject.toml homeassistant-addon-dev/
 cp uv.lock homeassistant-addon-dev/
 cp homeassistant-addon/start.py homeassistant-addon-dev/
 
-# 2. Copy source code
+# 4. Copy source code (the critical sync step!)
 cp -r src/ha_mcp/* homeassistant-addon-dev/src/ha_mcp/
 
-# 3. Fix the Dockerfile (upstream references wrong path)
-#    Change: COPY homeassistant-addon/start.py /
-#    To:     COPY start.py /
+# 5. Fix the Dockerfile (upstream references wrong path)
 sed -i 's|COPY homeassistant-addon/start.py|COPY start.py|' homeassistant-addon-dev/Dockerfile
 
-# 4. Update config.yaml
+# 6. Update config.yaml:
 #    - Remove the `image:` line (forces local build instead of pulling from ghcr.io)
 #    - Set name to "Fork-Dev" (distinguishes from official addon)
 #    - Bump version (forces HA Supervisor to rebuild)
@@ -53,6 +75,7 @@ sed -i 's|COPY homeassistant-addon/start.py|COPY start.py|' homeassistant-addon-
 | `homeassistant-addon-dev/start.py` | Dockerfile `COPY start.py /` - addon entrypoint |
 | `homeassistant-addon-dev/src/ha_mcp/` | Dockerfile `COPY src/` - the actual server code |
 | `homeassistant-addon-dev/Dockerfile` | Must use `COPY start.py /` not `COPY homeassistant-addon/start.py /` |
+| `FORK-DEV.md` | This file - backup at `~/.ha-mcp-fork-dev.md` |
 
 The upstream Dockerfile is designed for CI builds where the build context is the repo root. When HA Supervisor builds locally, the build context is `homeassistant-addon-dev/` itself, so all paths must be relative to that directory.
 
@@ -83,14 +106,15 @@ cd ~/ha-mcp-fork
 git checkout addon-repo
 git reset --hard <feature-branch>
 
-# Restore addon-specific files
+# Restore docs and addon-specific files
+cp ~/.ha-mcp-fork-dev.md FORK-DEV.md
 cp pyproject.toml homeassistant-addon-dev/
 cp uv.lock homeassistant-addon-dev/
 cp homeassistant-addon/start.py homeassistant-addon-dev/
 cp -r src/ha_mcp/* homeassistant-addon-dev/src/ha_mcp/
 sed -i 's|COPY homeassistant-addon/start.py|COPY start.py|' homeassistant-addon-dev/Dockerfile
 
-# Edit config.yaml: remove image field, set name, bump version
+# Edit config.yaml: remove image field, set name "Fork-Dev", bump version
 # Then:
 git add -A
 git commit -m "chore: sync addon-repo to <feature-branch>"
