@@ -222,8 +222,14 @@ class PasswordGatedDocsMiddleware(Middleware):
         """Enforce password verification before tool execution."""
         tool_name = context.message.name
 
-        # Non-gated tools execute immediately.
+        # Non-gated tools execute immediately (strip _docs_password if present
+        # to prevent unexpected keyword argument errors).
         if tool_name not in self._full_descriptions:
+            arguments = context.message.arguments or {}
+            if _PASSWORD_PARAM in arguments:
+                context.message.arguments = {
+                    k: v for k, v in arguments.items() if k != _PASSWORD_PARAM
+                }
             return await call_next(context)
 
         # Extract password from arguments.

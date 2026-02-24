@@ -18,7 +18,10 @@ from fastmcp import Client
 
 import ha_mcp.config
 from ha_mcp.client import HomeAssistantClient
-from ha_mcp.middleware.password_gated_docs import _PASSWORD_PARAM, _REQUEST_DOCS_SENTINEL
+from ha_mcp.middleware.password_gated_docs import (
+    _PASSWORD_PARAM,
+    _REQUEST_DOCS_SENTINEL,
+)
 from ha_mcp.server import HomeAssistantSmartMCPServer
 
 from ..utilities.assertions import parse_mcp_result
@@ -155,10 +158,10 @@ async def test_correct_password_executes(pgd_mcp_client):
     """Verify that calling with the correct password executes the tool."""
     logger.info("Testing correct password execution flow")
 
-    # Step 1: Request docs to get the password
+    # Step 1: Request docs to get the password (ha_list_services is gated)
     result1 = await pgd_mcp_client.call_tool(
-        "ha_get_system_health",
-        {_PASSWORD_PARAM: _REQUEST_DOCS_SENTINEL},
+        "ha_list_services",
+        {"domain": "light", _PASSWORD_PARAM: _REQUEST_DOCS_SENTINEL},
     )
     data1 = parse_mcp_result(result1)
     if "raw_response" not in data1:
@@ -177,10 +180,10 @@ async def test_correct_password_executes(pgd_mcp_client):
 
     logger.info(f"  Got password: {password[:4]}...")
 
-    # Step 2: Call again with the correct password
+    # Step 2: Call again with the correct password — should execute
     result2 = await pgd_mcp_client.call_tool(
-        "ha_get_system_health",
-        {_PASSWORD_PARAM: password},
+        "ha_list_services",
+        {"domain": "light", _PASSWORD_PARAM: password},
     )
     data2 = parse_mcp_result(result2)
 
