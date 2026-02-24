@@ -136,10 +136,35 @@ class PasswordGatedDocsMiddleware(Middleware):
         payload = f"{tool_name}:{time_bucket}".encode()
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()[:16]
 
+    def _generate_password_for_bucket(
+        self, tool_name: str, time_bucket: int
+    ) -> str:
+        """Generate a password for a specific time bucket."""
+        payload = f"{tool_name}:{time_bucket}".encode()
+        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()[:16]
+
     def _verify_password(self, tool_name: str, password: str) -> bool:
-        """Check if the given password matches the current password."""
-        expected = self._generate_password(tool_name)
-        return hmac.compare_digest(password, expected)
+        """Check if the given password matches the current or previous password.
+
+        Accepts the previous time bucket's password as well to handle
+        rotation boundaries gracefully — an LLM that received a password
+        just before a rotation should still be able to use it.
+        """
+        if hmac.compare_digest(password, self._generate_password(tool_name)):
+            return True
+
+        # Grace period: also accept the previous bucket's password.
+        if self._rotation_seconds > 0:
+            prev_bucket = (
+                int(time.time()) // int(self._rotation_seconds)
+            ) - 1
+            prev_password = self._generate_password_for_bucket(
+                tool_name, prev_bucket
+            )
+            if hmac.compare_digest(password, prev_password):
+                return True
+
+        return False
 
     @staticmethod
     def _add_password_param(tool: Tool, description: str) -> Tool:

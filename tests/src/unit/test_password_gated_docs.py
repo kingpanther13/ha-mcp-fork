@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ha_mcp.middleware.password_gated_docs import (
-    PasswordGatedDocsMiddleware,
     _PASSWORD_PARAM,
     _REQUEST_DOCS_SENTINEL,
+    PasswordGatedDocsMiddleware,
     _extract_first_line,
 )
 
@@ -504,3 +504,50 @@ class TestOnCallTool:
 
         call_next.assert_not_awaited()
         assert "REQUIRED DOCUMENTATION" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_previous_bucket_password_accepted_grace_period(self):
+        """Password from the previous rotation bucket is accepted (grace period)."""
+        mw = PasswordGatedDocsMiddleware(
+            min_description_length=50, password_rotation_seconds=60
+        )
+        mw._full_descriptions["ha_tool"] = "docs " * 100
+
+        # Get the previous bucket's password directly
+        prev_password = mw._generate_password_for_bucket(
+            "ha_tool",
+            (int(__import__("time").time()) // 60) - 1,
+        )
+
+        call_next = AsyncMock(return_value="executed")
+        context = _make_context(
+            tool_name="ha_tool",
+            arguments={_PASSWORD_PARAM: prev_password},
+        )
+
+        result = await mw.on_call_tool(context, call_next)
+
+        call_next.assert_awaited_once()
+        assert result == "executed"
+
+    @pytest.mark.asyncio
+    async def test_non_gated_tool_password_stripped(self):
+        """Non-gated tools have _docs_password stripped to avoid validation errors."""
+        mw = PasswordGatedDocsMiddleware(min_description_length=500)
+        # No tools gated (nothing in _full_descriptions)
+
+        call_next = AsyncMock(return_value="executed")
+        context = _make_context(
+            tool_name="ha_get_state",
+            arguments={
+                "entity_id": "sun.sun",
+                _PASSWORD_PARAM: "some_stale_password",
+            },
+        )
+
+        result = await mw.on_call_tool(context, call_next)
+
+        call_next.assert_awaited_once()
+        assert result == "executed"
+        # Password should have been stripped
+        assert context.message.arguments == {"entity_id": "sun.sun"}
