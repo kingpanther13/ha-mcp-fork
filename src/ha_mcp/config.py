@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     # that don't support MCP resources natively.
     enable_skills_as_tools: bool = Field(False, alias="ENABLE_SKILLS_AS_TOOLS")
 
+    # Password-gated docs middleware - compresses tool descriptions and
+    # enforces password verification before tool execution. Each tool gets
+    # a unique password that rotates at the configured interval.
+    enable_password_gated_docs: bool = Field(True, alias="ENABLE_PASSWORD_GATED_DOCS")
+
+    # How long (seconds) before tool passwords rotate. New passwords are
+    # generated per tool at each rotation boundary.
+    password_gated_docs_rotation: int = Field(1800, alias="PASSWORD_GATED_DOCS_ROTATION")
+
     @property
     def env_file_name(self) -> str:
         """Get the current environment file name."""
