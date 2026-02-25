@@ -335,6 +335,33 @@ async def mcp_server(
     # Server cleanup handled by server.close()
 
 
+class _GatewayAwareClient:
+    """Wraps a FastMCP Client to route proxied tools through their gateways.
+
+    Tools listed in TOOL_CATEGORY_OVERRIDES are no longer direct MCP tools —
+    they are accessed via category gateways (e.g., ha_manage_helpers).
+    This wrapper transparently rewrites call_tool() calls so that E2E tests
+    can keep using the original tool names.
+    """
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+        from ha_mcp.tools.tool_proxy import TOOL_CATEGORY_OVERRIDES
+
+        self._overrides = TOOL_CATEGORY_OVERRIDES
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        gateway = self._overrides.get(name)
+        if gateway:
+            return await self._client.call_tool(
+                gateway, {"tool": name, "args": arguments or {}}
+            )
+        return await self._client.call_tool(name, arguments)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
 @pytest.fixture
 async def mcp_client(mcp_server) -> AsyncGenerator[Client]:
     """Create FastMCP client connected to our server."""
@@ -342,7 +369,7 @@ async def mcp_client(mcp_server) -> AsyncGenerator[Client]:
 
     async with client:
         logger.debug("🔗 FastMCP client connected (in-memory transport)")
-        yield client
+        yield _GatewayAwareClient(client)
 
 
 # Test session information
