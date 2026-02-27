@@ -13,6 +13,7 @@ from ha_mcp.middleware.password_gated_docs import (
     _REQUEST_DOCS_SENTINEL,
     PasswordGatedDocsMiddleware,
     _extract_first_line,
+    _password_from_description,
 )
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,36 @@ class TestExtractFirstLine:
 
 
 # ---------------------------------------------------------------------------
+# _password_from_description
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordFromDescription:
+    def test_deterministic(self):
+        """Same description always produces the same password."""
+        desc = "Some tool description " * 30
+        assert _password_from_description(desc) == _password_from_description(desc)
+
+    def test_different_descriptions_different_passwords(self):
+        """Different descriptions produce different passwords."""
+        pw_a = _password_from_description("Description A " * 30)
+        pw_b = _password_from_description("Description B " * 30)
+        assert pw_a != pw_b
+
+    def test_length(self):
+        """Password is 16 hex characters."""
+        pw = _password_from_description("test")
+        assert len(pw) == 16
+        assert all(c in "0123456789abcdef" for c in pw)
+
+    def test_changes_on_description_change(self):
+        """Password changes when description content changes."""
+        pw_v1 = _password_from_description("Create automation. Details v1.")
+        pw_v2 = _password_from_description("Create automation. Details v2.")
+        assert pw_v1 != pw_v2
+
+
+# ---------------------------------------------------------------------------
 # on_list_tools — description compression and schema injection
 # ---------------------------------------------------------------------------
 
@@ -176,6 +207,19 @@ class TestOnListTools:
         assert mw._full_descriptions["ha_config_set_automation"] == full_desc
 
     @pytest.mark.asyncio
+    async def test_password_derived_from_description(self):
+        """Password cached after on_list_tools matches description hash."""
+        mw = PasswordGatedDocsMiddleware(min_description_length=50)
+        full_desc = "Create automation. " + "detailed docs " * 50
+        tool = FakeTool(name="ha_config_set_automation", description=full_desc)
+
+        call_next = AsyncMock(return_value=[tool])
+        await mw.on_list_tools(_make_list_context(), call_next)
+
+        expected = _password_from_description(full_desc)
+        assert mw._passwords["ha_config_set_automation"] == expected
+
+    @pytest.mark.asyncio
     async def test_excluded_tools_unchanged(self):
         """Explicitly excluded tools bypass the gate."""
         mw = PasswordGatedDocsMiddleware(
@@ -253,6 +297,7 @@ class TestOnCallTool:
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
         full_docs = "Create automation. " + "detailed docs " * 50
         mw._full_descriptions["ha_config_set_automation"] = full_docs
+        mw._passwords["ha_config_set_automation"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="should not be called")
         context = _make_context(
@@ -274,7 +319,9 @@ class TestOnCallTool:
     async def test_no_password_returns_docs(self):
         """Calling without a password returns docs."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "docs " * 100
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="should not be called")
         context = _make_context(
@@ -291,7 +338,9 @@ class TestOnCallTool:
     async def test_wrong_password_returns_docs(self):
         """Calling with an incorrect password returns docs."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "docs " * 100
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="should not be called")
         context = _make_context(
@@ -308,15 +357,16 @@ class TestOnCallTool:
     async def test_correct_password_executes(self):
         """Calling with the correct password executes the tool."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "docs " * 100
-        password = mw._generate_password("ha_tool")
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="execution result")
         context = _make_context(
             tool_name="ha_tool",
             arguments={
                 "config": {"alias": "Test"},
-                _PASSWORD_PARAM: password,
+                _PASSWORD_PARAM: mw._passwords["ha_tool"],
             },
         )
 
@@ -329,15 +379,16 @@ class TestOnCallTool:
     async def test_password_stripped_before_execution(self):
         """The _docs_password is removed from arguments before tool execution."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "docs " * 100
-        password = mw._generate_password("ha_tool")
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="ok")
         context = _make_context(
             tool_name="ha_tool",
             arguments={
                 "entity_id": "light.kitchen",
-                _PASSWORD_PARAM: password,
+                _PASSWORD_PARAM: mw._passwords["ha_tool"],
             },
         )
 
@@ -348,60 +399,47 @@ class TestOnCallTool:
 
     @pytest.mark.asyncio
     async def test_passwords_are_unique_per_tool(self):
-        """Different tools get different passwords."""
+        """Different tools (with different descriptions) get different passwords."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
+        desc_a = "Tool A description. " + "a" * 500
+        desc_b = "Tool B description. " + "b" * 500
+        mw._full_descriptions["ha_tool_a"] = desc_a
+        mw._full_descriptions["ha_tool_b"] = desc_b
+        mw._passwords["ha_tool_a"] = _password_from_description(desc_a)
+        mw._passwords["ha_tool_b"] = _password_from_description(desc_b)
 
-        pw_a = mw._generate_password("ha_tool_a")
-        pw_b = mw._generate_password("ha_tool_b")
-
-        assert pw_a != pw_b
+        assert mw._passwords["ha_tool_a"] != mw._passwords["ha_tool_b"]
 
     @pytest.mark.asyncio
-    async def test_password_stable_within_rotation_window(self):
-        """Password stays the same within the rotation window."""
-        mw = PasswordGatedDocsMiddleware(
-            min_description_length=50, password_rotation_seconds=1800
-        )
+    async def test_password_stable_across_calls(self):
+        """Password stays the same across multiple calls (content-derived)."""
+        mw = PasswordGatedDocsMiddleware(min_description_length=50)
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
-        pw1 = mw._generate_password("ha_tool")
-        pw2 = mw._generate_password("ha_tool")
+        pw1 = mw._get_password("ha_tool")
+        pw2 = mw._get_password("ha_tool")
 
         assert pw1 == pw2
-
-    @pytest.mark.asyncio
-    async def test_password_changes_after_rotation(self):
-        """Password changes when the time bucket rolls over."""
-        mw = PasswordGatedDocsMiddleware(
-            min_description_length=50, password_rotation_seconds=60
-        )
-
-        pw1 = mw._generate_password("ha_tool")
-
-        # Simulate time passing beyond the rotation window by manipulating
-        # the secret and using a different time reference. Instead, we test
-        # with two different middleware instances with different secrets.
-        mw2 = PasswordGatedDocsMiddleware(
-            min_description_length=50, password_rotation_seconds=60
-        )
-        pw2 = mw2._generate_password("ha_tool")
-
-        # Different secrets → different passwords (testing the mechanism)
-        assert pw1 != pw2
 
     @pytest.mark.asyncio
     async def test_per_tool_independent_gating(self):
         """Each tool is gated independently."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool_a"] = "docs A " * 100
-        mw._full_descriptions["ha_tool_b"] = "docs B " * 100
-        pw_a = mw._generate_password("ha_tool_a")
+        desc_a = "docs A " * 100
+        desc_b = "docs B " * 100
+        mw._full_descriptions["ha_tool_a"] = desc_a
+        mw._full_descriptions["ha_tool_b"] = desc_b
+        mw._passwords["ha_tool_a"] = _password_from_description(desc_a)
+        mw._passwords["ha_tool_b"] = _password_from_description(desc_b)
 
         call_next = AsyncMock(return_value="executed")
 
         # Tool A with correct password — executes
         ctx_a = _make_context(
             tool_name="ha_tool_a",
-            arguments={_PASSWORD_PARAM: pw_a},
+            arguments={_PASSWORD_PARAM: mw._passwords["ha_tool_a"]},
         )
         result_a = await mw.on_call_tool(ctx_a, call_next)
         call_next.assert_awaited_once()
@@ -437,7 +475,9 @@ class TestOnCallTool:
     async def test_docs_response_includes_structured_content(self):
         """Docs response includes structured_content with password."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "Full documentation here."
+        full_docs = "Full documentation here."
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock()
         context = _make_context(
@@ -449,14 +489,16 @@ class TestOnCallTool:
 
         assert result.structured_content is not None
         assert result.structured_content["status"] == "documentation_required"
-        assert result.structured_content["password"] == mw._generate_password("ha_tool")
+        assert result.structured_content["password"] == mw._passwords["ha_tool"]
         assert "Full documentation here." in result.structured_content["documentation"]
 
     @pytest.mark.asyncio
     async def test_docs_response_has_meta_for_schema_bypass(self):
         """Docs response sets meta={} so to_mcp_result() returns CallToolResult."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "Docs here."
+        full_docs = "Docs here."
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock()
         context = _make_context(
@@ -473,7 +515,9 @@ class TestOnCallTool:
     async def test_empty_string_password_returns_docs(self):
         """An empty string password is treated as missing."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool"] = "docs " * 100
+        full_docs = "docs " * 100
+        mw._full_descriptions["ha_tool"] = full_docs
+        mw._passwords["ha_tool"] = _password_from_description(full_docs)
 
         call_next = AsyncMock(return_value="should not be called")
         context = _make_context(
@@ -490,45 +534,23 @@ class TestOnCallTool:
     async def test_tool_a_password_rejected_for_tool_b(self):
         """A password for tool A does not work for tool B."""
         mw = PasswordGatedDocsMiddleware(min_description_length=50)
-        mw._full_descriptions["ha_tool_a"] = "docs A " * 100
-        mw._full_descriptions["ha_tool_b"] = "docs B " * 100
-        pw_a = mw._generate_password("ha_tool_a")
+        desc_a = "docs A " * 100
+        desc_b = "docs B " * 100
+        mw._full_descriptions["ha_tool_a"] = desc_a
+        mw._full_descriptions["ha_tool_b"] = desc_b
+        mw._passwords["ha_tool_a"] = _password_from_description(desc_a)
+        mw._passwords["ha_tool_b"] = _password_from_description(desc_b)
 
         call_next = AsyncMock(return_value="should not execute")
         context = _make_context(
             tool_name="ha_tool_b",
-            arguments={_PASSWORD_PARAM: pw_a},
+            arguments={_PASSWORD_PARAM: mw._passwords["ha_tool_a"]},
         )
 
         result = await mw.on_call_tool(context, call_next)
 
         call_next.assert_not_awaited()
         assert "REQUIRED DOCUMENTATION" in result.content[0].text
-
-    @pytest.mark.asyncio
-    async def test_previous_bucket_password_accepted_grace_period(self):
-        """Password from the previous rotation bucket is accepted (grace period)."""
-        mw = PasswordGatedDocsMiddleware(
-            min_description_length=50, password_rotation_seconds=60
-        )
-        mw._full_descriptions["ha_tool"] = "docs " * 100
-
-        # Get the previous bucket's password directly
-        prev_password = mw._generate_password_for_bucket(
-            "ha_tool",
-            (int(__import__("time").time()) // 60) - 1,
-        )
-
-        call_next = AsyncMock(return_value="executed")
-        context = _make_context(
-            tool_name="ha_tool",
-            arguments={_PASSWORD_PARAM: prev_password},
-        )
-
-        result = await mw.on_call_tool(context, call_next)
-
-        call_next.assert_awaited_once()
-        assert result == "executed"
 
     @pytest.mark.asyncio
     async def test_non_gated_tool_password_stripped(self):

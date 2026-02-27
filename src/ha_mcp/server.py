@@ -89,13 +89,9 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
             from .middleware.password_gated_docs import PasswordGatedDocsMiddleware
 
             self.mcp.add_middleware(PasswordGatedDocsMiddleware(
-                password_rotation_seconds=self.settings.password_gated_docs_rotation,
                 exclude_tools={"ha_report_issue"},
             ))
-            logger.info(
-                "Password-gated docs middleware enabled (rotation=%ds)",
-                self.settings.password_gated_docs_rotation,
-            )
+            logger.info("Password-gated docs middleware enabled")
 
         # Register all tools and expert prompts
         self._initialize_server()

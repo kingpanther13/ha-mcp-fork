@@ -1,17 +1,21 @@
 """Password-gated first-call docs middleware for progressive disclosure.
 
 Compresses tool descriptions in tools/list responses and enforces password
-verification before tool execution. Each gated tool gets a unique password
-that rotates every 30 minutes.
+verification before tool execution. Each gated tool gets a unique, stable
+password derived from its description content (SHA-256 hash).
 
 Flow:
 1. tools/list returns compressed one-liner descriptions with a _docs_password
    parameter added to each gated tool's schema.
 2. LLM calls a gated tool with _docs_password='REQUEST_DOCS' (or any
-   invalid password) — middleware returns full documentation + the current
-   password for that tool.
+   invalid password) — middleware returns full documentation + the tool's
+   password.
 3. LLM calls the tool again with the correct password + real arguments —
    middleware strips _docs_password and forwards the call for execution.
+
+Passwords automatically change when a tool's description changes, ensuring
+the LLM re-reads updated docs. No server-side session tracking, no time-based
+rotation, no secrets — just a content-derived hash.
 
 Tools with short descriptions (below a configurable character threshold)
 are exempt and execute immediately without a password gate.
@@ -22,9 +26,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import os
 import re
-import time
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any, override
@@ -34,9 +36,6 @@ from fastmcp.server.middleware.middleware import CallNext, Middleware, Middlewar
 from fastmcp.tools.tool import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
-
-# Default password rotation in seconds (30 minutes).
-_DEFAULT_ROTATION_SECONDS = 30 * 60
 
 # Sentinel value that LLMs use on first call to request docs.
 _REQUEST_DOCS_SENTINEL = "REQUEST_DOCS"
@@ -71,14 +70,24 @@ def _extract_first_line(description: str) -> str:
     return first_line
 
 
+def _password_from_description(description: str) -> str:
+    """Derive a stable password from a tool's description content.
+
+    Returns the first 16 hex characters of the SHA-256 hash of the
+    description. The password changes if and only if the description
+    changes.
+    """
+    return hashlib.sha256(description.encode()).hexdigest()[:16]
+
+
 class PasswordGatedDocsMiddleware(Middleware):
     """Middleware that enforces password verification before tool execution.
 
-    Each gated tool requires a unique password that changes at a
-    configurable interval (default 30 minutes). On first call or with a
-    wrong/missing password, the middleware returns the tool's full
-    documentation together with the current password. Execution only
-    proceeds when the correct password is supplied.
+    Each gated tool requires a unique password derived from its full
+    description text (SHA-256 hash). On first call or with a wrong/missing
+    password, the middleware returns the tool's full documentation together
+    with the password. Execution only proceeds when the correct password
+    is supplied.
 
     The password is a declared parameter (_docs_password) in each gated
     tool's inputSchema, so it is not stripped by clients that enforce
@@ -90,29 +99,23 @@ class PasswordGatedDocsMiddleware(Middleware):
             password gate. Default: 500.
         exclude_tools: Optional set of tool names that should always bypass
             the password gate regardless of description length.
-        password_rotation_seconds: How long (in seconds) before the password
-            for each tool rotates. Default: 1800 (30 minutes).
     """
 
     def __init__(
         self,
         min_description_length: int = 500,
         exclude_tools: set[str] | None = None,
-        password_rotation_seconds: float = _DEFAULT_ROTATION_SECONDS,
     ) -> None:
         self._min_length = min_description_length
         self._exclude_tools = exclude_tools or set()
-        self._rotation_seconds = password_rotation_seconds
-        # Random secret generated once per server instance.
-        self._secret = os.urandom(32)
         # tool_name -> full description text (captured on first tools/list).
         self._full_descriptions: dict[str, str] = {}
+        # tool_name -> password (derived from description, cached).
+        self._passwords: dict[str, str] = {}
 
         logger.info(
-            "PasswordGatedDocsMiddleware initialized "
-            "(min_length=%d, rotation=%ds)",
+            "PasswordGatedDocsMiddleware initialized (min_length=%d)",
             self._min_length,
-            int(self._rotation_seconds),
         )
 
     # ------------------------------------------------------------------
@@ -126,45 +129,16 @@ class PasswordGatedDocsMiddleware(Middleware):
         desc = tool.description or ""
         return len(desc) >= self._min_length
 
-    def _generate_password(self, tool_name: str) -> str:
-        """Generate a unique password for a tool based on current time bucket."""
-        if self._rotation_seconds > 0:
-            time_bucket = int(time.time()) // int(self._rotation_seconds)
-        else:
-            # rotation=0 means password never stabilizes (always changes).
-            time_bucket = int(time.monotonic() * 1000)
-        payload = f"{tool_name}:{time_bucket}".encode()
-        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()[:16]
-
-    def _generate_password_for_bucket(
-        self, tool_name: str, time_bucket: int
-    ) -> str:
-        """Generate a password for a specific time bucket."""
-        payload = f"{tool_name}:{time_bucket}".encode()
-        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()[:16]
+    def _get_password(self, tool_name: str) -> str:
+        """Get the password for a tool (cached, derived from description)."""
+        return self._passwords[tool_name]
 
     def _verify_password(self, tool_name: str, password: str) -> bool:
-        """Check if the given password matches the current or previous password.
-
-        Accepts the previous time bucket's password as well to handle
-        rotation boundaries gracefully — an LLM that received a password
-        just before a rotation should still be able to use it.
-        """
-        if hmac.compare_digest(password, self._generate_password(tool_name)):
-            return True
-
-        # Grace period: also accept the previous bucket's password.
-        if self._rotation_seconds > 0:
-            prev_bucket = (
-                int(time.time()) // int(self._rotation_seconds)
-            ) - 1
-            prev_password = self._generate_password_for_bucket(
-                tool_name, prev_bucket
-            )
-            if hmac.compare_digest(password, prev_password):
-                return True
-
-        return False
+        """Check if the given password matches the tool's password."""
+        expected = self._passwords.get(tool_name)
+        if expected is None:
+            return False
+        return hmac.compare_digest(password, expected)
 
     @staticmethod
     def _add_password_param(tool: Tool, description: str) -> Tool:
@@ -209,16 +183,18 @@ class PasswordGatedDocsMiddleware(Middleware):
 
         for tool in tools:
             if self._should_gate(tool):
-                # Capture full description (first capture wins).
+                full_desc = tool.description or ""
+                # Capture full description and derive password.
                 if tool.name not in self._full_descriptions:
-                    self._full_descriptions[tool.name] = tool.description or ""
+                    self._full_descriptions[tool.name] = full_desc
+                    self._passwords[tool.name] = _password_from_description(full_desc)
                     logger.debug(
                         "Captured docs for %s (%d chars)",
                         tool.name,
-                        len(self._full_descriptions[tool.name]),
+                        len(full_desc),
                     )
 
-                short = _extract_first_line(tool.description or "")
+                short = _extract_first_line(full_desc)
                 compressed_desc = (
                     f"{short} "
                     f"(IMPORTANT: Call with _docs_password='REQUEST_DOCS' "
@@ -274,7 +250,7 @@ class PasswordGatedDocsMiddleware(Middleware):
             return await call_next(context)
 
         # Invalid / missing / REQUEST_DOCS — deliver docs + password.
-        current_password = self._generate_password(tool_name)
+        current_password = self._get_password(tool_name)
         docs = self._full_descriptions[tool_name]
 
         logger.debug("Delivering docs + password for %s", tool_name)
