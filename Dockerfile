@@ -13,7 +13,7 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
 # Install build dependencies for packages without prebuilt 3.14 wheels (cffi)
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libffi-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc-dev libffi-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first (cached separately from source changes)
 COPY pyproject.toml uv.lock ./
