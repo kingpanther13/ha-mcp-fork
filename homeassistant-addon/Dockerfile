@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 # Home Assistant MCP Server Add-on
 # Multi-stage build: uv for dependency resolution, slim Python for runtime
-# Python 3.13 - Security support until 2029-10
+# Python 3.14 - Security support until 2030-10
 # No bashio needed - pure Python startup script
 
 # --- Build stage: install dependencies with uv ---
-FROM ghcr.io/astral-sh/uv:0.10.5-python3.13-trixie-slim@sha256:2f50dbd6373b0a56f2357196073c79fce5d9f09daebd0ed156c52f44064c403c AS builder
+FROM ghcr.io/astral-sh/uv:0.10.5-python3.14-trixie-slim AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
 # --- Runtime stage: clean image without uv ---
-FROM python:3.13-slim@sha256:3de9a8d7aedbb7984dc18f2dff178a7850f16c1ae7c34ba9d7ecc23d0755e35f
+FROM python:3.14-slim
 
 WORKDIR /app
 
