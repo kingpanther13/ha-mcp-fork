@@ -5,12 +5,15 @@
 # Base images pinned by digest - Renovate will create PRs for updates
 
 # --- Build stage: install dependencies with uv ---
-FROM ghcr.io/astral-sh/uv:0.10.5-python3.14-trixie-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.10.5-python3.14-trixie-slim@sha256:4e82a63c7a103ade000812e9d0e05024c36f9653e9dea56b0aa8e28823b039c6 AS builder
 
 WORKDIR /app
 
 # Compile bytecode for faster startup; copy mode required with cache mounts
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+# Install build dependencies for packages without prebuilt 3.14 wheels (cffi)
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libffi-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first (cached separately from source changes)
 COPY pyproject.toml uv.lock ./
@@ -23,7 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 # --- Runtime stage: clean image without uv ---
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:6a27522252aef8432841f224d9baaa6e9fce07b07584154fa0b9a96603af7456
 
 LABEL org.opencontainers.image.title="Home Assistant MCP Server" \
       org.opencontainers.image.description="AI assistant integration for Home Assistant via Model Context Protocol" \
