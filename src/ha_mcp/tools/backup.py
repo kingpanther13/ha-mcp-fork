@@ -354,7 +354,7 @@ async def restore_backup(
                 pass  # Ignore errors during cleanup
 
 
-def register_backup_tools(mcp: "FastMCP", client: HomeAssistantClient, **kwargs) -> None:
+def register_backup_tools(mcp: FastMCP, client: HomeAssistantClient, **kwargs) -> None:
     """
     Register backup and restore tools with the MCP server.
 
