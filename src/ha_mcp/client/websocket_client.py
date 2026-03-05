@@ -563,7 +563,7 @@ class WebSocketManager:
     _lock_loop: asyncio.AbstractEventLoop | None = None
     _client_factory: Callable[[str, str], HomeAssistantWebSocketClient] | None = None
 
-    def __new__(cls) -> WebSocketManager:
+    def __new__(cls) -> "WebSocketManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._lock = None
