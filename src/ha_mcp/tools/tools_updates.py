@@ -7,6 +7,7 @@ and retrieving system version information.
 
 import asyncio
 import logging
+import os
 import re
 from typing import Annotated, Any
 
@@ -134,7 +135,16 @@ async def _fetch_release_data_for_version(
     """Fetch release notes and breaking changes for a single HA Core version."""
     try:
         resp = await http_client.get(_GITHUB_CORE_RELEASE_URL.format(version=version))
+        if resp.status_code in (403, 429):
+            remaining = resp.headers.get("X-RateLimit-Remaining", "unknown")
+            logger.warning(
+                "GitHub API rate limit hit for %s (status %d, remaining: %s). "
+                "Set GITHUB_TOKEN env var to increase limits.",
+                version, resp.status_code, remaining,
+            )
+            return None
         if resp.status_code != 200:
+            logger.debug("GitHub API returned %d for version %s", resp.status_code, version)
             return None
         body = resp.json().get("body", "").strip()
 
@@ -163,9 +173,16 @@ async def _fetch_release_data(current_version: str, target_version: str) -> dict
     if not monthly:
         return {"entries": [], "count": 0, "versions_checked": [], "release_notes": []}
 
+    headers = {
+        "User-Agent": "HomeAssistant-MCP-Server",
+        "Accept": "application/vnd.github+json",
+    }
+    github_token = os.environ.get("GITHUB_TOKEN")
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
     async with httpx.AsyncClient(
-        timeout=20.0, follow_redirects=True,
-        headers={"User-Agent": "HomeAssistant-MCP-Server", "Accept": "application/vnd.github+json"},
+        timeout=20.0, follow_redirects=True, headers=headers,
     ) as http_client:
         results = await asyncio.gather(
             *[_fetch_release_data_for_version(http_client, v) for v in monthly],
@@ -461,13 +478,13 @@ def register_update_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 # List mode: return all updates
                 include_skipped_bool = coerce_bool_param(
                     include_skipped, "include_skipped", default=False
-                ) or False
+                )
                 return await _list_updates(include_skipped_bool)
             else:
                 # Get mode: return details for specific update
                 include_rn_bool = coerce_bool_param(
                     include_release_notes, "include_release_notes", default=False
-                ) or False
+                )
                 return await _get_update_details(entity_id, include_rn_bool)
 
         except ToolError:
