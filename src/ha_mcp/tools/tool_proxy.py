@@ -36,6 +36,17 @@ from .helpers import log_tool_usage
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Parameter alias mapping.
+# LLMs sometimes guess common-but-wrong parameter names.  Map them to the
+# canonical names so the call succeeds on the first attempt.
+# Format: tool_name → {alias → canonical}
+# ---------------------------------------------------------------------------
+PARAM_ALIASES: dict[str, dict[str, str]] = {
+    "ha_config_get_dashboard": {"dashboard_id": "url_path"},
+    "ha_config_set_dashboard": {"dashboard_id": "url_path"},
+}
+
+# ---------------------------------------------------------------------------
 # Category gateway configuration.
 # Maps gateway tool name → list of source tool modules.
 # Per-tool assignment is controlled by TOOL_CATEGORY_OVERRIDES below.
@@ -341,37 +352,50 @@ class ToolProxyRegistry:
         ]
 
     def build_summary_lines(self, category: str) -> list[str]:
-        """Build tool signatures with typed required params for the gateway description.
+        """Build tool signatures with typed params for the gateway description.
 
-        Format: ``- tool_name(param: type, ...): First line of description``
-        The ``...`` indicates optional parameters exist.  This gives LLMs enough
-        info to call tools directly without a discovery round-trip.
+        Format: ``- tool_name(param: type, opt?: type, ...): First line``
+
+        Required params are always shown.  When there are **no** required
+        params, the first optional param is shown with a ``?`` suffix so
+        LLMs can see the primary parameter name instead of just ``(...)``.
         """
         tools = self.get_tools_for_category(category)
         lines = []
         for tool in tools:
             first_line = tool["description"].strip().split("\n")[0]
 
-            # Build parameter signature showing required params with types
             params = tool["parameters"]
             properties = params.get("properties", {})
             required_set = set(params.get("required", []))
 
             required_parts = []
+            optional_parts = []
             for n in properties:
+                ptype = properties[n].get("type", "string")
                 if n in required_set:
-                    ptype = properties[n].get("type", "string")
                     required_parts.append(f"{n}: {ptype}")
-            has_optional = len(properties) > len(required_parts)
+                else:
+                    optional_parts.append(f"{n}?: {ptype}")
 
-            if required_parts and has_optional:
-                sig = ", ".join(required_parts) + ", ..."
-            elif required_parts:
-                sig = ", ".join(required_parts)
-            elif has_optional:
-                sig = "..."
+            has_extra_optional = len(optional_parts) > (
+                0 if required_parts else 1
+            )
+
+            if required_parts:
+                parts = required_parts
+            elif optional_parts:
+                # No required params — show first optional so LLMs see
+                # the primary param name (e.g. "url_path?: string")
+                parts = [optional_parts[0]]
             else:
-                sig = ""
+                parts = []
+
+            sig_parts = ", ".join(parts)
+            if has_extra_optional:
+                sig = f"{sig_parts}, ..." if sig_parts else "..."
+            else:
+                sig = sig_parts
 
             lines.append(f"- {tool['name']}({sig}): {first_line}")
         return lines
@@ -478,11 +502,23 @@ def _extract_literal_values(python_type: Any) -> list[str] | None:
 
 
 def _python_type_to_json(python_type: Any) -> str:
-    """Map Python type hints to JSON Schema types."""
+    """Map Python type hints to JSON Schema types.
+
+    For union types (e.g., ``str | dict``), prefer structured types (object/array)
+    over primitives.  This ensures gateway summary lines show ``config: object``
+    instead of ``config: string``, which nudges LLMs to pass a dict — matching
+    the direct-tool behavior where FastMCP advertises both types in the schema.
+    """
     origin = getattr(python_type, "__origin__", None)
 
     if origin is types.UnionType:
         args = [a for a in python_type.__args__ if a is not type(None)]
+        # Prefer structured types so LLMs pass objects, not serialised strings
+        for a in args:
+            if a is dict or getattr(a, "__origin__", None) is dict:
+                return "object"
+            if a is list or getattr(a, "__origin__", None) is list:
+                return "array"
         if args:
             return _python_type_to_json(args[0])
         return "string"
@@ -749,6 +785,12 @@ def _register_single_gateway(
                 message="args must be a JSON object.",
                 parameter="args",
             )
+
+        # Resolve parameter aliases (e.g. dashboard_id → url_path)
+        aliases = PARAM_ALIASES.get(tool, {})
+        for alias, canonical in aliases.items():
+            if alias in parsed_args and canonical not in parsed_args:
+                parsed_args[canonical] = parsed_args.pop(alias)
 
         # Validate required parameters
         params_schema = tool_entry["parameters"]
