@@ -44,11 +44,10 @@ PROXY_CATEGORIES: dict[str, list[str]] = {
     # Dashboard gateways (from PR #637)
     "ha_dashboard_info": ["tools_config_dashboards", "tools_resources"],
     "ha_manage_dashboards": ["tools_config_dashboards", "tools_resources"],
-    # Automation gateways
-    "ha_automation_info": ["tools_config_automations", "tools_traces"],
+    # Automation & script read gateway (scripts are automations without triggers)
+    "ha_automation_info": ["tools_config_automations", "tools_traces", "tools_config_scripts"],
     "ha_manage_automations": ["tools_config_automations"],
-    # Script gateways
-    "ha_script_info": ["tools_config_scripts"],
+    # Script write gateway
     "ha_manage_scripts": ["tools_config_scripts"],
     # Blueprint gateway (applies to both automations and scripts)
     "ha_manage_blueprints": ["tools_blueprints"],
@@ -91,8 +90,8 @@ TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
     "ha_config_set_automation": "ha_manage_automations",
     "ha_config_remove_automation": "ha_manage_automations",
     # ── Scripts ────────────────────────────────────────────────────────
-    # Read-only → ha_script_info
-    "ha_config_get_script": "ha_script_info",
+    # Read-only → ha_automation_info (scripts are automations without triggers)
+    "ha_config_get_script": "ha_automation_info",
     # Write/CRUD → ha_manage_scripts
     "ha_config_set_script": "ha_manage_scripts",
     "ha_config_remove_script": "ha_manage_scripts",
@@ -142,16 +141,13 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
     ),
     # Automations
     "ha_automation_info": (
-        "Read-only automation tools: get automation config/details "
-        "and view automation execution traces."
+        "Read-only automation and script tools: get automation/script "
+        "config and view automation execution traces."
     ),
     "ha_manage_automations": (
         "Create, update, and delete Home Assistant automations."
     ),
     # Scripts
-    "ha_script_info": (
-        "Read-only script tools: get script configuration and details."
-    ),
     "ha_manage_scripts": (
         "Create, update, and delete Home Assistant scripts."
     ),
@@ -214,11 +210,6 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "title": "Manage Automations",
     },
     # Scripts
-    "ha_script_info": {
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "title": "Script Info",
-    },
     "ha_manage_scripts": {
         "destructiveHint": True,
         "title": "Manage Scripts",
