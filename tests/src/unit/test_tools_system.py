@@ -12,11 +12,11 @@ from fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import (
     HomeAssistantAPIError,
 )
-from ha_mcp.tools.tools_system import register_system_tools
+from ha_mcp.tools.tools_system_ops import register_system_ops_tools
 
 
 def _register_and_capture_restart(mock_client):
-    """Register system tools with a mock MCP and return the ha_restart function."""
+    """Register system ops tools with a mock MCP and return the ha_restart function."""
     mock_mcp = MagicMock()
     captured = {}
 
@@ -27,7 +27,7 @@ def _register_and_capture_restart(mock_client):
         return decorator
 
     mock_mcp.tool = fake_tool
-    register_system_tools(mock_mcp, mock_client)
+    register_system_ops_tools(mock_mcp, mock_client)
     assert "ha_restart" in captured, "ha_restart was not registered"
     return captured["ha_restart"]
 
