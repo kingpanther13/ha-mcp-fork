@@ -69,9 +69,9 @@ PROXY_CATEGORIES: dict[str, list[str]] = {
     "ha_manage_helpers": ["tools_config_helpers", "tools_config_entry_flow"],
     # HACS gateways (read gateway renamed to avoid collision with ha_hacs_info tool)
     "ha_hacs_store_info": ["tools_hacs"],
-    "ha_manage_hacs": ["tools_hacs"],
+    "ha_manage_hacs_repos": ["tools_hacs"],
     # Device & entity registry write gateway (ha_get_device is now a direct tool)
-    "ha_manage_devices": ["tools_registry"],
+    "ha_manage_devices_entities": ["tools_registry"],
     # Backup gateway (both tools are destructive)
     "ha_manage_backups": ["backup"],
     # System operations gateway (restart + reload)
@@ -131,13 +131,13 @@ TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
     "ha_hacs_search": "ha_hacs_store_info",
     "ha_hacs_repository_info": "ha_hacs_store_info",
     # Write → ha_manage_hacs
-    "ha_hacs_add_repository": "ha_manage_hacs",
-    "ha_hacs_download": "ha_manage_hacs",
+    "ha_hacs_add_repository": "ha_manage_hacs_repos",
+    "ha_hacs_download": "ha_manage_hacs_repos",
     # ── Device & Entity Registry (write-only — ha_get_device is now direct) ──
-    "ha_rename_entity": "ha_manage_devices",
-    "ha_update_device": "ha_manage_devices",
-    "ha_remove_device": "ha_manage_devices",
-    "ha_rename_entity_and_device": "ha_manage_devices",
+    "ha_rename_entity": "ha_manage_devices_entities",
+    "ha_update_device": "ha_manage_devices_entities",
+    "ha_remove_device": "ha_manage_devices_entities",
+    "ha_rename_entity_and_device": "ha_manage_devices_entities",
     # ── Backups (both destructive) ─────────────────────────────────────
     "ha_backup_create": "ha_manage_backups",
     "ha_backup_restore": "ha_manage_backups",
@@ -198,12 +198,12 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
         "Read-only HACS tools: get HACS status, list installed repositories, "
         "search the HACS store, and get repository details."
     ),
-    "ha_manage_hacs": (
+    "ha_manage_hacs_repos": (
         "Install and manage HACS repositories: add custom repositories "
         "and download/update integrations, plugins, and themes."
     ),
     # Device & entity registry (write-only — ha_get_device is a direct tool)
-    "ha_manage_devices": (
+    "ha_manage_devices_entities": (
         "Rename entities, update device info, remove devices, "
         "and bulk rename entity+device."
     ),
@@ -277,12 +277,12 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "idempotentHint": True,
         "title": "HACS Store Info",
     },
-    "ha_manage_hacs": {
+    "ha_manage_hacs_repos": {
         "destructiveHint": True,
         "title": "Manage HACS",
     },
     # Device & entity registry (write-only)
-    "ha_manage_devices": {
+    "ha_manage_devices_entities": {
         "destructiveHint": True,
         "title": "Manage Devices",
     },
