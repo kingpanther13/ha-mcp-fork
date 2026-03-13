@@ -56,12 +56,10 @@ PROXY_CATEGORIES: dict[str, list[str]] = {
     "ha_dashboard_info": ["tools_config_dashboards", "tools_resources"],
     "ha_manage_dashboards": ["tools_config_dashboards", "tools_resources"],
     # Automation & script read gateway (scripts are automations without triggers)
-    "ha_automation_info": ["tools_config_automations", "tools_traces", "tools_config_scripts"],
+    "ha_automation_script_info": ["tools_config_automations", "tools_traces", "tools_config_scripts"],
     "ha_manage_automations": ["tools_config_automations"],
     # Script write gateway
     "ha_manage_scripts": ["tools_config_scripts"],
-    # Blueprint gateway (applies to both automations and scripts)
-    "ha_manage_blueprints": ["tools_blueprints"],
     # History gateway (read-only)
     "ha_history_info": ["tools_history"],
     # Helper gateways
@@ -72,8 +70,17 @@ PROXY_CATEGORIES: dict[str, list[str]] = {
     # HACS gateways (read gateway renamed to avoid collision with ha_hacs_info tool)
     "ha_hacs_store_info": ["tools_hacs"],
     "ha_manage_hacs": ["tools_hacs"],
-    # Device & entity registry gateway (combined — ha_get_device is rarely standalone)
+    # Device & entity registry write gateway (ha_get_device is now a direct tool)
     "ha_manage_devices": ["tools_registry"],
+    # Backup gateway (both tools are destructive)
+    "ha_manage_backups": ["backup"],
+    # System operations gateway (restart + reload)
+    "ha_reload_restart": ["tools_system_ops"],
+    # Todo & calendar gateways (combined domain)
+    # NOTE: Both modules appear in both gateways; TOOL_CATEGORY_OVERRIDES
+    # routes each tool individually (read → info, write → manage).
+    "ha_todo_calendar_info": ["tools_todo", "tools_calendar"],
+    "ha_manage_todo_calendar": ["tools_todo", "tools_calendar"],
 }
 
 # ---------------------------------------------------------------------------
@@ -94,21 +101,18 @@ TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
     "ha_config_set_dashboard_resource": "ha_manage_dashboards",
     "ha_config_delete_dashboard_resource": "ha_manage_dashboards",
     # ── Automations ────────────────────────────────────────────────────
-    # Read-only → ha_automation_info
-    "ha_config_get_automation": "ha_automation_info",
-    "ha_get_automation_traces": "ha_automation_info",
+    # Read-only → ha_automation_script_info
+    "ha_config_get_automation": "ha_automation_script_info",
+    "ha_get_automation_traces": "ha_automation_script_info",
     # Write/CRUD → ha_manage_automations
     "ha_config_set_automation": "ha_manage_automations",
     "ha_config_remove_automation": "ha_manage_automations",
     # ── Scripts ────────────────────────────────────────────────────────
-    # Read-only → ha_automation_info (scripts are automations without triggers)
-    "ha_config_get_script": "ha_automation_info",
+    # Read-only → ha_automation_script_info (scripts are automations without triggers)
+    "ha_config_get_script": "ha_automation_script_info",
     # Write/CRUD → ha_manage_scripts
     "ha_config_set_script": "ha_manage_scripts",
     "ha_config_remove_script": "ha_manage_scripts",
-    # ── Blueprints (applies to both automations and scripts) ──────────
-    "ha_get_blueprint": "ha_manage_blueprints",
-    "ha_import_blueprint": "ha_manage_blueprints",
     # ── History (read-only) ───────────────────────────────────────────
     "ha_get_history": "ha_history_info",
     "ha_get_statistics": "ha_history_info",
@@ -129,12 +133,27 @@ TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
     # Write → ha_manage_hacs
     "ha_hacs_add_repository": "ha_manage_hacs",
     "ha_hacs_download": "ha_manage_hacs",
-    # ── Device & Entity Registry (combined — ha_get_device rarely standalone) ──
-    "ha_get_device": "ha_manage_devices",
+    # ── Device & Entity Registry (write-only — ha_get_device is now direct) ──
     "ha_rename_entity": "ha_manage_devices",
     "ha_update_device": "ha_manage_devices",
     "ha_remove_device": "ha_manage_devices",
     "ha_rename_entity_and_device": "ha_manage_devices",
+    # ── Backups (both destructive) ─────────────────────────────────────
+    "ha_backup_create": "ha_manage_backups",
+    "ha_backup_restore": "ha_manage_backups",
+    # ── System Operations (restart + reload) ───────────────────────────
+    "ha_restart": "ha_reload_restart",
+    "ha_reload_core": "ha_reload_restart",
+    # ── Todo & Calendar ────────────────────────────────────────────────
+    # Read-only → ha_todo_calendar_info
+    "ha_get_todo": "ha_todo_calendar_info",
+    "ha_config_get_calendar_events": "ha_todo_calendar_info",
+    # Write/CRUD → ha_manage_todo_calendar
+    "ha_add_todo_item": "ha_manage_todo_calendar",
+    "ha_update_todo_item": "ha_manage_todo_calendar",
+    "ha_remove_todo_item": "ha_manage_todo_calendar",
+    "ha_config_set_calendar_event": "ha_manage_todo_calendar",
+    "ha_config_remove_calendar_event": "ha_manage_todo_calendar",
 }
 
 # ---------------------------------------------------------------------------
@@ -150,22 +169,16 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
         "Create, update, and delete Home Assistant dashboards, "
         "and manage dashboard resources (custom cards, CSS, JS)."
     ),
-    # Automations
-    "ha_automation_info": (
+    # Automations & Scripts
+    "ha_automation_script_info": (
         "Read-only automation and script tools: get automation/script "
         "config and view automation execution traces."
     ),
     "ha_manage_automations": (
         "Create, update, and delete Home Assistant automations."
     ),
-    # Scripts
     "ha_manage_scripts": (
         "Create, update, and delete Home Assistant scripts."
-    ),
-    # Blueprints
-    "ha_manage_blueprints": (
-        "Blueprint tools for automations and scripts: get blueprint "
-        "definitions (read-only) and import blueprints from URLs."
     ),
     # History
     "ha_history_info": (
@@ -189,10 +202,28 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
         "Install and manage HACS repositories: add custom repositories "
         "and download/update integrations, plugins, and themes."
     ),
-    # Device & entity registry
+    # Device & entity registry (write-only — ha_get_device is a direct tool)
     "ha_manage_devices": (
-        "Manage devices and entities: get device details, rename entities, "
-        "update device info, remove devices, and bulk rename entity+device."
+        "Rename entities, update device info, remove devices, "
+        "and bulk rename entity+device."
+    ),
+    # Backups
+    "ha_manage_backups": (
+        "Create and restore Home Assistant backups."
+    ),
+    # System operations
+    "ha_reload_restart": (
+        "Restart Home Assistant or reload specific components "
+        "(automations, scripts, themes, etc.) without full restart."
+    ),
+    # Todo & Calendar
+    "ha_todo_calendar_info": (
+        "Read-only todo and calendar tools: list todo lists, get todo items, "
+        "and get calendar events."
+    ),
+    "ha_manage_todo_calendar": (
+        "Manage todo lists and calendar events: add/update/remove todo items, "
+        "create/update/remove calendar events."
     ),
 }
 
@@ -210,25 +241,19 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "destructiveHint": True,
         "title": "Manage Dashboards",
     },
-    # Automations
-    "ha_automation_info": {
+    # Automations & Scripts
+    "ha_automation_script_info": {
         "readOnlyHint": True,
         "idempotentHint": True,
-        "title": "Automation Info",
+        "title": "Automation & Script Info",
     },
     "ha_manage_automations": {
         "destructiveHint": True,
         "title": "Manage Automations",
     },
-    # Scripts
     "ha_manage_scripts": {
         "destructiveHint": True,
         "title": "Manage Scripts",
-    },
-    # Blueprints (combined — ha_get_blueprint is read-only)
-    "ha_manage_blueprints": {
-        "destructiveHint": True,
-        "title": "Manage Blueprints",
     },
     # History
     "ha_history_info": {
@@ -256,10 +281,30 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "destructiveHint": True,
         "title": "Manage HACS",
     },
-    # Device & entity registry (combined — ha_get_device is read-only)
+    # Device & entity registry (write-only)
     "ha_manage_devices": {
         "destructiveHint": True,
         "title": "Manage Devices",
+    },
+    # Backups
+    "ha_manage_backups": {
+        "destructiveHint": True,
+        "title": "Manage Backups",
+    },
+    # System operations
+    "ha_reload_restart": {
+        "destructiveHint": True,
+        "title": "Reload & Restart",
+    },
+    # Todo & Calendar
+    "ha_todo_calendar_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Todo & Calendar Info",
+    },
+    "ha_manage_todo_calendar": {
+        "destructiveHint": True,
+        "title": "Manage Todo & Calendar",
     },
 }
 
