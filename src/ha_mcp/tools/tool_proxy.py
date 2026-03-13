@@ -81,6 +81,9 @@ PROXY_CATEGORIES: dict[str, list[str]] = {
     # routes each tool individually (read → info, write → manage).
     "ha_todo_calendar_info": ["tools_todo", "tools_calendar"],
     "ha_manage_todo_calendar": ["tools_todo", "tools_calendar"],
+    # Areas & floors gateways
+    "ha_get_areas_floors": ["tools_areas"],
+    "ha_manage_areas_floors": ["tools_areas"],
 }
 
 # ---------------------------------------------------------------------------
@@ -154,6 +157,15 @@ TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
     "ha_remove_todo_item": "ha_manage_todo_calendar",
     "ha_config_set_calendar_event": "ha_manage_todo_calendar",
     "ha_config_remove_calendar_event": "ha_manage_todo_calendar",
+    # ── Areas & Floors ──────────────────────────────────────────────────
+    # Read-only → ha_get_areas_floors
+    "ha_config_list_areas": "ha_get_areas_floors",
+    "ha_config_list_floors": "ha_get_areas_floors",
+    # Write/CRUD → ha_manage_areas_floors
+    "ha_config_set_area": "ha_manage_areas_floors",
+    "ha_config_remove_area": "ha_manage_areas_floors",
+    "ha_config_set_floor": "ha_manage_areas_floors",
+    "ha_config_remove_floor": "ha_manage_areas_floors",
 }
 
 # ---------------------------------------------------------------------------
@@ -224,6 +236,13 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
     "ha_manage_todo_calendar": (
         "Manage todo lists and calendar events: add/update/remove todo items, "
         "create/update/remove calendar events."
+    ),
+    # Areas & Floors
+    "ha_get_areas_floors": (
+        "Read-only area and floor tools: list all areas and list all floors."
+    ),
+    "ha_manage_areas_floors": (
+        "Create, update, and delete Home Assistant areas and floors."
     ),
 }
 
@@ -305,6 +324,16 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "ha_manage_todo_calendar": {
         "destructiveHint": True,
         "title": "Manage Todo & Calendar",
+    },
+    # Areas & Floors
+    "ha_get_areas_floors": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Areas & Floors Info",
+    },
+    "ha_manage_areas_floors": {
+        "destructiveHint": True,
+        "title": "Manage Areas & Floors",
     },
 }
 
