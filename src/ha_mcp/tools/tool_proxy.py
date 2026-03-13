@@ -35,33 +35,128 @@ from .helpers import log_tool_usage
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
 # Category gateway configuration.
-# Maps gateway tool name → list of tool modules to include.
-# Both gateways draw from the same modules; per-tool assignment is
-# controlled by TOOL_CATEGORY_OVERRIDES below.
+# Maps gateway tool name → list of source tool modules.
+# Per-tool assignment is controlled by TOOL_CATEGORY_OVERRIDES below.
+# ---------------------------------------------------------------------------
 PROXY_CATEGORIES: dict[str, list[str]] = {
+    # Dashboard gateways (from PR #637)
     "ha_dashboard_info": ["tools_config_dashboards", "tools_resources"],
     "ha_manage_dashboards": ["tools_config_dashboards", "tools_resources"],
+    # Automation gateways
+    "ha_automation_info": ["tools_config_automations", "tools_traces", "tools_blueprints"],
+    "ha_manage_automations": ["tools_config_automations", "tools_blueprints"],
+    # Script gateways
+    "ha_script_info": ["tools_config_scripts"],
+    "ha_manage_scripts": ["tools_config_scripts"],
+    # History gateway (read-only)
+    "ha_history_info": ["tools_history"],
+    # Helper gateways
+    "ha_helper_info": ["tools_config_helpers", "tools_config_entry_flow"],
+    "ha_manage_helpers": ["tools_config_helpers", "tools_config_entry_flow"],
+    # HACS gateways
+    "ha_hacs_info": ["tools_hacs"],
+    "ha_manage_hacs": ["tools_hacs"],
+    # Device & entity registry gateways
+    "ha_device_info": ["tools_registry"],
+    "ha_manage_devices": ["tools_registry"],
+    # Filesystem gateway (combined R/W — small tool set)
+    "ha_file_ops": ["tools_filesystem"],
+    # Todo gateway (combined R/W — small tool set)
+    "ha_todo_ops": ["tools_todo"],
+    # Calendar gateway (combined R/W — small tool set)
+    "ha_calendar_ops": ["tools_calendar"],
+    # Zone gateway (combined R/W — small tool set)
+    "ha_zone_ops": ["tools_zones"],
 }
 
+# ---------------------------------------------------------------------------
 # Per-tool category assignment (tool_name → gateway_name).
 # Every tool captured from a proxied module MUST appear here.
+# ---------------------------------------------------------------------------
 TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
-    # Read-only tools → ha_dashboard_info
+    # ── Dashboard ──────────────────────────────────────────────────────
+    # Read-only → ha_dashboard_info
     "ha_config_get_dashboard": "ha_dashboard_info",
     "ha_dashboard_find_card": "ha_dashboard_info",
     "ha_get_dashboard_guide": "ha_dashboard_info",
     "ha_get_card_documentation": "ha_dashboard_info",
     "ha_config_list_dashboard_resources": "ha_dashboard_info",
-    # Write/CRUD tools → ha_manage_dashboards
+    # Write/CRUD → ha_manage_dashboards
     "ha_config_set_dashboard": "ha_manage_dashboards",
     "ha_config_delete_dashboard": "ha_manage_dashboards",
     "ha_config_set_dashboard_resource": "ha_manage_dashboards",
     "ha_config_delete_dashboard_resource": "ha_manage_dashboards",
+    # ── Automations ────────────────────────────────────────────────────
+    # Read-only → ha_automation_info
+    "ha_config_get_automation": "ha_automation_info",
+    "ha_get_automation_traces": "ha_automation_info",
+    "ha_get_blueprint": "ha_automation_info",
+    # Write/CRUD → ha_manage_automations
+    "ha_config_set_automation": "ha_manage_automations",
+    "ha_config_remove_automation": "ha_manage_automations",
+    "ha_import_blueprint": "ha_manage_automations",
+    # ── Scripts ────────────────────────────────────────────────────────
+    # Read-only → ha_script_info
+    "ha_config_get_script": "ha_script_info",
+    # Write/CRUD → ha_manage_scripts
+    "ha_config_set_script": "ha_manage_scripts",
+    "ha_config_remove_script": "ha_manage_scripts",
+    # ── History (read-only) ───────────────────────────────────────────
+    "ha_get_history": "ha_history_info",
+    "ha_get_statistics": "ha_history_info",
+    # ── Helpers ────────────────────────────────────────────────────────
+    # Read-only → ha_helper_info
+    "ha_config_list_helpers": "ha_helper_info",
+    "ha_get_helper_schema": "ha_helper_info",
+    # Write/CRUD → ha_manage_helpers
+    "ha_config_set_helper": "ha_manage_helpers",
+    "ha_config_remove_helper": "ha_manage_helpers",
+    "ha_create_config_entry_helper": "ha_manage_helpers",
+    # ── HACS ───────────────────────────────────────────────────────────
+    # Read-only → ha_hacs_info
+    "ha_hacs_info": "ha_hacs_info",
+    "ha_hacs_list_installed": "ha_hacs_info",
+    "ha_hacs_search": "ha_hacs_info",
+    "ha_hacs_repository_info": "ha_hacs_info",
+    # Write → ha_manage_hacs
+    "ha_hacs_add_repository": "ha_manage_hacs",
+    "ha_hacs_download": "ha_manage_hacs",
+    # ── Device & Entity Registry ───────────────────────────────────────
+    # Read-only → ha_device_info
+    "ha_get_device": "ha_device_info",
+    # Write → ha_manage_devices
+    "ha_rename_entity": "ha_manage_devices",
+    "ha_update_device": "ha_manage_devices",
+    "ha_remove_device": "ha_manage_devices",
+    "ha_rename_entity_and_device": "ha_manage_devices",
+    # ── Filesystem (combined R/W) ──────────────────────────────────────
+    "ha_list_files": "ha_file_ops",
+    "ha_read_file": "ha_file_ops",
+    "ha_write_file": "ha_file_ops",
+    "ha_delete_file": "ha_file_ops",
+    # ── Todo (combined R/W) ────────────────────────────────────────────
+    "ha_get_todo": "ha_todo_ops",
+    "ha_add_todo_item": "ha_todo_ops",
+    "ha_update_todo_item": "ha_todo_ops",
+    "ha_remove_todo_item": "ha_todo_ops",
+    # ── Calendar (combined R/W) ────────────────────────────────────────
+    "ha_config_get_calendar_events": "ha_calendar_ops",
+    "ha_config_set_calendar_event": "ha_calendar_ops",
+    "ha_config_remove_calendar_event": "ha_calendar_ops",
+    # ── Zones (combined R/W) ───────────────────────────────────────────
+    "ha_get_zone": "ha_zone_ops",
+    "ha_create_zone": "ha_zone_ops",
+    "ha_update_zone": "ha_zone_ops",
+    "ha_delete_zone": "ha_zone_ops",
 }
 
+# ---------------------------------------------------------------------------
 # Gateway descriptions — concise summaries for the MCP tool listing.
+# ---------------------------------------------------------------------------
 GATEWAY_DESCRIPTIONS: dict[str, str] = {
+    # Dashboard
     "ha_dashboard_info": (
         "Read-only dashboard tools: list/get dashboards, find cards, "
         "get design guides, card documentation, and list resources."
@@ -70,10 +165,80 @@ GATEWAY_DESCRIPTIONS: dict[str, str] = {
         "Create, update, and delete Home Assistant dashboards, "
         "and manage dashboard resources (custom cards, CSS, JS)."
     ),
+    # Automations
+    "ha_automation_info": (
+        "Read-only automation tools: get automation config/details, "
+        "view automation traces, and get blueprint definitions."
+    ),
+    "ha_manage_automations": (
+        "Create, update, and delete Home Assistant automations, "
+        "and import blueprints from URLs."
+    ),
+    # Scripts
+    "ha_script_info": (
+        "Read-only script tools: get script configuration and details."
+    ),
+    "ha_manage_scripts": (
+        "Create, update, and delete Home Assistant scripts."
+    ),
+    # History
+    "ha_history_info": (
+        "Read-only history tools: get entity state history over time "
+        "and long-term statistics (min/max/mean/sum)."
+    ),
+    # Helpers
+    "ha_helper_info": (
+        "Read-only helper tools: list all helpers and get helper type schemas."
+    ),
+    "ha_manage_helpers": (
+        "Create, update, and delete Home Assistant helpers "
+        "(input_boolean, counter, timer, input_select, etc.)."
+    ),
+    # HACS
+    "ha_hacs_info": (
+        "Read-only HACS tools: get HACS status, list installed repositories, "
+        "search the HACS store, and get repository details."
+    ),
+    "ha_manage_hacs": (
+        "Install and manage HACS repositories: add custom repositories "
+        "and download/update integrations, plugins, and themes."
+    ),
+    # Device & entity registry
+    "ha_device_info": (
+        "Read-only device tools: get device details including "
+        "manufacturer, model, entities, and area assignment."
+    ),
+    "ha_manage_devices": (
+        "Manage devices and entity registry: rename entities, "
+        "update device info, remove devices, and bulk rename entity+device."
+    ),
+    # Filesystem
+    "ha_file_ops": (
+        "Home Assistant filesystem tools: list, read, write, and delete "
+        "files in the HA config directory (YAML configs, scripts, etc.)."
+    ),
+    # Todo
+    "ha_todo_ops": (
+        "Home Assistant todo list tools: get todo items, add new items, "
+        "update existing items, and remove completed items."
+    ),
+    # Calendar
+    "ha_calendar_ops": (
+        "Home Assistant calendar tools: get calendar events, "
+        "create new events, and remove events."
+    ),
+    # Zones
+    "ha_zone_ops": (
+        "Home Assistant zone tools: get zone details, create new zones, "
+        "update zone settings (radius, coordinates), and delete zones."
+    ),
 }
 
+# ---------------------------------------------------------------------------
 # Gateway-level MCP annotations.
+# ---------------------------------------------------------------------------
 GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
+    # Dashboard
     "ha_dashboard_info": {
         "readOnlyHint": True,
         "idempotentHint": True,
@@ -82,6 +247,82 @@ GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "ha_manage_dashboards": {
         "destructiveHint": True,
         "title": "Manage Dashboards",
+    },
+    # Automations
+    "ha_automation_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Automation Info",
+    },
+    "ha_manage_automations": {
+        "destructiveHint": True,
+        "title": "Manage Automations",
+    },
+    # Scripts
+    "ha_script_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Script Info",
+    },
+    "ha_manage_scripts": {
+        "destructiveHint": True,
+        "title": "Manage Scripts",
+    },
+    # History
+    "ha_history_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "History Info",
+    },
+    # Helpers
+    "ha_helper_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Helper Info",
+    },
+    "ha_manage_helpers": {
+        "destructiveHint": True,
+        "title": "Manage Helpers",
+    },
+    # HACS
+    "ha_hacs_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "HACS Info",
+    },
+    "ha_manage_hacs": {
+        "destructiveHint": True,
+        "title": "Manage HACS",
+    },
+    # Device & entity registry
+    "ha_device_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Device Info",
+    },
+    "ha_manage_devices": {
+        "destructiveHint": True,
+        "title": "Manage Devices",
+    },
+    # Filesystem (mixed R/W)
+    "ha_file_ops": {
+        "destructiveHint": True,
+        "title": "File Operations",
+    },
+    # Todo (mixed R/W)
+    "ha_todo_ops": {
+        "destructiveHint": True,
+        "title": "Todo Operations",
+    },
+    # Calendar (mixed R/W)
+    "ha_calendar_ops": {
+        "destructiveHint": True,
+        "title": "Calendar Operations",
+    },
+    # Zones (mixed R/W)
+    "ha_zone_ops": {
+        "destructiveHint": True,
+        "title": "Zone Operations",
     },
 }
 
