@@ -18,3 +18,11 @@ configuration:
     description: >-
       Expose skills via list_resources/read_resource tools for MCP clients
       that don't support resources natively. Adds 3 extra tools.
+  enable_code_mode:
+    name: Code Mode (experimental)
+    description: >-
+      Replaces all tools with meta-tools (search, get_schema, execute).
+  enable_code_mode_list_tools:
+    name: Code Mode ListTools
+    description: >-
+      Also expose ListTools in Code Mode for full catalog discovery.
