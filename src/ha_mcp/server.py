@@ -226,11 +226,11 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
             return
 
         # Build discovery tools list — tuned for token efficiency:
-        # - Search returns "detailed" results (includes param names/types inline)
-        #   so the LLM can often skip GetSchemas entirely (2-stage instead of 3)
+        # - Search returns "brief" (names + one-line descriptions only)
         # - Limit search to top 10 results to avoid bloating context
+        # - LLM calls GetSchemas only for the specific tools it needs
         discovery_tools: list = [
-            Search(default_detail="detailed", default_limit=10),
+            Search(default_limit=10),
             GetSchemas(),
         ]
         if self.settings.enable_code_mode_list_tools:
