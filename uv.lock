@@ -390,6 +390,10 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
+[package.optional-dependencies]
+code-mode = [
+    { name = "pydantic-monty" },
+]
 sdist = { url = "https://files.pythonhosted.org/packages/0a/70/862026c4589441f86ad3108f05bfb2f781c6b322ad60a982f40b303b47d7/fastmcp-3.1.0.tar.gz", hash = "sha256:e25264794c734b9977502a51466961eeecff92a0c2f3b49c40c070993628d6d0", size = 17347083, upload-time = "2026-03-03T02:43:11.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/07/516f5b20d88932e5a466c2216b628e5358a71b3a9f522215607c3281de05/fastmcp-3.1.0-py3-none-any.whl", hash = "sha256:b1f73b56fd3b0cb2bd9e2a144fc650d5cc31587ed129d996db7710e464ae8010", size = 633749, upload-time = "2026-03-03T02:43:09.06Z" },
@@ -419,7 +423,7 @@ version = "7.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
-    { name = "fastmcp" },
+    { name = "fastmcp", extra = ["code-mode"] },
     { name = "httpx", extra = ["socks"] },
     { name = "jq", marker = "sys_platform != 'win32'" },
     { name = "pydantic" },
@@ -448,7 +452,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = "==46.0.5" },
-    { name = "fastmcp", specifier = "==3.1.0" },
+    { name = "fastmcp", extras = ["code-mode"], specifier = "==3.1.0" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
     { name = "jq", marker = "sys_platform != 'win32'", specifier = "==1.11.0" },
     { name = "pydantic", specifier = "==2.12.5" },
@@ -1036,6 +1040,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/85/1ea668bbab3c50071ca613c6ab30047fb36ab0da1b92fa8f17bbc38fd36c/pydantic_settings-2.10.1.tar.gz", hash = "sha256:06f0062169818d0f5524420a360d632d5857b83cffd4d42fe29597807a1614ee", size = 172583, upload-time = "2025-06-24T13:26:46.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/f0/427018098906416f580e3cf1366d3b1abfb408a0652e9f31600c24a1903c/pydantic_settings-2.10.1-py3-none-any.whl", hash = "sha256:a60952460b99cf661dc25c29c0ef171721f98bfcb52ef8d9ea4c943d7c8cc796", size = 45235, upload-time = "2025-06-24T13:26:45.485Z" },
+]
+
+[[package]]
+name = "pydantic-monty"
+version = "0.0.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/bf/e9794b562c207406d8fda0cf4fea810943a5e8a85fe69e5505046179df16/pydantic_monty-0.0.8.tar.gz", hash = "sha256:8135e781a184f971825c1d2eb6d621598103e900f6e0d34291ff0bf35df6142f", size = 802646, upload-time = "2026-03-10T14:46:51" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/e7/72f250ffd005520ad8cdffb387241a9dd92fc70bcbdd769720918bd34495/pydantic_monty-0.0.8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:00b5dee7bef619e7661f77bef765f483605bcd2a79c6b8bf5c910afa1c93fc40", size = 7272179, upload-time = "2026-03-10T14:45:08" },
+    { url = "https://files.pythonhosted.org/packages/7b/ab/e3dfe057af472e4065297d69aea0cf30616d01366a29e02d0a2739f22b93/pydantic_monty-0.0.8-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:90f6da093164e99012b49b39ba1e64c166ccd126128d114f9e2c66df6fb695c4", size = 6503266, upload-time = "2026-03-10T14:46:19" },
 ]
 
 [[package]]

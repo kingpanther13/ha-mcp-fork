@@ -41,6 +41,60 @@ SERVER_ICONS = [
 ]
 
 
+class _PatchedMontySandboxProvider:
+    """Patched sandbox provider that fixes FastMCP 3.1.0 bug.
+
+    FastMCP 3.1.0's MontySandboxProvider passes ``external_functions`` to the
+    ``Monty()`` constructor, but pydantic-monty doesn't accept it there.
+    Fixed on FastMCP main branch but not released in 3.1.0.
+    Remove this class once FastMCP >= 3.2.
+    """
+
+    def __init__(self, *, limits: Any = None):
+        self.limits = limits
+
+    async def run(
+        self,
+        code: str,
+        *,
+        inputs: dict[str, Any] | None = None,
+        external_functions: dict[str, Any] | None = None,
+    ) -> Any:
+        import asyncio
+        import importlib
+
+        pydantic_monty = importlib.import_module("pydantic_monty")
+
+        inputs = inputs or {}
+        async_functions = {}
+        for key, value in (external_functions or {}).items():
+            if asyncio.iscoroutinefunction(value):
+                async_functions[key] = value
+            else:
+                async_functions[key] = _make_async_wrapper(value)
+
+        # Fixed: don't pass external_functions to Monty() constructor
+        monty = pydantic_monty.Monty(
+            code,
+            inputs=list(inputs.keys()),
+        )
+        run_kwargs: dict[str, Any] = {"external_functions": async_functions}
+        if inputs:
+            run_kwargs["inputs"] = inputs
+        if self.limits is not None:
+            run_kwargs["limits"] = self.limits
+        return await pydantic_monty.run_monty_async(monty, **run_kwargs)
+
+
+def _make_async_wrapper(fn: Any) -> Any:
+    """Wrap a sync callable as async."""
+
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
     """Home Assistant MCP Server with smart tools and fuzzy search.
 
@@ -150,12 +204,20 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         Default 3-stage flow: search -> get_schema -> execute.
         When ENABLE_CODE_MODE_LIST_TOOLS is also set, adds ListTools for full
         catalog discovery (useful for smaller catalogs).
+
+        Includes a workaround for FastMCP 3.1.0 bug where MontySandboxProvider
+        passes `external_functions` to Monty() constructor which doesn't accept it.
         """
         if not self.settings.enable_code_mode:
             return
 
         try:
-            from fastmcp.experimental.transforms.code_mode import CodeMode, GetSchemas, ListTools, Search
+            from fastmcp.experimental.transforms.code_mode import (
+                CodeMode,
+                GetSchemas,
+                ListTools,
+                Search,
+            )
         except ImportError:
             logger.warning(
                 "CodeMode not available — install fastmcp[code-mode] to enable. "
@@ -168,8 +230,16 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         if self.settings.enable_code_mode_list_tools:
             discovery_tools.insert(0, ListTools())
 
+        # Use patched sandbox provider to work around FastMCP 3.1.0 bug:
+        # MontySandboxProvider passes external_functions to Monty() constructor
+        # but pydantic-monty doesn't accept that kwarg in __init__.
+        sandbox = _PatchedMontySandboxProvider()
+
         try:
-            code_mode = CodeMode(discovery_tools=discovery_tools)
+            code_mode = CodeMode(
+                discovery_tools=discovery_tools,
+                sandbox_provider=sandbox,
+            )
             self.mcp.add_transform(code_mode)
             tool_names = [type(t).__name__ for t in discovery_tools]
             logger.info(
