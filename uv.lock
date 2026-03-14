@@ -390,13 +390,14 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-[package.optional-dependencies]
-code-mode = [
-    { name = "pydantic-monty" },
-]
 sdist = { url = "https://files.pythonhosted.org/packages/0a/70/862026c4589441f86ad3108f05bfb2f781c6b322ad60a982f40b303b47d7/fastmcp-3.1.0.tar.gz", hash = "sha256:e25264794c734b9977502a51466961eeecff92a0c2f3b49c40c070993628d6d0", size = 17347083, upload-time = "2026-03-03T02:43:11.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/07/516f5b20d88932e5a466c2216b628e5358a71b3a9f522215607c3281de05/fastmcp-3.1.0-py3-none-any.whl", hash = "sha256:b1f73b56fd3b0cb2bd9e2a144fc650d5cc31587ed129d996db7710e464ae8010", size = 633749, upload-time = "2026-03-03T02:43:09.06Z" },
+]
+
+[package.optional-dependencies]
+code-mode = [
+    { name = "pydantic-monty" },
 ]
 
 [[package]]
