@@ -225,15 +225,23 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
             )
             return
 
-        # Build discovery tools list
-        discovery_tools: list = [Search(), GetSchemas()]
+        # Build discovery tools list — tuned for token efficiency:
+        # - Search returns "detailed" results (includes param names/types inline)
+        #   so the LLM can often skip GetSchemas entirely (2-stage instead of 3)
+        # - Limit search to top 10 results to avoid bloating context
+        discovery_tools: list = [
+            Search(default_detail="detailed", default_limit=10),
+            GetSchemas(),
+        ]
         if self.settings.enable_code_mode_list_tools:
             discovery_tools.insert(0, ListTools())
 
         # Use patched sandbox provider to work around FastMCP 3.1.0 bug:
         # MontySandboxProvider passes external_functions to Monty() constructor
         # but pydantic-monty doesn't accept that kwarg in __init__.
-        sandbox = _PatchedMontySandboxProvider()
+        sandbox = _PatchedMontySandboxProvider(
+            limits={"max_duration_secs": 30},
+        )
 
         try:
             code_mode = CodeMode(
