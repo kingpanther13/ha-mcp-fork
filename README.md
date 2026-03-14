@@ -1,3 +1,5 @@
+> ⚠️ **Breaking change in OAuth (beta) mode** — v7.0.0 requires `HOMEASSISTANT_URL` to be set server-side. [See issue #749 for migration instructions.](https://github.com/homeassistant-ai/ha-mcp/issues/749)
+
 <div align="center">
   <img src="docs/img/ha-mcp-logo.png" alt="Home Assistant MCP Server Logo" width="300"/>
 
@@ -71,6 +73,23 @@ You're now connected to the demo environment! [Connect your own Home Assistant �
 
 </details>
 
+<details>
+<summary><b>🏠 Home Assistant OS (Add-on)</b></summary>
+
+1. Add the repository to your Home Assistant instance:
+
+   [![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhomeassistant-ai%2Fha-mcp)
+
+2. Install **"Home Assistant MCP Server"** from the Add-on Store and wait for it to complete
+3. Click **Start**, then open the **Logs** tab to find your unique MCP URL
+4. Configure your AI client with that URL
+
+No token or credential setup needed — the add-on connects to Home Assistant automatically.
+
+[Full add-on documentation →](homeassistant-addon/DOCS.md)
+
+</details>
+
 ### 🧙 Setup Wizard for 15+ clients
 
 **Claude Code, Gemini CLI, ChatGPT, Open WebUI, VSCode, Cursor, and more.**
@@ -110,7 +129,7 @@ Spend less time configuring, more time enjoying your smart home.
 | **💾 System** | Backup/restore, updates, add-ons, device registry |
 
 <details>
-<summary><b>🛠️ Complete Tool List (86 MCP tools)</b></summary>
+<summary><b>🛠️ Complete Tool List (96 tools)</b></summary>
 
 | Category | Tools |
 |----------|-------|
@@ -122,7 +141,7 @@ Spend less time configuring, more time enjoying your smart home.
 | **Dashboards** | `ha_dashboard_info` (read-only: list/get dashboards, find cards, guides, card docs, list resources), `ha_manage_dashboards` (write: create/update/delete dashboards and resources) |
 | **Areas & Floors** | `ha_config_list_areas`, `ha_config_set_area`, `ha_config_remove_area`, `ha_config_list_floors`, `ha_config_set_floor`, `ha_config_remove_floor` |
 | **Labels** | `ha_config_get_label`, `ha_config_set_label`, `ha_config_remove_label`, `ha_manage_entity_labels` |
-| **Zones** | `ha_get_zone`, `ha_create_zone`, `ha_update_zone`, `ha_delete_zone` |
+| **Zones** | `ha_get_zone`, `ha_set_zone`, `ha_remove_zone` |
 | **Groups** | `ha_config_list_groups`, `ha_config_set_group`, `ha_config_remove_group` |
 | **Todo Lists** | `ha_get_todo`, `ha_add_todo_item`, `ha_update_todo_item`, `ha_remove_todo_item` |
 | **Calendar** | `ha_config_get_calendar_events`, `ha_config_set_calendar_event`, `ha_config_remove_calendar_event` |
@@ -146,6 +165,17 @@ Spend less time configuring, more time enjoying your smart home.
 This server gives your AI agent tools to control Home Assistant. For better configurations, pair it with [Home Assistant Agent Skills](https://github.com/homeassistant-ai/skills) — domain knowledge that teaches the agent Home Assistant best practices.
 
 An MCP server can create automations, helpers, and dashboards, but it has no opinion on *how* to structure them. Without domain knowledge, agents tend to over-rely on templates, pick the wrong helper type, or produce automations that are hard to maintain. The skills fill that gap: native constructs over Jinja2 workarounds, correct helper selection, safe refactoring workflows, and proper use of automation modes.
+
+### Bundled Skills (built-in)
+
+Skills from `homeassistant-ai/skills` are bundled and served as [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources) via `skill://` URIs. Any MCP client that supports resources can discover them automatically — no manual installation needed.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ENABLE_SKILLS` | `true` | Serve skills as MCP resources. Resources are not auto-injected into context — clients must explicitly request them. |
+| `ENABLE_SKILLS_AS_TOOLS` | `false` | Also expose skills via `list_resources`/`read_resource` tools for clients that don't support MCP resources natively. |
+
+Skills can still be installed manually for clients that prefer local skill files — see the [skills repo](https://github.com/homeassistant-ai/skills) for instructions.
 
 ---
 
@@ -195,11 +225,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### Maintainers
 
 - **[@julienld](https://github.com/julienld)** — Project creator & core maintainer.
-- **[@sergeykad](https://github.com/sergeykad)** — Dashboard CRUD, search pagination, `__main__` security refactor, pre-commit hooks & CI lint, addon Docker fixes, `.gitattributes` enforcement, human-readable log timestamps, and removed the textdistance/numpy dependency.
-- **[@kingpanther13](https://github.com/kingpanther13)** — Dev channel documentation, bulk control validation, OAuth 2.1 docs, tool consolidation, error handling improvements, native solutions guidance, default dashboard editing fix, and search response optimization.
+- **[@sergeykad](https://github.com/sergeykad)** — Core maintainer.
+- **[@kingpanther13](https://github.com/kingpanther13)** — Core maintainer.
 
 ### Contributors
 
+- **[@bigeric08](https://github.com/bigeric08)** — Explicit `mcp` dependency for protocol version 2025-11-25 support.
 - **[@airlabno](https://github.com/airlabno)** — Support for `data` field in schedule time blocks.
 - **[@ryphez](https://github.com/ryphez)** — Codex Desktop UI MCP quick setup guide.
 - **[@Danm72](https://github.com/Danm72)** — Entity registry tools (`ha_set_entity`, `ha_get_entity`) for managing entity properties.
@@ -208,6 +239,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[@maxperron](https://github.com/maxperron)** — Beta testing.
 - **[@kingbear2](https://github.com/kingbear2)** — Windows UV setup guide.
 - **[@konradwalsh](https://github.com/konradwalsh)** — Financial support via [GitHub Sponsors](https://github.com/sponsors/julienld). Thank you! ☕
+- **[@knowald](https://github.com/knowald)** — Area resolution via device registry in `ha_get_system_overview` for entities assigned through their parent device.
+- **[@zorrobyte](https://github.com/zorrobyte)** — Per-client WebSocket credentials in OAuth mode, fixing WebSocket tool failures.
+- **[@deanbenson](https://github.com/deanbenson)** — Fixed `ha_deep_search` timeout on large Home Assistant instances with many automations.
+- **[@saphid](https://github.com/saphid)** — Config entry options flow tools (initial design, #590).
+- **[@adraguidev](https://github.com/adraguidev)** — Fix menu-based config entry flows for group helpers (#647).
+- **[@transportrefer](https://github.com/transportrefer)** — Integration options inspection (`ha_get_integration` schema support, #689).
 
 ---
 
