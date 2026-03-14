@@ -19,10 +19,14 @@ options:
   backup_hint: "normal"
   enable_skills: true
   enable_skills_as_tools: false
+  enable_code_mode: false
+  enable_code_mode_list_tools: false
 schema:
   backup_hint: list(strong|normal|weak|auto)
   secret_path: str?
   enable_skills: bool?
   enable_skills_as_tools: bool?
+  enable_code_mode: bool?
+  enable_code_mode_list_tools: bool?
 ports:
   9583/tcp: 9583

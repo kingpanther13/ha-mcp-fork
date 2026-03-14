@@ -90,6 +90,8 @@ def main() -> int:
     custom_secret_path = ""  # default
     enable_skills = True  # default
     enable_skills_as_tools = False  # default
+    enable_code_mode = False  # default
+    enable_code_mode_list_tools = False  # default
 
     if config_file.exists():
         try:
@@ -101,6 +103,10 @@ def main() -> int:
             enable_skills = raw_skills if isinstance(raw_skills, bool) else True
             raw_skills_as_tools = config.get("enable_skills_as_tools", False)
             enable_skills_as_tools = raw_skills_as_tools if isinstance(raw_skills_as_tools, bool) else False
+            raw_code_mode = config.get("enable_code_mode", False)
+            enable_code_mode = raw_code_mode if isinstance(raw_code_mode, bool) else False
+            raw_code_mode_list = config.get("enable_code_mode_list_tools", False)
+            enable_code_mode_list_tools = raw_code_mode_list if isinstance(raw_code_mode_list, bool) else False
         except Exception as e:
             log_error(f"Failed to read config: {e}, using defaults")
 
@@ -114,6 +120,8 @@ def main() -> int:
     os.environ["BACKUP_HINT"] = backup_hint
     os.environ["ENABLE_SKILLS"] = str(enable_skills).lower()
     os.environ["ENABLE_SKILLS_AS_TOOLS"] = str(enable_skills_as_tools).lower()
+    os.environ["ENABLE_CODE_MODE"] = str(enable_code_mode).lower()
+    os.environ["ENABLE_CODE_MODE_LIST_TOOLS"] = str(enable_code_mode_list_tools).lower()
 
     # Validate Supervisor token
     supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
