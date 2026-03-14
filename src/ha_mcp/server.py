@@ -41,6 +41,43 @@ SERVER_ICONS = [
 ]
 
 
+# BM25 keyword boosts — appended to tool descriptions so BM25 ranks them
+# higher for common queries (from PR #727 search quality tuning).
+_SEARCH_KEYWORDS: dict[str, str] = {
+    "ha_search_entities": (
+        "find entities lookup discover search lights sensors switches "
+        "covers climate fans media_player binary_sensor"
+    ),
+    "ha_config_get_automation": (
+        "read inspect fetch view existing automation config triggers "
+        "conditions actions get show detail"
+    ),
+    "ha_config_set_helper": (
+        "create new add helper input_boolean input_number input_text "
+        "counter timer input_datetime input_select"
+    ),
+    "ha_config_get_script": (
+        "read inspect fetch view existing script config sequence "
+        "actions get show detail"
+    ),
+    "ha_get_entity": (
+        "get entity state attributes details single specific entity_id"
+    ),
+}
+
+# Description overrides — narrows the description so BM25 ranks the tool
+# LOWER for broad queries (prevents ha_deep_search from dominating).
+_SEARCH_OVERRIDES: dict[str, str] = {
+    "ha_deep_search": (
+        "Search INSIDE automation, script, and helper YAML configurations. "
+        "Use ONLY when you need to find where a specific service call, "
+        "entity reference, or config field appears within existing "
+        "automation/script/helper definitions. "
+        "NOT for finding entities or discovering tools."
+    ),
+}
+
+
 class _PatchedMontySandboxProvider:
     """Patched sandbox provider that fixes FastMCP 3.1.0 bug.
 
@@ -244,6 +281,11 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         )
 
         try:
+            # Apply BM25 keyword tuning before CodeMode indexes tools.
+            # Boosts relevant tools and narrows ha_deep_search so it doesn't
+            # dominate broad queries (from PR #727 search quality work).
+            self._apply_search_keywords()
+
             code_mode = CodeMode(
                 discovery_tools=discovery_tools,
                 sandbox_provider=sandbox,
@@ -258,6 +300,28 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
             logger.exception(
                 "Failed to apply CodeMode transform, falling back to standard mode"
             )
+
+    def _apply_search_keywords(self) -> None:
+        """Modify tool descriptions to improve BM25 search ranking."""
+        from collections.abc import Sequence
+
+        from fastmcp.server.transforms import Transform
+
+        class _KeywordBoostTransform(Transform):
+            async def list_tools(self, tools: Sequence) -> Sequence:
+                result = []
+                for tool in tools:
+                    override = _SEARCH_OVERRIDES.get(tool.name)
+                    if override is not None:
+                        result.append(tool.model_copy(update={"description": override}))
+                    elif tool.name in _SEARCH_KEYWORDS:
+                        desc = f"{tool.description}\n{_SEARCH_KEYWORDS[tool.name]}"
+                        result.append(tool.model_copy(update={"description": desc}))
+                    else:
+                        result.append(tool)
+                return result
+
+        self.mcp.add_transform(_KeywordBoostTransform())
 
     def _get_skills_dir(self) -> Path | None:
         """Return the bundled skills directory if it exists.
