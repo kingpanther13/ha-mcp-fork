@@ -230,7 +230,7 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         # - Limit search to top 10 results to avoid bloating context
         # - LLM calls GetSchemas only for the specific tools it needs
         discovery_tools: list = [
-            Search(default_limit=10),
+            Search(default_limit=5),
             GetSchemas(),
         ]
         if self.settings.enable_code_mode_list_tools:
