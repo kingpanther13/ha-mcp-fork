@@ -137,6 +137,50 @@ class HomeAssistantSmartMCPServer(EnhancedToolsMixin):
         # Register bundled skills as MCP resources
         self._register_skills()
 
+        # Apply Code Mode transform if enabled (must be after all tools are registered)
+        self._apply_code_mode()
+
+    def _apply_code_mode(self) -> None:
+        """Apply CodeMode transform if enabled via settings.
+
+        CodeMode (FastMCP 3.1 experimental) replaces all registered tools with
+        meta-tools (search, get_schema, execute) so the LLM discovers tools on
+        demand and chains calls in a Python sandbox, reducing context bloat.
+
+        Default 3-stage flow: search -> get_schema -> execute.
+        When ENABLE_CODE_MODE_LIST_TOOLS is also set, adds ListTools for full
+        catalog discovery (useful for smaller catalogs).
+        """
+        if not self.settings.enable_code_mode:
+            return
+
+        try:
+            from fastmcp.experimental.transforms.code_mode import CodeMode, GetSchemas, ListTools, Search
+        except ImportError:
+            logger.warning(
+                "CodeMode not available — install fastmcp[code-mode] to enable. "
+                "Falling back to standard tool mode."
+            )
+            return
+
+        # Build discovery tools list
+        discovery_tools: list = [Search(), GetSchemas()]
+        if self.settings.enable_code_mode_list_tools:
+            discovery_tools.insert(0, ListTools())
+
+        try:
+            code_mode = CodeMode(discovery_tools=discovery_tools)
+            self.mcp.add_transform(code_mode)
+            tool_names = [type(t).__name__ for t in discovery_tools]
+            logger.info(
+                "Code Mode enabled (discovery: %s + execute)",
+                ", ".join(tool_names),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to apply CodeMode transform, falling back to standard mode"
+            )
+
     def _get_skills_dir(self) -> Path | None:
         """Return the bundled skills directory if it exists.
 

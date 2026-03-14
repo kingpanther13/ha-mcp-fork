@@ -85,6 +85,15 @@ class Settings(BaseSettings):
     # Disable when using clients with programmatic tool use (future).
     enable_dashboard_partial_tools: bool = Field(True, alias="ENABLE_DASHBOARD_PARTIAL_TOOLS")
 
+    # Code Mode configuration (FastMCP 3.1 experimental)
+    # Replaces all tools with meta-tools (search, get_schema, execute) to reduce
+    # context bloat and allow the LLM to chain multiple tool calls in one execution.
+    enable_code_mode: bool = Field(False, alias="ENABLE_CODE_MODE")
+
+    # When code mode is enabled, also expose ListTools for full catalog discovery.
+    # Useful for smaller tool catalogs; wasteful for large ones.
+    enable_code_mode_list_tools: bool = Field(False, alias="ENABLE_CODE_MODE_LIST_TOOLS")
+
     # Skills configuration
     # Serve bundled HA best-practice skills as MCP resources (skill:// URIs).
     # Resources are not auto-injected — clients must explicitly request them.
