@@ -1,8 +1,8 @@
-name: "Home Assistant MCP Server (Dev)"
+name: "Fork-Dev"
 description: "Development channel - AI assistant integration via MCP (unstable)"
-version: "dev"
+version: "dev54"
 slug: "ha_mcp_dev"
-url: "https://github.com/homeassistant-ai/ha-mcp"
+url: "https://github.com/kingpanther13/ha-mcp-fork"
 stage: experimental
 arch:
   - aarch64
@@ -14,7 +14,6 @@ hassio_api: true
 hassio_role: default
 homeassistant_api: true
 host_network: true
-image: "ghcr.io/homeassistant-ai/ha-mcp-addon-dev-{arch}"
 options:
   backup_hint: "normal"
   enable_skills: true
