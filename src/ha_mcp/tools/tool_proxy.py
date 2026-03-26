@@ -1,0 +1,913 @@
+"""
+Category Gateway Proxy — domain-named tool groups with direct execution.
+
+Instead of registering all tools directly with MCP (high idle context cost),
+lesser-used tools are grouped into domain-named gateways:
+
+  ha_manage_dashboards(tool="ha_config_set_dashboard", args='{"url_path": "..."}')
+
+Each gateway's MCP description includes tool signatures with required
+parameters so LLMs can call tools directly without a discovery round-trip.
+Optional: call with no arguments for detailed parameter documentation.
+
+See: https://www.anthropic.com/engineering/code-execution-with-mcp
+"""
+
+import importlib
+import inspect
+import json
+import logging
+import types
+import typing
+from typing import Annotated, Any
+
+from fastmcp.exceptions import ToolError
+from pydantic import Field
+from pydantic_core import PydanticUndefined
+
+from ..errors import (
+    ErrorCode,
+    create_error_response,
+    create_resource_not_found_error,
+    create_validation_error,
+)
+from .helpers import log_tool_usage
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Parameter alias mapping.
+# LLMs sometimes guess common-but-wrong parameter names.  Map them to the
+# canonical names so the call succeeds on the first attempt.
+# Format: tool_name → {alias → canonical}
+# ---------------------------------------------------------------------------
+PARAM_ALIASES: dict[str, dict[str, str]] = {
+    "ha_config_get_dashboard": {"dashboard_id": "url_path"},
+    "ha_config_set_dashboard": {"dashboard_id": "url_path"},
+}
+
+# ---------------------------------------------------------------------------
+# Category gateway configuration.
+# Maps gateway tool name → list of source tool modules.
+# Per-tool assignment is controlled by TOOL_CATEGORY_OVERRIDES below.
+# ---------------------------------------------------------------------------
+PROXY_CATEGORIES: dict[str, list[str]] = {
+    # Dashboard gateways (from PR #637)
+    "ha_dashboard_info": ["tools_config_dashboards", "tools_resources"],
+    "ha_manage_dashboards": ["tools_config_dashboards", "tools_resources"],
+    # Automation & script read gateway (scripts are automations without triggers)
+    "ha_automation_script_info": ["tools_config_automations", "tools_traces", "tools_config_scripts"],
+    "ha_manage_automations": ["tools_config_automations"],
+    # Script write gateway
+    "ha_manage_scripts": ["tools_config_scripts"],
+    # History gateway (read-only)
+    "ha_history_info": ["tools_history"],
+    # Helper gateways
+    # NOTE: tools_config_helpers appears in both because TOOL_CATEGORY_OVERRIDES
+    # routes each tool individually (list/schema → info, set/remove → manage).
+    "ha_helper_info": ["tools_config_helpers"],
+    "ha_manage_helpers": ["tools_config_helpers", "tools_config_entry_flow"],
+    # HACS gateways (read gateway renamed to avoid collision with ha_hacs_info tool)
+    "ha_hacs_store_info": ["tools_hacs"],
+    "ha_manage_hacs_repos": ["tools_hacs"],
+    # Device & entity registry write gateway (ha_get_device is now a direct tool)
+    "ha_manage_devices_entities": ["tools_registry"],
+    # Backup gateway (both tools are destructive)
+    "ha_manage_backups": ["backup"],
+    # System operations gateway (restart + reload)
+    "ha_reload_restart": ["tools_system_ops"],
+    # Todo & calendar gateways (combined domain)
+    # NOTE: Both modules appear in both gateways; TOOL_CATEGORY_OVERRIDES
+    # routes each tool individually (read → info, write → manage).
+    "ha_todo_calendar_info": ["tools_todo", "tools_calendar"],
+    "ha_manage_todo_calendar": ["tools_todo", "tools_calendar"],
+    # Areas & floors gateways
+    "ha_get_areas_floors": ["tools_areas"],
+    "ha_manage_areas_floors": ["tools_areas"],
+}
+
+# ---------------------------------------------------------------------------
+# Per-tool category assignment (tool_name → gateway_name).
+# Every tool captured from a proxied module MUST appear here.
+# ---------------------------------------------------------------------------
+TOOL_CATEGORY_OVERRIDES: dict[str, str] = {
+    # ── Dashboard ──────────────────────────────────────────────────────
+    # Read-only → ha_dashboard_info
+    "ha_config_get_dashboard": "ha_dashboard_info",
+    "ha_dashboard_find_card": "ha_dashboard_info",
+    "ha_get_dashboard_guide": "ha_dashboard_info",
+    "ha_get_card_documentation": "ha_dashboard_info",
+    "ha_config_list_dashboard_resources": "ha_dashboard_info",
+    # Write/CRUD → ha_manage_dashboards
+    "ha_config_set_dashboard": "ha_manage_dashboards",
+    "ha_config_delete_dashboard": "ha_manage_dashboards",
+    "ha_config_set_dashboard_resource": "ha_manage_dashboards",
+    "ha_config_delete_dashboard_resource": "ha_manage_dashboards",
+    # ── Automations ────────────────────────────────────────────────────
+    # Read-only → ha_automation_script_info
+    "ha_config_get_automation": "ha_automation_script_info",
+    "ha_get_automation_traces": "ha_automation_script_info",
+    # Write/CRUD → ha_manage_automations
+    "ha_config_set_automation": "ha_manage_automations",
+    "ha_config_remove_automation": "ha_manage_automations",
+    # ── Scripts ────────────────────────────────────────────────────────
+    # Read-only → ha_automation_script_info (scripts are automations without triggers)
+    "ha_config_get_script": "ha_automation_script_info",
+    # Write/CRUD → ha_manage_scripts
+    "ha_config_set_script": "ha_manage_scripts",
+    "ha_config_remove_script": "ha_manage_scripts",
+    # ── History (read-only) ───────────────────────────────────────────
+    "ha_get_history": "ha_history_info",
+    "ha_get_statistics": "ha_history_info",
+    # ── Helpers ────────────────────────────────────────────────────────
+    # Read-only → ha_helper_info
+    "ha_config_list_helpers": "ha_helper_info",
+    "ha_get_helper_schema": "ha_helper_info",
+    # Write/CRUD → ha_manage_helpers
+    "ha_config_set_helper": "ha_manage_helpers",
+    "ha_config_remove_helper": "ha_manage_helpers",
+    "ha_create_config_entry_helper": "ha_manage_helpers",
+    # ── HACS ───────────────────────────────────────────────────────────
+    # Read-only → ha_hacs_store_info (renamed to avoid collision with ha_hacs_info tool)
+    "ha_hacs_info": "ha_hacs_store_info",
+    "ha_hacs_list_installed": "ha_hacs_store_info",
+    "ha_hacs_search": "ha_hacs_store_info",
+    "ha_hacs_repository_info": "ha_hacs_store_info",
+    # Write → ha_manage_hacs
+    "ha_hacs_add_repository": "ha_manage_hacs_repos",
+    "ha_hacs_download": "ha_manage_hacs_repos",
+    # ── Device & Entity Registry (write-only — ha_get_device is now direct) ──
+    "ha_rename_entity": "ha_manage_devices_entities",
+    "ha_update_device": "ha_manage_devices_entities",
+    "ha_remove_device": "ha_manage_devices_entities",
+    "ha_rename_entity_and_device": "ha_manage_devices_entities",
+    # ── Backups (both destructive) ─────────────────────────────────────
+    "ha_backup_create": "ha_manage_backups",
+    "ha_backup_restore": "ha_manage_backups",
+    # ── System Operations (restart + reload) ───────────────────────────
+    "ha_restart": "ha_reload_restart",
+    "ha_reload_core": "ha_reload_restart",
+    # ── Todo & Calendar ────────────────────────────────────────────────
+    # Read-only → ha_todo_calendar_info
+    "ha_get_todo": "ha_todo_calendar_info",
+    "ha_config_get_calendar_events": "ha_todo_calendar_info",
+    # Write/CRUD → ha_manage_todo_calendar
+    "ha_add_todo_item": "ha_manage_todo_calendar",
+    "ha_update_todo_item": "ha_manage_todo_calendar",
+    "ha_remove_todo_item": "ha_manage_todo_calendar",
+    "ha_config_set_calendar_event": "ha_manage_todo_calendar",
+    "ha_config_remove_calendar_event": "ha_manage_todo_calendar",
+    # ── Areas & Floors ──────────────────────────────────────────────────
+    # Read-only → ha_get_areas_floors
+    "ha_config_list_areas": "ha_get_areas_floors",
+    "ha_config_list_floors": "ha_get_areas_floors",
+    # Write/CRUD → ha_manage_areas_floors
+    "ha_config_set_area": "ha_manage_areas_floors",
+    "ha_config_remove_area": "ha_manage_areas_floors",
+    "ha_config_set_floor": "ha_manage_areas_floors",
+    "ha_config_remove_floor": "ha_manage_areas_floors",
+}
+
+# ---------------------------------------------------------------------------
+# Gateway descriptions — concise summaries for the MCP tool listing.
+# ---------------------------------------------------------------------------
+GATEWAY_DESCRIPTIONS: dict[str, str] = {
+    # Dashboard
+    "ha_dashboard_info": (
+        "Read-only dashboard tools: list/get dashboards, find cards, "
+        "get design guides, card documentation, and list resources."
+    ),
+    "ha_manage_dashboards": (
+        "Create, update, and delete Home Assistant dashboards, "
+        "and manage dashboard resources (custom cards, CSS, JS)."
+    ),
+    # Automations & Scripts
+    "ha_automation_script_info": (
+        "Read-only automation and script tools: get automation/script "
+        "config and view automation execution traces."
+    ),
+    "ha_manage_automations": (
+        "Create, update, and delete Home Assistant automations."
+    ),
+    "ha_manage_scripts": (
+        "Create, update, and delete Home Assistant scripts."
+    ),
+    # History
+    "ha_history_info": (
+        "Read-only history tools: get entity state history over time "
+        "and long-term statistics (min/max/mean/sum)."
+    ),
+    # Helpers
+    "ha_helper_info": (
+        "Read-only helper tools: list all helpers and get helper type schemas."
+    ),
+    "ha_manage_helpers": (
+        "Create, update, and delete Home Assistant helpers "
+        "(input_boolean, counter, timer, input_select, etc.)."
+    ),
+    # HACS
+    "ha_hacs_store_info": (
+        "Read-only HACS tools: get HACS status, list installed repositories, "
+        "search the HACS store, and get repository details."
+    ),
+    "ha_manage_hacs_repos": (
+        "Install and manage HACS repositories: add custom repositories "
+        "and download/update integrations, plugins, and themes."
+    ),
+    # Device & entity registry (write-only — ha_get_device is a direct tool)
+    "ha_manage_devices_entities": (
+        "Rename entities, update device info, remove devices, "
+        "and bulk rename entity+device."
+    ),
+    # Backups
+    "ha_manage_backups": (
+        "Create and restore Home Assistant backups."
+    ),
+    # System operations
+    "ha_reload_restart": (
+        "Restart Home Assistant or reload specific components "
+        "(automations, scripts, themes, etc.) without full restart."
+    ),
+    # Todo & Calendar
+    "ha_todo_calendar_info": (
+        "Read-only todo and calendar tools: list todo lists, get todo items, "
+        "and get calendar events."
+    ),
+    "ha_manage_todo_calendar": (
+        "Manage todo lists and calendar events: add/update/remove todo items, "
+        "create/update/remove calendar events."
+    ),
+    # Areas & Floors
+    "ha_get_areas_floors": (
+        "Read-only area and floor tools: list all areas and list all floors."
+    ),
+    "ha_manage_areas_floors": (
+        "Create, update, and delete Home Assistant areas and floors."
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# Gateway-level MCP annotations.
+# ---------------------------------------------------------------------------
+GATEWAY_ANNOTATIONS: dict[str, dict[str, Any]] = {
+    # Dashboard
+    "ha_dashboard_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Dashboard Info",
+    },
+    "ha_manage_dashboards": {
+        "destructiveHint": True,
+        "title": "Manage Dashboards",
+    },
+    # Automations & Scripts
+    "ha_automation_script_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Automation & Script Info",
+    },
+    "ha_manage_automations": {
+        "destructiveHint": True,
+        "title": "Manage Automations",
+    },
+    "ha_manage_scripts": {
+        "destructiveHint": True,
+        "title": "Manage Scripts",
+    },
+    # History
+    "ha_history_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "History Info",
+    },
+    # Helpers
+    "ha_helper_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Helper Info",
+    },
+    "ha_manage_helpers": {
+        "destructiveHint": True,
+        "title": "Manage Helpers",
+    },
+    # HACS
+    "ha_hacs_store_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "HACS Store Info",
+    },
+    "ha_manage_hacs_repos": {
+        "destructiveHint": True,
+        "title": "Manage HACS",
+    },
+    # Device & entity registry (write-only)
+    "ha_manage_devices_entities": {
+        "destructiveHint": True,
+        "title": "Manage Devices",
+    },
+    # Backups
+    "ha_manage_backups": {
+        "destructiveHint": True,
+        "title": "Manage Backups",
+    },
+    # System operations
+    "ha_reload_restart": {
+        "destructiveHint": True,
+        "title": "Reload & Restart",
+    },
+    # Todo & Calendar
+    "ha_todo_calendar_info": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Todo & Calendar Info",
+    },
+    "ha_manage_todo_calendar": {
+        "destructiveHint": True,
+        "title": "Manage Todo & Calendar",
+    },
+    # Areas & Floors
+    "ha_get_areas_floors": {
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "title": "Areas & Floors Info",
+    },
+    "ha_manage_areas_floors": {
+        "destructiveHint": True,
+        "title": "Manage Areas & Floors",
+    },
+}
+
+
+class ToolProxyRegistry:
+    """Server-side registry of proxied tools and their metadata."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, dict[str, Any]] = {}
+        self._categories: dict[str, list[str]] = {}
+
+    @property
+    def tool_count(self) -> int:
+        return len(self._tools)
+
+    def register_tool(
+        self,
+        name: str,
+        description: str,
+        parameters: dict[str, Any],
+        annotations: dict[str, Any],
+        implementation: Any,
+        module: str,
+        category: str,
+    ) -> None:
+        """Register a tool in the proxy registry (NOT with MCP)."""
+        self._tools[name] = {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+            "annotations": annotations,
+            "implementation": implementation,
+            "module": module,
+            "category": category,
+        }
+
+        if category not in self._categories:
+            self._categories[category] = []
+        self._categories[category].append(name)
+
+        logger.debug(f"Proxy registry: registered {name} (category: {category})")
+
+    def get_tools_for_category(self, category: str) -> list[dict[str, Any]]:
+        """Get all tools in a category with full details."""
+        tool_names = self._categories.get(category, [])
+        return [self._tools[name] for name in tool_names if name in self._tools]
+
+    def get_tool(self, tool_name: str) -> dict[str, Any] | None:
+        """Get a tool by name."""
+        return self._tools.get(tool_name)
+
+    def get_catalog(self) -> dict[str, list[str]]:
+        """Get the full tool catalog grouped by category."""
+        return dict(self._categories)
+
+    def _format_parameters(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Format parameter schema into LLM-friendly list."""
+        properties = params.get("properties", {})
+        required = set(params.get("required", []))
+        result = []
+
+        for name, schema in properties.items():
+            param_info: dict[str, Any] = {
+                "name": name,
+                "type": schema.get("type", "string"),
+                "required": name in required,
+            }
+            if "description" in schema:
+                param_info["description"] = schema["description"]
+            if "default" in schema:
+                param_info["default"] = schema["default"]
+            if "enum" in schema:
+                param_info["enum"] = schema["enum"]
+            result.append(param_info)
+
+        return result
+
+    def build_tool_catalog(self, category: str) -> list[dict[str, Any]]:
+        """Build a detailed catalog of tools in a category (for action=list)."""
+        tools = self.get_tools_for_category(category)
+        return [
+            {
+                "tool_name": tool["name"],
+                "description": tool["description"],
+                "parameters": self._format_parameters(tool["parameters"]),
+                "required_parameters": tool["parameters"].get("required", []),
+                "is_read_only": tool["annotations"].get("readOnlyHint", False),
+            }
+            for tool in tools
+        ]
+
+    def build_summary_lines(self, category: str) -> list[str]:
+        """Build tool signatures with typed params for the gateway description.
+
+        Format: ``- tool_name(param: type, opt?: type, ...): First line``
+
+        Required params are always shown.  When there are **no** required
+        params, the first optional param is shown with a ``?`` suffix so
+        LLMs can see the primary parameter name instead of just ``(...)``.
+        """
+        tools = self.get_tools_for_category(category)
+        lines = []
+        for tool in tools:
+            first_line = tool["description"].strip().split("\n")[0]
+
+            params = tool["parameters"]
+            properties = params.get("properties", {})
+            required_set = set(params.get("required", []))
+
+            required_parts = []
+            optional_parts = []
+            for n in properties:
+                ptype = properties[n].get("type", "string")
+                if n in required_set:
+                    required_parts.append(f"{n}: {ptype}")
+                else:
+                    optional_parts.append(f"{n}?: {ptype}")
+
+            has_extra_optional = len(optional_parts) > (
+                0 if required_parts else 1
+            )
+
+            if required_parts:
+                parts = required_parts
+            elif optional_parts:
+                # No required params — show first optional so LLMs see
+                # the primary param name (e.g. "url_path?: string")
+                parts = [optional_parts[0]]
+            else:
+                parts = []
+
+            sig_parts = ", ".join(parts)
+            if has_extra_optional:
+                sig = f"{sig_parts}, ..." if sig_parts else "..."
+            else:
+                sig = sig_parts
+
+            lines.append(f"- {tool['name']}({sig}): {first_line}")
+        return lines
+
+
+def _extract_tool_metadata(func: Any) -> tuple[str, str, dict[str, Any]]:
+    """Extract tool name, description, and parameter schema from type hints."""
+    name = func.__name__
+    description = inspect.getdoc(func) or ""
+
+    hints = typing.get_type_hints(func, include_extras=True)
+    sig = inspect.signature(func)
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls"):
+            continue
+
+        hint = hints.get(param_name)
+        if hint is None:
+            continue
+
+        param_schema: dict[str, Any] = {"type": "string"}
+        origin = typing.get_origin(hint)
+        args = typing.get_args(hint)
+
+        if origin is Annotated:
+            type_to_inspect = args[0] if args else str
+            for metadata in args[1:]:
+                if isinstance(metadata, type(Field())):
+                    field_info = metadata
+                    if hasattr(field_info, "description") and field_info.description:
+                        param_schema["description"] = field_info.description
+                    if (
+                        hasattr(field_info, "default")
+                        and field_info.default is not None
+                        and field_info.default is not PydanticUndefined
+                    ):
+                        param_schema["default"] = field_info.default
+        else:
+            type_to_inspect = hint
+
+        # Extract Literal values as enum constraint
+        literal_values = _extract_literal_values(type_to_inspect)
+        if literal_values is not None:
+            param_schema["enum"] = literal_values
+            param_schema["type"] = "string"
+        else:
+            json_type = _python_type_to_json(type_to_inspect)
+            param_schema["type"] = json_type
+
+            if json_type == "array":
+                item_schema = _get_array_items_schema(type_to_inspect)
+                if item_schema:
+                    param_schema["items"] = item_schema
+
+        properties[param_name] = param_schema
+
+        if param.default is inspect.Parameter.empty:
+            required.append(param_name)
+
+    schema = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+
+    return name, description, schema
+
+
+def _get_array_items_schema(python_type: Any) -> dict[str, str] | None:
+    """Extract items schema for array types."""
+    effective = python_type
+    eff_origin = getattr(effective, "__origin__", None)
+
+    if eff_origin is types.UnionType:
+        for arg in effective.__args__:
+            if arg is not type(None) and getattr(arg, "__origin__", arg) is list:
+                effective = arg
+                break
+
+    type_args = getattr(effective, "__args__", ())
+    if type_args:
+        return {"type": _python_type_to_json(type_args[0])}
+    return None
+
+
+def _extract_literal_values(python_type: Any) -> list[str] | None:
+    """Extract allowed values from Literal type hints (e.g., Literal["a", "b"])."""
+    origin = getattr(python_type, "__origin__", None)
+
+    # Handle Optional[Literal[...]] / Literal[...] | None
+    if origin is types.UnionType:
+        for arg in python_type.__args__:
+            if arg is not type(None):
+                result = _extract_literal_values(arg)
+                if result is not None:
+                    return result
+        return None
+
+    if origin is typing.Literal:
+        return list(python_type.__args__)
+
+    return None
+
+
+def _python_type_to_json(python_type: Any) -> str:
+    """Map Python type hints to JSON Schema types.
+
+    For union types (e.g., ``str | dict``), prefer structured types (object/array)
+    over primitives.  This ensures gateway summary lines show ``config: object``
+    instead of ``config: string``, which nudges LLMs to pass a dict — matching
+    the direct-tool behavior where FastMCP advertises both types in the schema.
+    """
+    origin = getattr(python_type, "__origin__", None)
+
+    if origin is types.UnionType:
+        args = [a for a in python_type.__args__ if a is not type(None)]
+        # Prefer structured types so LLMs pass objects, not serialised strings
+        for a in args:
+            if a is dict or getattr(a, "__origin__", None) is dict:
+                return "object"
+            if a is list or getattr(a, "__origin__", None) is list:
+                return "array"
+        if args:
+            return _python_type_to_json(args[0])
+        return "string"
+
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        dict: "object",
+        list: "array",
+    }
+    return type_map.get(origin or python_type, "string")
+
+
+class _MockMCP:
+    """Mock FastMCP that captures @mcp.tool() registrations without registering.
+
+    Mimics the FastMCP ``@mcp.tool()`` decorator API to intercept tool
+    definitions from existing tool modules without modifying them.
+    """
+
+    def __init__(self) -> None:
+        self.captured_tools: list[dict[str, Any]] = []
+
+    def tool(self, **kwargs: Any) -> Any:
+        """Capture the @mcp.tool() decorator call."""
+        annotations = kwargs.get("annotations", {})
+
+        def decorator(func: Any) -> Any:
+            inner = func
+            while hasattr(inner, "__wrapped__"):
+                inner = inner.__wrapped__
+
+            name, description, parameters = _extract_tool_metadata(inner)
+
+            self.captured_tools.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                    "annotations": annotations,
+                    "implementation": func,
+                }
+            )
+            return func
+
+        return decorator
+
+
+def discover_proxy_tools(
+    mcp: Any,
+    client: Any,
+    proxy_categories: dict[str, list[str]],
+    **kwargs: Any,
+) -> ToolProxyRegistry:
+    """Import proxy modules and capture tool metadata without MCP registration."""
+    from .registry import EXPLICIT_MODULES
+
+    registry = ToolProxyRegistry()
+
+    # Collect all unique modules (deduplicate across categories)
+    all_modules: set[str] = set()
+    for modules in proxy_categories.values():
+        all_modules.update(modules)
+
+    for module_name in all_modules:
+        try:
+            if module_name in EXPLICIT_MODULES:
+                module = importlib.import_module(f".{module_name}", "ha_mcp.tools")
+                func_name = EXPLICIT_MODULES[module_name]
+                register_func = getattr(module, func_name, None)
+            else:
+                module = importlib.import_module(f".{module_name}", "ha_mcp.tools")
+                register_func = None
+                for attr_name in dir(module):
+                    if attr_name.startswith("register_") and attr_name.endswith(
+                        "_tools"
+                    ):
+                        register_func = getattr(module, attr_name)
+                        break
+
+            if not register_func:
+                logger.warning(f"Proxy: no register function found in {module_name}")
+                continue
+
+            mock = _MockMCP()
+            register_func(mock, client, **kwargs)
+
+            # Assign each tool to its category via TOOL_CATEGORY_OVERRIDES
+            for tool_info in mock.captured_tools:
+                category = TOOL_CATEGORY_OVERRIDES.get(tool_info["name"])
+                if not category:
+                    logger.warning(
+                        f"Proxy: tool '{tool_info['name']}' from {module_name} "
+                        f"has no entry in TOOL_CATEGORY_OVERRIDES — skipping"
+                    )
+                    continue
+                registry.register_tool(
+                    name=tool_info["name"],
+                    description=tool_info["description"],
+                    parameters=tool_info["parameters"],
+                    annotations=tool_info["annotations"],
+                    implementation=tool_info["implementation"],
+                    module=module_name,
+                    category=category,
+                )
+
+            logger.debug(
+                f"Proxy: captured {len(mock.captured_tools)} tools from {module_name}"
+            )
+
+        except Exception as e:
+            logger.error(f"Proxy: failed to capture tools from {module_name}: {e}")
+            raise
+
+    logger.info(
+        f"Tool proxy registry: {registry.tool_count} tools in "
+        f"{len(proxy_categories)} categories"
+    )
+    return registry
+
+
+def register_category_gateways(
+    mcp: Any,
+    client: Any,
+    proxy_registry: ToolProxyRegistry,
+    proxy_categories: dict[str, list[str]],
+    **kwargs: Any,
+) -> None:
+    """Register one MCP gateway tool per category.
+
+    Each gateway combines discovery (action=list) and execution (action=execute)
+    into a single tool, replacing the 3-step find→details→execute pattern.
+    """
+    for category_name in proxy_categories:
+        _register_single_gateway(mcp, proxy_registry, category_name)
+
+
+def _register_single_gateway(
+    mcp: Any,
+    proxy_registry: ToolProxyRegistry,
+    category_name: str,
+) -> None:
+    """Register a single category gateway tool with MCP."""
+    summary_lines = proxy_registry.build_summary_lines(category_name)
+    tools_list = "\n".join(summary_lines)
+
+    gateway_summary = GATEWAY_DESCRIPTIONS.get(category_name, "")
+    # Pick the first tool with a required param for the example
+    example_tool = ""
+    for line in summary_lines:
+        # Find a tool with at least one required param for a useful example
+        if "(" in line and "(...)" not in line.split(":")[0]:
+            # Extract tool name (before the "(")
+            tool_name = line.split("(")[0].lstrip("- ")
+            # Extract first required param name (before the ":")
+            sig_part = line.split("(")[1].split(")")[0]
+            first_param = sig_part.split(":")[0].strip()
+            if first_param and first_param != "...":
+                example_tool = (
+                    f"\n\nExample: {category_name}"
+                    f'(tool="{tool_name}", args={{"{first_param}": "..."}})'
+                )
+                break
+
+    description = (
+        f"{gateway_summary}\n\n"
+        f"Available tools:\n{tools_list}{example_tool}\n\n"
+        f"Note: These tools are only available through this gateway, "
+        f"not as direct MCP tools."
+    )
+
+    # Build Literal enum of valid tool names for this gateway
+    tool_names = [
+        t["name"] for t in proxy_registry.get_tools_for_category(category_name)
+    ]
+
+    # Use explicit annotations per gateway (read-only vs destructive)
+    annotations = GATEWAY_ANNOTATIONS.get(
+        category_name,
+        {
+            "title": category_name.replace("ha_", "").replace("_", " ").title(),
+        },
+    )
+
+    @mcp.tool(
+        name=category_name,
+        description=description,
+        annotations=annotations,
+    )
+    @log_tool_usage
+    async def gateway_handler(
+        tool: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Tool name to execute. Omit for detailed parameter help.",
+                json_schema_extra={"enum": tool_names},
+            ),
+        ] = None,
+        args: Annotated[
+            dict | str | None,
+            Field(
+                default=None,
+                description=(
+                    "Arguments to pass to the tool as a JSON object. "
+                    "Required when tool is specified."
+                ),
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        # List mode: return full catalog with parameter schemas
+        if tool is None:
+            catalog = proxy_registry.build_tool_catalog(category_name)
+            return {
+                "success": True,
+                "category": category_name,
+                "tools": catalog,
+                "count": len(catalog),
+                "usage": (
+                    f"Call {category_name}(tool='<tool_name>', "
+                    f'args=\'{{"param": "value"}}\') to execute a tool.'
+                ),
+            }
+
+        # Execute mode: validate and run the tool
+        tool_entry = proxy_registry.get_tool(tool)
+        if not tool_entry:
+            available = [
+                t["name"]
+                for t in proxy_registry.get_tools_for_category(category_name)
+            ]
+            return create_resource_not_found_error(
+                resource_type="Tool",
+                identifier=tool,
+                details=(
+                    f"Tool '{tool}' not found in {category_name}. "
+                    f"Available: {', '.join(available)}"
+                ),
+            )
+
+        # Verify tool belongs to this category
+        if tool_entry["category"] != category_name:
+            return create_validation_error(
+                message=f"Tool '{tool}' does not belong to {category_name}.",
+                parameter="tool",
+            )
+
+        # Parse args
+        if args is None:
+            parsed_args: dict[str, Any] = {}
+        else:
+            try:
+                parsed_args = json.loads(args) if isinstance(args, str) else args
+            except (json.JSONDecodeError, TypeError) as e:
+                return create_validation_error(
+                    message=f"Invalid JSON in args: {e}",
+                    parameter="args",
+                )
+
+        if not isinstance(parsed_args, dict):
+            return create_validation_error(
+                message="args must be a JSON object.",
+                parameter="args",
+            )
+
+        # Resolve parameter aliases (e.g. dashboard_id → url_path)
+        aliases = PARAM_ALIASES.get(tool, {})
+        for alias, canonical in aliases.items():
+            if alias in parsed_args and canonical not in parsed_args:
+                parsed_args[canonical] = parsed_args.pop(alias)
+
+        # Validate required parameters
+        params_schema = tool_entry["parameters"]
+        required_params = set(params_schema.get("required", []))
+        provided_params = set(parsed_args.keys())
+        missing = required_params - provided_params
+
+        if missing:
+            return create_error_response(
+                code=ErrorCode.VALIDATION_MISSING_PARAMETER,
+                message=f"Missing required parameter(s): {', '.join(sorted(missing))}",
+                context={"missing_parameters": sorted(missing)},
+            )
+
+        # Validate enum constraints (Literal types) — mirrors FastMCP's
+        # schema-level validation which the gateway bypasses.
+        properties = params_schema.get("properties", {})
+        for param_name, value in parsed_args.items():
+            prop = properties.get(param_name, {})
+            allowed = prop.get("enum")
+            if allowed is not None and value not in allowed:
+                raise ToolError(
+                    f"Invalid value '{value}' for parameter '{param_name}'. "
+                    f"Allowed values: {allowed}"
+                )
+
+        # Execute
+        try:
+            implementation = tool_entry["implementation"]
+            result = await implementation(**parsed_args)
+            return result
+
+        except ToolError:
+            raise
+        except TypeError as e:
+            return create_validation_error(
+                message=f"Parameter error: {e}",
+                context={"tool_name": tool},
+            )
+        except Exception as e:
+            logger.error(f"Gateway execution error for {tool}: {e}")
+            return create_error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message=f"Tool execution failed: {e}",
+                context={"tool_name": tool},
+            )
