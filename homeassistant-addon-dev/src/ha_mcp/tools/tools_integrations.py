@@ -1,0 +1,423 @@
+"""
+Integration management tools for Home Assistant MCP server.
+
+This module provides tools to list, enable, disable, and delete Home Assistant
+integrations (config entries) via the REST and WebSocket APIs.
+"""
+
+import logging
+from typing import Annotated, Any
+
+from fastmcp.exceptions import ToolError
+from pydantic import Field
+
+from ..errors import ErrorCode, create_error_response
+from .helpers import exception_to_structured_error, log_tool_usage, raise_tool_error
+from .util_helpers import build_pagination_metadata, coerce_bool_param, coerce_int_param
+
+logger = logging.getLogger(__name__)
+
+
+def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
+    """Register integration management tools with the MCP server."""
+
+    @mcp.tool(
+        tags={"Integrations"},
+        annotations={
+            "idempotentHint": True,
+            "readOnlyHint": True,
+            "title": "Get Integration",
+        },
+    )
+    @log_tool_usage
+    async def ha_get_integration(
+        entry_id: Annotated[
+            str | None,
+            Field(
+                description="Config entry ID to get details for. "
+                "If omitted, lists all integrations.",
+                default=None,
+            ),
+        ] = None,
+        query: Annotated[
+            str | None,
+            Field(
+                description="When listing, search by domain or title. "
+                "Uses exact substring matching by default; set exact_match=False for fuzzy.",
+                default=None,
+            ),
+        ] = None,
+        domain: Annotated[
+            str | None,
+            Field(
+                description="Filter by integration domain (e.g. 'template', 'group'). "
+                "When set, includes the full options/configuration for each entry.",
+                default=None,
+            ),
+        ] = None,
+        include_options: Annotated[
+            bool | str,
+            Field(
+                description="Include the options object for each entry. "
+                "Automatically enabled when domain filter is set. "
+                "Useful for auditing template definitions and helper configurations.",
+                default=False,
+            ),
+        ] = False,
+        include_schema: Annotated[
+            bool | str,
+            Field(
+                description="When entry_id is set, also return the options flow schema "
+                "(available fields and their types). Use before ha_set_config_entry_helper "
+                "to understand what can be updated. Only applies when supports_options=true.",
+                default=False,
+            ),
+        ] = False,
+        exact_match: Annotated[
+            bool | str,
+            Field(
+                description=(
+                    "Use exact substring matching for query filter (default: True). "
+                    "Set to False for fuzzy matching when the query may contain typos."
+                ),
+                default=True,
+            ),
+        ] = True,
+        limit: Annotated[
+            int | str,
+            Field(
+                default=50,
+                description="Max entries to return per page in list mode (default: 50)",
+            ),
+        ] = 50,
+        offset: Annotated[
+            int | str,
+            Field(
+                default=0,
+                description="Number of entries to skip for pagination (default: 0)",
+            ),
+        ] = 0,
+    ) -> dict[str, Any]:
+        """Get integration (config entry) information with pagination.
+
+        Without an entry_id: Lists all configured integrations with optional filters.
+        With an entry_id: Returns detailed information including full options/configuration.
+
+        EXAMPLES:
+        - List all integrations: ha_get_integration()
+        - Paginate: ha_get_integration(offset=50)
+        - Search: ha_get_integration(query="zigbee")
+        - Get specific entry: ha_get_integration(entry_id="abc123")
+        - Get entry with editable fields: ha_get_integration(entry_id="abc123", include_schema=True)
+        - List template entries: ha_get_integration(domain="template")
+
+        STATES: 'loaded', 'setup_error', 'setup_retry', 'not_loaded',
+        'failed_unload', 'migration_error'.
+        """
+        try:
+            include_opts = coerce_bool_param(
+                include_options, "include_options", default=False
+            )
+            include_schema_bool = coerce_bool_param(
+                include_schema, "include_schema", default=False
+            )
+            exact_match_bool = coerce_bool_param(
+                exact_match, "exact_match", default=True
+            )
+            limit_int = coerce_int_param(
+                limit, "limit", default=50, min_value=1, max_value=200
+            )
+            offset_int = coerce_int_param(offset, "offset", default=0, min_value=0)
+            # Auto-enable options when domain filter is set
+            if domain is not None:
+                include_opts = True
+
+            # If entry_id provided, get specific config entry
+            if entry_id is not None:
+                try:
+                    result = await client.get_config_entry(entry_id)
+                    resp: dict[str, Any] = {
+                        "success": True,
+                        "entry_id": entry_id,
+                        "entry": result,
+                    }
+
+                    # Optionally fetch options flow schema (logically read-only: start+abort)
+                    if include_schema_bool and result.get("supports_options"):
+                        flow_id = None
+                        try:
+                            flow_result = await client.start_options_flow(entry_id)
+                            flow_id = flow_result.get("flow_id")
+                            flow_type = flow_result.get("type")
+                            if flow_type == "form":
+                                resp["options_schema"] = {
+                                    "flow_type": "form",
+                                    "step_id": flow_result.get("step_id"),
+                                    "data_schema": flow_result.get("data_schema", []),
+                                }
+                            elif flow_type == "menu":
+                                resp["options_schema"] = {
+                                    "flow_type": "menu",
+                                    "step_id": flow_result.get("step_id"),
+                                    "menu_options": flow_result.get("menu_options", []),
+                                }
+                        except Exception as schema_err:
+                            logger.debug(
+                                f"Failed to fetch options schema for {entry_id}: {schema_err}"
+                            )
+                        finally:
+                            if flow_id:
+                                try:
+                                    await client.abort_options_flow(flow_id)
+                                except Exception as abort_err:
+                                    logger.debug(
+                                        f"Failed to abort options flow {flow_id}: {abort_err}"
+                                    )
+
+                    return resp
+                except ToolError:
+                    raise
+                except Exception as e:
+                    error_msg = str(e)
+                    if "404" in error_msg or "not found" in error_msg.lower():
+                        raise_tool_error(
+                            create_error_response(
+                                ErrorCode.RESOURCE_NOT_FOUND,
+                                f"Config entry not found: {entry_id}",
+                                context={"entry_id": entry_id},
+                                suggestions=[
+                                    "Use ha_get_integration() without entry_id to see all config entries",
+                                ],
+                            )
+                        )
+                    raise
+
+            # List mode - get all config entries
+            # Use REST API endpoint for config entries
+            response = await client._request("GET", "/config/config_entries/entry")
+
+            if not isinstance(response, list):
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.SERVICE_CALL_FAILED,
+                        "Unexpected response format from Home Assistant",
+                        context={"response_type": type(response).__name__},
+                    )
+                )
+
+            entries = response
+
+            # Apply domain filter before formatting
+            if domain:
+                domain_lower = domain.strip().lower()
+                entries = [
+                    e for e in entries if e.get("domain", "").lower() == domain_lower
+                ]
+
+            # Format entries for response
+            formatted_entries = []
+            for entry in entries:
+                formatted_entry = {
+                    "entry_id": entry.get("entry_id"),
+                    "domain": entry.get("domain"),
+                    "title": entry.get("title"),
+                    "state": entry.get("state"),
+                    "source": entry.get("source"),
+                    "supports_options": entry.get("supports_options", False),
+                    "supports_unload": entry.get("supports_unload", False),
+                    "disabled_by": entry.get("disabled_by"),
+                }
+
+                # Include options when requested (for auditing template definitions, etc.)
+                if include_opts:
+                    formatted_entry["options"] = entry.get("options", {})
+
+                # Include pref_disable_new_entities and pref_disable_polling if present
+                if "pref_disable_new_entities" in entry:
+                    formatted_entry["pref_disable_new_entities"] = entry[
+                        "pref_disable_new_entities"
+                    ]
+                if "pref_disable_polling" in entry:
+                    formatted_entry["pref_disable_polling"] = entry[
+                        "pref_disable_polling"
+                    ]
+
+                formatted_entries.append(formatted_entry)
+
+            # Apply search filter if query provided
+            if query and query.strip():
+                matches = []
+                query_lower = query.strip().lower()
+
+                for entry in formatted_entries:
+                    domain_lower = (entry.get("domain") or "").lower()
+                    title_lower = (entry.get("title") or "").lower()
+
+                    # Check for exact substring matches first (highest priority)
+                    if query_lower in domain_lower or query_lower in title_lower:
+                        matches.append((100, entry))
+                    elif not exact_match_bool:
+                        # Fuzzy matching only when exact_match is disabled
+                        from ..utils.fuzzy_search import calculate_ratio
+
+                        domain_score = calculate_ratio(query_lower, domain_lower)
+                        title_score = calculate_ratio(query_lower, title_lower)
+                        best_score = max(domain_score, title_score)
+
+                        if best_score >= 70:  # threshold for fuzzy matches
+                            matches.append((best_score, entry))
+
+                # Sort by score descending
+                matches.sort(key=lambda x: x[0], reverse=True)
+                formatted_entries = [match[1] for match in matches]
+
+            # Group by state for summary (computed before pagination for full picture)
+            state_summary: dict[str, int] = {}
+            for entry in formatted_entries:
+                state = entry.get("state", "unknown")
+                state_summary[state] = state_summary.get(state, 0) + 1
+
+            # Apply pagination
+            total_entries = len(formatted_entries)
+            paginated_entries = formatted_entries[offset_int : offset_int + limit_int]
+
+            result_data: dict[str, Any] = {
+                "success": True,
+                **build_pagination_metadata(
+                    total_entries, offset_int, limit_int, len(paginated_entries)
+                ),
+                "entries": paginated_entries,
+                "state_summary": state_summary,
+                "query": query if query else None,
+            }
+            if domain:
+                result_data["domain_filter"] = domain.strip().lower()
+            return result_data
+
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get integrations: {e}")
+            exception_to_structured_error(
+                e,
+                suggestions=[
+                    "Verify Home Assistant connection is working",
+                    "Check that the API is accessible",
+                    "Ensure your token has sufficient permissions",
+                ],
+            )
+
+    @mcp.tool(
+        tags={"Integrations"},
+        annotations={"destructiveHint": True, "title": "Set Integration Enabled"},
+    )
+    @log_tool_usage
+    async def ha_set_integration_enabled(
+        entry_id: Annotated[str, Field(description="Config entry ID")],
+        enabled: Annotated[
+            bool | str, Field(description="True to enable, False to disable")
+        ],
+    ) -> dict[str, Any]:
+        """Enable/disable integration (config entry).
+
+        Use ha_get_integration() to find entry IDs.
+        """
+        try:
+            enabled_bool = coerce_bool_param(enabled, "enabled")
+
+            message = {
+                "type": "config_entries/disable",
+                "entry_id": entry_id,
+                "disabled_by": None if enabled_bool else "user",
+            }
+
+            result = await client.send_websocket_message(message)
+
+            if not result.get("success"):
+                error_msg = result.get("error", {})
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message", str(error_msg))
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.SERVICE_CALL_FAILED,
+                        f"Failed to {'enable' if enabled_bool else 'disable'} integration: {error_msg}",
+                        context={"entry_id": entry_id},
+                    )
+                )
+
+            # Get updated entry info
+            require_restart = result.get("result", {}).get("require_restart", False)
+
+            if require_restart:
+                note = "Home Assistant restart required for changes to take effect."
+            else:
+                note = (
+                    "Integration has been loaded."
+                    if enabled_bool
+                    else "Integration has been unloaded."
+                )
+
+            return {
+                "success": True,
+                "message": f"Integration {'enabled' if enabled_bool else 'disabled'} successfully",
+                "entry_id": entry_id,
+                "require_restart": require_restart,
+                "note": note,
+            }
+
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to set integration enabled: {e}")
+            exception_to_structured_error(e, context={"entry_id": entry_id})
+
+    @mcp.tool(
+        tags={"Integrations"},
+        annotations={"destructiveHint": True, "title": "Delete Config Entry"},
+    )
+    @log_tool_usage
+    async def ha_delete_config_entry(
+        entry_id: Annotated[str, Field(description="Config entry ID")],
+        confirm: Annotated[
+            bool | str, Field(description="Must be True to confirm deletion")
+        ] = False,
+    ) -> dict[str, Any]:
+        """Delete config entry permanently. Requires confirm=True.
+
+        Use ha_get_integration() to find entry IDs.
+        """
+        try:
+            confirm_bool = coerce_bool_param(confirm, "confirm", default=False)
+
+            if not confirm_bool:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_INVALID_PARAMETER,
+                        "Deletion not confirmed. Set confirm=True to proceed.",
+                        context={
+                            "entry_id": entry_id,
+                            "warning": "This will permanently delete the config entry. This cannot be undone.",
+                        },
+                    )
+                )
+
+            result = await client.delete_config_entry(entry_id)
+            require_restart = result.get("require_restart", False)
+
+            return {
+                "success": True,
+                "message": "Config entry deleted successfully",
+                "entry_id": entry_id,
+                "require_restart": require_restart,
+                "note": (
+                    "The integration has been permanently removed."
+                    if not require_restart
+                    else "Home Assistant restart required to complete removal."
+                ),
+            }
+
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete config entry: {e}")
+            exception_to_structured_error(e, context={"entry_id": entry_id})
