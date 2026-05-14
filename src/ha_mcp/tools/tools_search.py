@@ -23,6 +23,7 @@ from .util_helpers import (
     coerce_bool_param,
     coerce_int_param,
     parse_string_list_param,
+    project_fields,
     public_fields,
 )
 
@@ -150,6 +151,59 @@ async def _exact_match_search(
     }
 
 
+def _project_entity(
+    record: dict[str, Any],
+    fields: list[str] | None,
+    attribute_keys: list[str] | None,
+) -> dict[str, Any]:
+    """Apply optional field projection to a HA entity record.
+
+    ``fields`` filters which top-level keys to keep (e.g. ["state", "attributes"]).
+    ``attribute_keys`` further filters the ``attributes`` sub-dict.
+    Both default None = full payload (no-op).
+
+    Both parameters are already parsed into ``list[str] | None`` — string/CSV inputs
+    must be normalised at the call site via ``parse_string_list_param`` (see
+    ``ha_get_state`` which parses once before the bulk loop to avoid re-parsing per
+    entity record).
+
+    Unlike ``project_fields``, this helper does not auto-retain ``success`` — entity
+    records have no ``success`` field, so the asymmetry is intentional.
+
+    Non-dict ``attributes`` handling: when ``attribute_keys`` is set but the
+    record's ``attributes`` value is not a dict (``None``, a string, a list —
+    rare from HA's state API but possible from malformed records, partial
+    error payloads, or mocked fixtures), the key-set filter cannot be
+    applied and the ``attributes`` value is returned unchanged. A
+    ``warning``-level log line records the short-circuit so it is visible
+    at default log levels. The bulk path shares this helper, so
+    both single- and bulk-entity calls behave identically here. This is
+    deliberately silent (no warning to the caller) because malformed
+    ``attributes`` is rare and the call still produces a usable record.
+    """
+    if not isinstance(record, dict):
+        return record  # non-dict (e.g. error path returning None) — skip projection
+    if fields is not None:
+        keep = set(fields)
+        record = {k: v for k, v in record.items() if k in keep}
+    if attribute_keys is not None:
+        attrs = record.get("attributes")
+        if isinstance(attrs, dict):
+            attr_keep = set(attribute_keys)
+            record = {**record, "attributes": {k: v for k, v in attrs.items() if k in attr_keep}}
+        elif "attributes" in record:
+            # ``attributes`` is present but not a dict — filter cannot apply.
+            # Log at warning so the no-op is visible at default log levels
+            # (this branch is exercised rarely; see docstring for rationale).
+            logger.warning(
+                "_project_entity: attribute_keys filter skipped — "
+                "'attributes' is %s (expected dict) for record keys=%r",
+                type(attrs).__name__,
+                list(record.keys()),
+            )
+    return record
+
+
 def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register search and discovery tools with the MCP server."""
     smart_tools = kwargs.get("smart_tools")
@@ -230,6 +284,21 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 ),
             ),
         ] = True,
+        fields: Annotated[
+            str | list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified top-level response keys to reduce "
+                    'response size (e.g. ["results"]). '
+                    "None = full response (default). "
+                    "Available keys: success, query, results, total_matches, count, "
+                    "offset, limit, has_more, next_offset, search_type, "
+                    "domain_filter, area_filter, area_name, area_names, "
+                    "by_domain, warning, partial, message, note."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Search for entities (lights, sensors, switches, etc.) by name, domain, or area.
 
@@ -241,6 +310,15 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         example, `ha_search_entities(domain_filter="calendar")` lists all calendars. At
         least one of `query`, `domain_filter`, or `area_filter` must be set.
         """
+        # Validate fields= early so a malformed value returns VALIDATION_FAILED
+        # with parameter="fields" instead of bubbling to the outer except and
+        # getting reclassified as a generic search failure.
+        parsed_fields: list[str] | None = None
+        if fields is not None:
+            try:
+                parsed_fields = parse_string_list_param(fields, "fields", allow_csv=True)
+            except ValueError as exc:
+                raise_tool_error(create_validation_error(str(exc), parameter="fields"))
         # Normalize omitted/None query to empty string so downstream logic is unchanged
         query = query or ""
         # HA domains are canonically lowercase, no whitespace; agents
@@ -421,7 +499,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                             by_domain[domain].append(item)
                         search_data["by_domain"] = by_domain
 
-                    return await add_timezone_metadata(client, search_data)
+                    return await add_timezone_metadata(client, project_fields(search_data, parsed_fields))
                 else:
                     # Just area filter, return area results with enhanced format
                     if area_result.get("areas"):
@@ -523,7 +601,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                                     entity["domain"], []
                                 ).append(entity)
                             area_search_data["by_domain"] = paginated_by_domain
-                        return await add_timezone_metadata(client, area_search_data)
+                        return await add_timezone_metadata(client, project_fields(area_search_data, parsed_fields))
                     else:
                         # Empty match: still emit `area_names: []` so
                         # callers don't KeyError when they read the
@@ -542,7 +620,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                             empty_area_data["domain_filter"] = domain_filter
                         if group_by_domain_bool:
                             empty_area_data["by_domain"] = {}
-                        return await add_timezone_metadata(client, empty_area_data)
+                        return await add_timezone_metadata(client, project_fields(empty_area_data, parsed_fields))
 
             # Regular entity search (no area filter)
             # Handle empty query with domain_filter - list all entities of that domain
@@ -636,7 +714,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 }
                 if group_by_domain_bool:
                     domain_list_data["by_domain"] = {domain_filter: results}
-                return await add_timezone_metadata(client, domain_list_data)
+                return await add_timezone_metadata(client, project_fields(domain_list_data, parsed_fields))
 
             # Search strategy depends on exact_match setting:
             # - exact_match=True: substring match
@@ -737,7 +815,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 result["warning"] = warning
                 result["partial"] = True
 
-            return await add_timezone_metadata(client, result)
+            return await add_timezone_metadata(client, project_fields(result, parsed_fields))
 
         except ToolError:
             raise
@@ -852,6 +930,22 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 description="Include active persistent notifications (default: True). Set False to skip.",
             ),
         ] = True,
+        fields: Annotated[
+            str | list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified top-level response keys to reduce "
+                    "response size (e.g. [\"system_info\", \"domains\"]). "
+                    "None = full response (default). "
+                    "Available keys: success, system_summary, domain_stats, "
+                    "area_analysis, ai_insights, pagination, partial, warnings, "
+                    "device_types, service_availability, system_info, "
+                    "notification_count, notifications, repair_count, repairs, "
+                    "repairs_error, tool_discovery."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Get AI-friendly system overview with intelligent categorization.
 
@@ -862,7 +956,21 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         are always complete regardless of entity pagination.
         Standard/full modes paginate entities (default 200 per page) — use offset
         to fetch more. Use 'domains' filter to narrow scope.
+
+        Use fields= to project the response to only the keys you need — a
+        significantly smaller payload when fetching a single sub-section (e.g.
+        fields=["system_info"] returns just that section instead of the full overview).
         """
+        # Validate fields= early so a malformed value returns VALIDATION_FAILED
+        # with parameter="fields" (ha_get_overview has no outer try/except, so
+        # a raw ValueError would escape uncaught).
+        parsed_fields: list[str] | None = None
+        if fields is not None:
+            try:
+                parsed_fields = parse_string_list_param(fields, "fields", allow_csv=True)
+            except ValueError as exc:
+                raise_tool_error(create_validation_error(str(exc), parameter="fields"))
+
         # Coerce boolean parameters that may come as strings from XML-style calls
         include_state_bool = coerce_bool_param(
             include_state, "include_state", default=None
@@ -1000,7 +1108,7 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 ),
             }
 
-        return result
+        return project_fields(result, parsed_fields)
 
     @mcp.tool(
         tags={"Search & Discovery"},
@@ -1144,6 +1252,32 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 "(e.g., 'light.kitchen' or ['light.kitchen', 'sensor.temperature'])"
             ),
         ],
+        fields: Annotated[
+            str | list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified top-level entity record keys to reduce "
+                    'response size (e.g. ["state", "attributes"]). '
+                    "None = full entity record (default). "
+                    "Available keys: entity_id, state, attributes, last_changed, "
+                    "last_reported, last_updated, context."
+                ),
+            ),
+        ] = None,
+        attribute_keys: Annotated[
+            str | list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified keys from each entity's attributes dict "
+                    '(e.g. ["brightness", "color_temp"] for lights). '
+                    "None = full attributes (default). "
+                    "Unknown keys are silently dropped. "
+                    'Requires "attributes" to be present in fields= (or fields=None).'
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Get current status, state, and attributes of one or more entities (lights, switches, sensors, climate, covers, locks, fans, etc.).
 
@@ -1156,15 +1290,88 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         Returns success=True if at least one entity state was retrieved.
         Check 'error_count' for any failed lookups in partial-success scenarios.
 
+        FIELDS PROJECTION:
+        `fields=` projects the per-entity record keys (see the fields= parameter
+        description for the full key list), NOT the outer bulk response wrapper.
+        In single-entity mode it filters keys of the returned record directly. In bulk
+        mode it filters keys of each record inside `states[entity_id]`; outer keys
+        (`success`, `count`, `states`, `errors`, ...) are always preserved.
+        `attribute_keys=` further narrows the `attributes` sub-dict and is only applied
+        when `"attributes"` is in `fields=` (or `fields=None`); otherwise it is a no-op.
+
+        When `attribute_keys=` is set but has no effect (because `attributes` was
+        excluded by `fields=`), a `warning` key is emitted outside the projected
+        entity record(s): in bulk mode at the response wrapper level (sibling of
+        `success`/`count`/`states`); in single-entity mode at the top-level result
+        (sibling of `data`/`metadata`, since the projected record IS `data`).
+        The warning is never a record key, so `fields=["state"]` returns a record
+        with only `state` regardless of whether the no-effect warning fires.
+
         EXAMPLES:
         - Single: ha_get_state("light.kitchen")
         - Multiple: ha_get_state(["light.kitchen", "light.living_room", "sensor.temperature"])
+        - State only: ha_get_state("light.kitchen", fields=["state"])
+        - Slim bulk: ha_get_state(["light.kitchen", "sensor.temperature"], fields=["state", "attributes"], attribute_keys=["brightness"])
         """
+        # Parse projection params once up front so the bulk loop doesn't re-parse
+        # the same string/CSV input per entity (100 entities → 200 parses pre-fix).
+        # parse_string_list_param raises ValueError on bad input; surface as
+        # VALIDATION_FAILED with parameter="fields"/"attribute_keys" via the
+        # normal ToolError flow.
+        try:
+            parsed_fields = parse_string_list_param(fields, "fields", allow_csv=True)
+        except ValueError as e:
+            raise_tool_error(create_validation_error(str(e), parameter="fields"))
+        try:
+            parsed_attribute_keys = parse_string_list_param(
+                attribute_keys, "attribute_keys", allow_csv=True
+            )
+        except ValueError as e:
+            raise_tool_error(create_validation_error(str(e), parameter="attribute_keys"))
+
+        # `attribute_keys` only takes effect when `attributes` is in the projected
+        # field set (or `fields=None`). Surface a warning rather than silently
+        # ignoring it — caller likely intended to slim attributes and would
+        # otherwise see an unfiltered or absent `attributes` key with no signal.
+        attribute_keys_no_effect = (
+            parsed_attribute_keys is not None
+            and parsed_fields is not None
+            and "attributes" not in parsed_fields
+        )
+
         # Single entity path
         if isinstance(entity_id, str):
             try:
                 result = await client.get_entity_state(entity_id)
-                return await add_timezone_metadata(client, result)
+                entity_record = _project_entity(result, parsed_fields, parsed_attribute_keys)
+                # Wrap with timezone metadata first. ``add_timezone_metadata``
+                # returns ``{"data": entity_record, "metadata": {...}}`` — in
+                # single-entity mode the projected record becomes ``data``
+                # directly (its keys are not nested under a sub-key the way
+                # bulk's projected records live under ``data.states``).
+                wrapped = await add_timezone_metadata(client, entity_record)
+                # ``attribute_keys`` was specified but ``attributes`` is not
+                # in the projected ``fields=`` set. Attach the warning at
+                # the outer wrapper level (sibling of ``data``/``metadata``)
+                # rather than spreading it into ``data`` — the FIELDS
+                # PROJECTION contract is that ``fields=`` filters the keys
+                # of the returned record, and ``warning`` is not a record
+                # key. This mirrors the bulk path's intent of keeping
+                # ``warning`` outside the projected per-entity records
+                # (bulk nests them under ``data.states`` so ``warning`` at
+                # ``data`` level is structurally outside them; in single
+                # mode the projected record IS ``data``, so the analogous
+                # "outside" location is the top-level wrapper).
+                # ``add_timezone_metadata`` always returns a dict, so
+                # ``wrapped["warning"] = ...`` is safe regardless of
+                # ``entity_record``'s type — no isinstance guard needed here.
+                if attribute_keys_no_effect:
+                    wrapped["warning"] = (
+                        "attribute_keys was ignored because 'attributes' is not in "
+                        "fields=. Add 'attributes' to fields= (or omit fields=) to "
+                        "apply attribute_keys."
+                    )
+                return wrapped
             except ToolError:
                 raise
             except Exception as e:
@@ -1235,7 +1442,9 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
 
             for eid, result in zip(unique_ids, results, strict=True):
                 if result.get("success") is True and "state" in result:
-                    states[eid] = result["state"]
+                    states[eid] = _project_entity(
+                        result["state"], parsed_fields, parsed_attribute_keys
+                    )
                 else:
                     error_detail = result.get("error")
                     if error_detail is None:
@@ -1255,6 +1464,13 @@ def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 "count": len(states),
                 "states": states,
             }
+
+            if attribute_keys_no_effect:
+                response["warning"] = (
+                    "attribute_keys was ignored because 'attributes' is not in "
+                    "fields=. Add 'attributes' to fields= (or omit fields=) to "
+                    "apply attribute_keys."
+                )
 
             if errors:
                 response["errors"] = errors

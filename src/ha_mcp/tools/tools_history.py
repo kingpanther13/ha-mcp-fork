@@ -19,7 +19,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools import tool
 from pydantic import Field
 
-from ..errors import ErrorCode, create_error_response
+from ..errors import ErrorCode, create_error_response, create_validation_error
 from .helpers import (
     exception_to_structured_error,
     get_connected_ws_client,
@@ -34,6 +34,7 @@ from .util_helpers import (
     build_pagination_metadata,
     coerce_int_param,
     parse_string_list_param,
+    project_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,19 @@ class HistoryTools:
                 default=None,
             ),
         ] = None,
+        fields: Annotated[
+            str | list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified top-level response keys to reduce "
+                    "response size. None = full response (default). "
+                    "History keys: success, source, entities, period, query_params. "
+                    "Statistics keys: success, source, entities, period_type, time_range, "
+                    "statistic_types, query_params, warnings."
+                ),
+            ),
+        ] = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """
@@ -254,6 +268,12 @@ class HistoryTools:
                        start_time="30d", period="5minute", limit=100, offset=200)
         ```
         """
+        parsed_fields: list[str] | None = None
+        if fields is not None:
+            try:
+                parsed_fields = parse_string_list_param(fields, "fields", allow_csv=True)
+            except ValueError as exc:
+                raise_tool_error(create_validation_error(str(exc), parameter="fields"))
         try:
             # Parse entity_ids
             entity_id_list = _parse_entity_ids(entity_ids)
@@ -326,14 +346,14 @@ class HistoryTools:
 
             try:
                 if source == "statistics":
-                    result = await _fetch_statistics(
-                        ws_client, self._client, entity_id_list,
+                    inner = await _fetch_statistics(
+                        ws_client, entity_id_list,
                         start_dt, end_dt, period, statistic_types,
                         limit, offset,
                     )
                 else:
-                    result = await _fetch_history(
-                        ws_client, self._client, entity_id_list,
+                    inner = await _fetch_history(
+                        ws_client, entity_id_list,
                         start_dt, end_dt, minimal_response,
                         significant_changes_only, limit, offset,
                         _DEFAULT_HISTORY_LIMIT, _MAX_HISTORY_LIMIT,
@@ -344,7 +364,12 @@ class HistoryTools:
                     total=3,
                     message="recorder query complete",
                 )
-                return result
+                # Project BEFORE wrapping so the helper applies at the same shape
+                # as every other tool (raw response dict). add_timezone_metadata
+                # wraps the result in {"data": ..., "metadata": ...} which would
+                # otherwise force a bespoke unwrap-project-rewrap site.
+                projected = project_fields(inner, parsed_fields)
+                return await add_timezone_metadata(self._client, projected)
             finally:
                 if ws_client:
                     await ws_client.disconnect()
@@ -442,7 +467,6 @@ def _parse_time_range(
 
 async def _fetch_history(
     ws_client: Any,
-    client: Any,
     entity_id_list: list[str],
     start_dt: datetime,
     end_dt: datetime,
@@ -453,7 +477,11 @@ async def _fetch_history(
     default_limit: int,
     max_limit: int,
 ) -> dict[str, Any]:
-    """Execute the history/history_during_period WebSocket call."""
+    """Execute the history/history_during_period WebSocket call.
+
+    Returns the unwrapped history dict; the caller is responsible for projection
+    and wrapping with ``add_timezone_metadata``.
+    """
     try:
         effective_limit = coerce_int_param(
             limit,
@@ -566,12 +594,11 @@ async def _fetch_history(
         },
     }
 
-    return await add_timezone_metadata(client, history_data)
+    return history_data
 
 
 async def _fetch_statistics(
     ws_client: Any,
-    client: Any,
     entity_id_list: list[str],
     start_dt: datetime,
     end_dt: datetime,
@@ -580,7 +607,11 @@ async def _fetch_statistics(
     limit: int | str | None,
     offset: int | str | None,
 ) -> dict[str, Any]:
-    """Execute the recorder/statistics_during_period WebSocket call."""
+    """Execute the recorder/statistics_during_period WebSocket call.
+
+    Returns the unwrapped statistics dict; the caller is responsible for projection
+    and wrapping with ``add_timezone_metadata``.
+    """
     try:
         effective_limit = coerce_int_param(
             limit,
@@ -740,4 +771,4 @@ async def _fetch_statistics(
             "These entities may not have state_class attribute or may not have recorded data yet."
         ]
 
-    return await add_timezone_metadata(client, statistics_data)
+    return statistics_data
