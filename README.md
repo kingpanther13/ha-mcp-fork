@@ -1,3 +1,5 @@
+> **This is a personal fork.** See [`FORK-DEV.md`](FORK-DEV.md) for the addon-repo workflow.
+
 > **Breaking change (v7.3.0):** `ha_config_set_yaml` has been moved to [beta](docs/beta.md).
 
 <div align="center">

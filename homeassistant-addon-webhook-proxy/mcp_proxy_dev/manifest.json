@@ -1,8 +1,8 @@
 {
-  "domain": "mcp_proxy",
-  "name": "MCP Webhook Proxy",
+  "domain": "mcp_proxy_dev",
+  "name": "MCP Webhook Proxy (NabuForkDev)",
   "documentation": "https://github.com/homeassistant-ai/ha-mcp",
-  "version": "1.1.0",
+  "version": "1.1.0+dev5",
   "codeowners": [],
   "config_flow": true,
   "dependencies": ["webhook"],

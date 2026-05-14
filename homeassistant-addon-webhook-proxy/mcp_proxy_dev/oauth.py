@@ -18,7 +18,7 @@ the addon. The consent screen displays the requesting redirect_uri so the
 user can verify they're authorizing the connector they meant to.
 
 Tokens are signed (HMAC-SHA256) with a per-install secret persisted at
-/config/.mcp_proxy_oauth_secret. They contain enough state to validate
+/config/.mcp_proxy_dev_oauth_secret. They contain enough state to validate
 without a server-side store, so the integration survives restarts.
 """
 
@@ -44,7 +44,7 @@ from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-OAUTH_BASE = "/api/mcp_proxy/oauth"
+OAUTH_BASE = "/api/mcp_proxy_dev/oauth"
 # Authorize/token endpoints live at the root rather than under
 # OAUTH_BASE because Claude.ai (and apparently other MCP clients)
 # construct the authorize URL as `<host>/authorize` from the resource
@@ -53,7 +53,7 @@ OAUTH_BASE = "/api/mcp_proxy/oauth"
 # is the only way to actually catch the redirect.
 AUTHORIZE_PATH = "/authorize"
 TOKEN_PATH = "/token"
-SECRET_FILE = Path("/config/.mcp_proxy_oauth_secret")
+SECRET_FILE = Path("/config/.mcp_proxy_dev_oauth_secret")
 
 ACCESS_TOKEN_TTL = 60 * 60          # 1 hour
 REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60  # 30 days
@@ -513,7 +513,7 @@ class AuthorizeView(HomeAssistantView):
   </style>
 </head>
 <body>
-  <h1>Authorize MCP Webhook Proxy</h1>
+  <h1>Authorize MCP Webhook Proxy (NabuForkDev)</h1>
   <p>An MCP client is requesting access to your Home Assistant MCP server.</p>
   <p>It will redirect to:<br><code>{escape(redirect_uri)}</code></p>
   <p>Only allow this if you started this connection yourself.</p>

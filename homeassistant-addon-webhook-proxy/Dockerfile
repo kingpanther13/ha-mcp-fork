@@ -7,7 +7,7 @@
 FROM python:3.13-slim@sha256:3de9a8d7aedbb7984dc18f2dff178a7850f16c1ae7c34ba9d7ecc23d0755e35f
 
 COPY start.py /
-COPY mcp_proxy /opt/mcp_proxy
+COPY mcp_proxy_dev /opt/mcp_proxy_dev
 
 ARG BUILD_VERSION
 ARG BUILD_ARCH

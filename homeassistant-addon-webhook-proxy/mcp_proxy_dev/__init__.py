@@ -12,7 +12,7 @@ lazy-imports `oauth.py` to register the OAuth 2.1 endpoints + bearer-token
 gate. When the toggle is off, no OAuth code is loaded and the proxy behaves
 exactly like the original unauthenticated webhook.
 
-Configuration is read from /config/.mcp_proxy_config.json, which is written
+Configuration is read from /config/.mcp_proxy_dev_config.json, which is written
 by the proxy addon's startup script. No manual configuration is needed — the
 addon creates the config entry automatically via the HA API.
 """
@@ -36,8 +36,8 @@ from homeassistant.helpers.typing import ConfigType
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "mcp_proxy"
-CONFIG_FILE = Path("/config/.mcp_proxy_config.json")
+DOMAIN = "mcp_proxy_dev"
+CONFIG_FILE = Path("/config/.mcp_proxy_dev_config.json")
 
 # ha-mcp generates a 22-char base64url token after `/private_`. We accept >=16
 # as a sanity floor — a truncated/corrupted ha-mcp config yields a shorter
@@ -129,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not target_url or not webhook_id:
         _LOGGER.error("MCP Proxy: Invalid config - missing target_url or webhook_id")
         raise ConfigEntryError(
-            "Missing target_url or webhook_id in /config/.mcp_proxy_config.json. "
+            "Missing target_url or webhook_id in /config/.mcp_proxy_dev_config.json. "
             "Restart the Webhook Proxy addon to regenerate it."
         )
 
@@ -152,7 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         raise ConfigEntryError(
             f"Invalid target_url ({reason}). Restart the Webhook Proxy addon "
-            "to regenerate /config/.mcp_proxy_config.json."
+            "to regenerate /config/.mcp_proxy_dev_config.json."
         )
 
     _LOGGER.info("MCP Proxy: target = %s", masked_target)
@@ -207,7 +207,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await session.close()
             raise ConfigEntryError(
                 "OAuth was enabled in the addon but client_id and/or "
-                "client_secret is blank in /config/.mcp_proxy_config.json. "
+                "client_secret is blank in /config/.mcp_proxy_dev_config.json. "
                 "Restart the Webhook Proxy addon to regenerate the config "
                 "file, or turn off Enable OAuth in the addon configuration."
             )
