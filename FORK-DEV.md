@@ -144,12 +144,19 @@ sed -i \
 # Every match must end in `_dev` or `_dev_…`.
 
 # 8d. Rewrite identifiers in the renamed integration (covers oauth.py from
-#     PR #1184 — OAUTH_BASE and SECRET_FILE):
+#     PR #1184 — OAUTH_BASE, SECRET_FILE, AUTHORIZE_PATH, TOKEN_PATH, and
+#     the four HomeAssistantView.name strings that otherwise collide with
+#     the prod webhook-proxy's views in HA's HTTP router. See the
+#     "OAuth route collision" pitfall section below for the incident this
+#     guards against):
 sed -i \
   -e 's|DOMAIN = "mcp_proxy"|DOMAIN = "mcp_proxy_dev"|g' \
   -e 's|/config/\.mcp_proxy_config\.json|/config/.mcp_proxy_dev_config.json|g' \
   -e 's|OAUTH_BASE = "/api/mcp_proxy/oauth"|OAUTH_BASE = "/api/mcp_proxy_dev/oauth"|g' \
   -e 's|/config/\.mcp_proxy_oauth_secret|/config/.mcp_proxy_dev_oauth_secret|g' \
+  -e 's|AUTHORIZE_PATH = "/authorize"|AUTHORIZE_PATH = "/authorize_dev"|g' \
+  -e 's|TOKEN_PATH = "/token"|TOKEN_PATH = "/token_dev"|g' \
+  -e 's|"mcp_proxy:oauth:|"mcp_proxy_dev:oauth:|g' \
   mcp_proxy_dev/__init__.py mcp_proxy_dev/config_flow.py mcp_proxy_dev/oauth.py
 
 # 8e. Edit mcp_proxy_dev/manifest.json:
@@ -164,8 +171,11 @@ sed -i \
 #     `/config/.mcp_proxy_oauth_secret`, `/config/custom_components/mcp_proxy/`,
 #     and `/config/.mcp_proxy_config.json` with their `_dev` equivalents.
 
-# 8h. Final verification — every command below must print nothing:
-grep -rnE 'mcp_proxy"|ha_mcp_webhook_proxy"|/config/custom_components/mcp_proxy/|/config/\.mcp_proxy_config\.json|/config/\.mcp_proxy_oauth_secret|/api/mcp_proxy/oauth|/opt/mcp_proxy"' . | grep -v __pycache__
+# 8h. Final verification — every command below must print nothing.
+#     The last three alternations (AUTHORIZE_PATH/TOKEN_PATH literals and the
+#     view-name prefix) catch the OAuth route collision regression — see the
+#     pitfall section below:
+grep -rnE 'mcp_proxy"|ha_mcp_webhook_proxy"|/config/custom_components/mcp_proxy/|/config/\.mcp_proxy_config\.json|/config/\.mcp_proxy_oauth_secret|/api/mcp_proxy/oauth|/opt/mcp_proxy"|AUTHORIZE_PATH = "/authorize"|TOKEN_PATH = "/token"|"mcp_proxy:oauth:' . | grep -v __pycache__
 ```
 
 ### Why These Files Are Needed
@@ -249,7 +259,12 @@ sed -i \
 sed -i \
   -e 's|DOMAIN = "mcp_proxy"|DOMAIN = "mcp_proxy_dev"|g' \
   -e 's|/config/\.mcp_proxy_config\.json|/config/.mcp_proxy_dev_config.json|g' \
-  mcp_proxy_dev/__init__.py mcp_proxy_dev/config_flow.py
+  -e 's|OAUTH_BASE = "/api/mcp_proxy/oauth"|OAUTH_BASE = "/api/mcp_proxy_dev/oauth"|g' \
+  -e 's|/config/\.mcp_proxy_oauth_secret|/config/.mcp_proxy_dev_oauth_secret|g' \
+  -e 's|AUTHORIZE_PATH = "/authorize"|AUTHORIZE_PATH = "/authorize_dev"|g' \
+  -e 's|TOKEN_PATH = "/token"|TOKEN_PATH = "/token_dev"|g' \
+  -e 's|"mcp_proxy:oauth:|"mcp_proxy_dev:oauth:|g' \
+  mcp_proxy_dev/__init__.py mcp_proxy_dev/config_flow.py mcp_proxy_dev/oauth.py
 # Then by hand: edit mcp_proxy_dev/manifest.json (domain, name) +
 # mcp_proxy_dev/strings.json (titles) + mcp_proxy_dev/config_flow.py (titles)
 # to "MCP Webhook Proxy (NabuForkDev)" — see step 8e/8f above.
@@ -262,6 +277,65 @@ git -C ~/ha-mcp-fork add -A
 git -C ~/ha-mcp-fork commit -m "chore: reset addon-repo to upstream master + PR #<PR> only, dev<N>"
 git -C ~/ha-mcp-fork push origin addon-repo --force
 ```
+
+## Coexistence Pitfall: OAuth Route Collision (incident 2026-05-14)
+
+**Symptom:** with both prod webhook-proxy (v1.1.0) and NabuForkDev installed
+and OAuth enabled, claude.ai's connect flow lands on `/authorize` and
+returns plain text `invalid client_id` — even when the client_id sent
+matches the addon log exactly.
+
+**Root cause:** `mcp_proxy/oauth.py` registers four `HomeAssistantView`s:
+
+- `name = "mcp_proxy:oauth:protected-resource"` at `/api/mcp_proxy/oauth/protected-resource`
+- `name = "mcp_proxy:oauth:authorization-server"` at `/api/mcp_proxy/oauth/authorization-server`
+- `name = "mcp_proxy:oauth:authorize"` at **`/authorize`** (root)
+- `name = "mcp_proxy:oauth:token"` at **`/token`** (root)
+
+The metadata-base sed in 8d only renamed `OAUTH_BASE` (the first two), so
+the dev variant's metadata URLs are unique. But `AUTHORIZE_PATH` and
+`TOKEN_PATH` are pinned to the root (the comment in `oauth.py` claims
+"Claude.ai constructs `<host>/authorize` from the resource host root"),
+and all four view `name`s share the `mcp_proxy:oauth:` prefix. So the
+prod and dev addons both register identical `name`s at identical URLs.
+HA's HTTP router doesn't merge same-name views — the loader that wins
+answers every request, and the other addon's `/authorize` is silently
+shadowed. The losing addon's client_id is rejected.
+
+**Verification you can run by hand against your own host:**
+
+```bash
+# Should return the consent HTML, not "invalid client_id":
+curl -i "https://<your-host>/authorize?response_type=code\
+&client_id=<addon-logged-client-id>\
+&redirect_uri=https://claude.ai/api/mcp/auth_callback\
+&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\
+&code_challenge_method=S256&state=xyz"
+```
+
+**Fix in step 8d (already applied above):** three additional sed patterns —
+
+- `AUTHORIZE_PATH = "/authorize"` → `AUTHORIZE_PATH = "/authorize_dev"`
+- `TOKEN_PATH = "/token"` → `TOKEN_PATH = "/token_dev"`
+- `"mcp_proxy:oauth:` → `"mcp_proxy_dev:oauth:` (all four view names)
+
+The verification grep in 8h was extended to fail loud if any of those three
+slip through on a future cycle.
+
+**Note on the upstream comment:** the rationale in `oauth.py` for pinning
+the endpoints to the root says clients hardcode `/authorize` and ignore
+the metadata's `authorization_endpoint`. That isn't empirically true for
+current claude.ai — it does follow the `authorization_endpoint` advertised
+in the authorization-server metadata. So serving `/authorize_dev` from the
+dev variant's metadata works with claude.ai. Other MCP clients that do
+hardcode `/authorize` will hit the prod addon's view instead, which is
+fine — the prod addon is the production path; the dev variant exists for
+fork testing, not for production clients.
+
+**If you ever hit this again after a deploy:** in HA, go to
+Settings → Devices & Services and remove the `MCP Webhook Proxy (NabuForkDev)`
+config entry, then restart HA. That clears the collision immediately while
+you re-run the deploy with the patched sed.
 
 ## When User Asks to Bump NabuForkDev Instead
 
