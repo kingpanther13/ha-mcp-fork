@@ -273,6 +273,11 @@ class Settings(BaseSettings):
             return False
         return v
 
+    # Password-gated docs middleware - compresses tool descriptions and
+    # enforces password verification before tool execution. Each tool gets
+    # a unique password derived from each tool's description content.
+    enable_password_gated_docs: bool = Field(True, alias="ENABLE_PASSWORD_GATED_DOCS")
+
     @property
     def env_file_name(self) -> str:
         """Get the current environment file name."""
