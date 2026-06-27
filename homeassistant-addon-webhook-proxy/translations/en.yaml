@@ -71,7 +71,7 @@ configuration:
     name: Log inbound requests (Beta)
     description: |
       Logs every request that reaches this webhook to the Home Assistant log
-      (Settings -> System -> Logs, filter for "mcp_proxy") — NOT this addon
+      (Settings -> System -> Logs, filter for "mcp_proxy_dev") — NOT this addon
       log, because requests hit Home Assistant directly rather than passing
       through this addon. Each line shows the method, a masked webhook path,
       the source address, whether an Authorization header was present, and the

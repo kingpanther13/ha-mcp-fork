@@ -127,8 +127,8 @@ The generated values are persisted at `/data/oauth_creds.json` inside the addon,
 **Endpoints exposed when enabled:**
 
 - `/.../api/webhook/<id>` — MCP webhook (now bearer-protected)
-- `/.../api/mcp_proxy/oauth/protected-resource` — RFC 9728 metadata
-- `/.../api/mcp_proxy/oauth/authorization-server` — RFC 8414 metadata
+- `/.../api/mcp_proxy_dev/oauth/protected-resource` — RFC 9728 metadata
+- `/.../api/mcp_proxy_dev/oauth/authorization-server` — RFC 8414 metadata
 - `/.../authorize` — consent screen (root path; Claude.ai expects it here)
 - `/.../token` — token endpoint (root path; Claude.ai expects it here)
 
@@ -136,7 +136,7 @@ The generated values are persisted at `/data/oauth_creds.json` inside the addon,
 
 - Tokens are HMAC-signed and stateless — they survive HA restarts. Access tokens expire after 1 hour; refresh tokens after 30 days.
 - Rotating the Client ID invalidates all outstanding tokens (the client_id is part of the token's signed payload).
-- The signing key is generated once and persisted at `/config/.mcp_proxy_oauth_secret`. Delete that file to invalidate every token in one shot.
+- The signing key is generated once and persisted at `/config/.mcp_proxy_dev_oauth_secret`. Delete that file to invalidate every token in one shot.
 - **Beta status:** the OAuth flow is implemented against the [MCP 2025-06-18 spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) but real-world MCP-client coverage varies. The URL-as-secret mode (default) is the stable, documented path. Treat OAuth as opt-in until tested with your client. Report problems on GitHub.
 
 ### End-to-end flow (what happens when Claude.ai connects)
@@ -243,8 +243,8 @@ Two cases:
 
 - **Stopping** the addon is safe — the webhook URL stays the same and resumes working when the addon is restarted
 - **Uninstalling** the addon does not automatically remove the custom integration files. To fully clean up after uninstalling:
-  1. Delete `/config/custom_components/mcp_proxy/`
-  2. Delete `/config/.mcp_proxy_config.json`
+  1. Delete `/config/custom_components/mcp_proxy_dev/`
+  2. Delete `/config/.mcp_proxy_dev_config.json`
   3. Restart Home Assistant
 
 ## Support
