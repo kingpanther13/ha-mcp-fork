@@ -719,7 +719,7 @@ def _read_integration_domain() -> str | None:
     Used by the OAuth probe to construct the metadata URL without
     hard-coding `mcp_proxy` here.
     """
-    src_manifest = Path("/opt/mcp_proxy/manifest.json")
+    src_manifest = Path("/opt/mcp_proxy_dev/manifest.json")
     try:
         domain = json.loads(src_manifest.read_text()).get("domain")
     except (OSError, json.JSONDecodeError) as e:
@@ -775,11 +775,11 @@ def _install_integration() -> IntegrationInstall:
     "restart required" notification, which is reserved for genuine
     version bumps.
     """
-    src = Path("/opt/mcp_proxy")
-    dst = Path("/config/custom_components/mcp_proxy")
+    src = Path("/opt/mcp_proxy_dev")
+    dst = Path("/config/custom_components/mcp_proxy_dev")
 
     if not src.exists():
-        log_error("Integration source not found at /opt/mcp_proxy")
+        log_error("Integration source not found at /opt/mcp_proxy_dev")
         return IntegrationInstall(False, False)
 
     Path("/config/custom_components").mkdir(parents=True, exist_ok=True)
@@ -826,14 +826,14 @@ def _ensure_config_entry(retries: int = 5, delay: int = 10) -> bool:
         entries = _ha_core_api("GET", "/config/config_entries/entry")
         if entries is not None:
             for entry in entries:
-                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_dev":
                     log_info("mcp_proxy config entry exists")
                     return True
 
             # Create via config flow
             log_info(f"Creating config entry (attempt {attempt}/{retries})...")
             flow = _ha_core_api(
-                "POST", "/config/config_entries/flow", {"handler": "mcp_proxy"}
+                "POST", "/config/config_entries/flow", {"handler": "mcp_proxy_dev"}
             )
             if flow is None:
                 if attempt < retries:
@@ -870,7 +870,7 @@ def _remove_config_entry() -> None:
     if entries is None:
         return
     for entry in entries:
-        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_dev":
             eid = entry.get("entry_id")
             if eid:
                 _ha_core_api("DELETE", f"/config/config_entries/entry/{eid}")
@@ -888,7 +888,7 @@ def _reload_config_entry() -> None:
     if entries is None:
         return
     for entry in entries:
-        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_dev":
             eid = entry.get("entry_id")
             if eid:
                 result = _ha_core_api(
@@ -947,7 +947,7 @@ def _wait_for_ha_restart(poll_interval: int = 10, timeout: int = 600) -> None:
         # Check if integration already loaded (user restarted fast)
         if isinstance(result, list):
             for entry in result:
-                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_dev":
                     log_info("Integration already loaded — HA must have restarted")
                     return
         time.sleep(poll_interval)
@@ -1061,7 +1061,7 @@ def _shutdown_cleanup(reason: str | None) -> None:
     start needs no HA restart), and drop the inbound mirror file.
 
     On full uninstall the user may still need to manually remove
-    /config/custom_components/mcp_proxy/, /config/.mcp_proxy_config.json, and
+    /config/custom_components/mcp_proxy_dev/, /config/.mcp_proxy_dev_config.json, and
     /config/.mcp_proxy_inbound.log, then restart HA."""
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, signal.SIG_DFL)
@@ -1203,7 +1203,7 @@ def main() -> int:
                             "the toggle back to OFF in the addon "
                             "configuration and start the addon again."
                         ),
-                        "notification_id": "mcp_proxy_regen_stuck",
+                        "notification_id": "mcp_proxy_dev_regen_stuck",
                     },
                 )
                 return 1
@@ -1297,7 +1297,7 @@ def main() -> int:
     # who leave it off.
     if debug_logging:
         proxy_config["debug_logging"] = True
-    proxy_config_file = Path("/config/.mcp_proxy_config.json")
+    proxy_config_file = Path("/config/.mcp_proxy_dev_config.json")
     try:
         proxy_config_file.write_text(json.dumps(proxy_config))
     except OSError as e:
@@ -1332,7 +1332,7 @@ def main() -> int:
                     "takes effect. The webhook keeps working in the "
                     "meantime with the previous version."
                 ),
-                "notification_id": "mcp_proxy_update",
+                "notification_id": "mcp_proxy_dev_update",
             },
         )
         # Also raise a HACS-style click-to-restart Repair via the loaded
@@ -1354,7 +1354,7 @@ def main() -> int:
                     "Go to **Settings → System → Restart**. "
                     "The proxy will finish setup automatically after restart."
                 ),
-                "notification_id": "mcp_proxy_restart",
+                "notification_id": "mcp_proxy_dev_restart",
             },
         )
         log_info("")
@@ -1396,7 +1396,7 @@ def main() -> int:
             _ha_core_api(
                 "POST",
                 "/services/persistent_notification/dismiss",
-                {"notification_id": "mcp_proxy_restart"},
+                {"notification_id": "mcp_proxy_dev_restart"},
             )
             log_info("Setup completed after HA restart")
     else:
@@ -1432,7 +1432,7 @@ def main() -> int:
             _ha_core_api(
                 "POST",
                 "/services/persistent_notification/dismiss",
-                {"notification_id": "mcp_proxy_restart"},
+                {"notification_id": "mcp_proxy_dev_restart"},
             )
 
     # OAuth fail-closed gate. If the user enabled OAuth but the integration
@@ -1444,7 +1444,7 @@ def main() -> int:
     # until HA is restarted, and tell the user loudly.
     # Path to the marker file that the integration's repairs flow watches.
     # Kept in sync with `mcp_proxy/repairs.py:RESTART_MARKER_FILE`.
-    oauth_restart_marker = Path("/config/.mcp_proxy_oauth_restart_required")
+    oauth_restart_marker = Path("/config/.mcp_proxy_dev_oauth_restart_required")
 
     # The fail-closed stale-code probe runs in BOTH modes. It only fails when
     # the OAuth metadata endpoint isn't served yet — i.e. HA is still running

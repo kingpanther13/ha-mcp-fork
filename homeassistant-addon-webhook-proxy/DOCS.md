@@ -166,8 +166,8 @@ The generated values are persisted at `/data/oauth_creds.json` inside the addon,
 Both modes serve the discovery documents from the add-on's own host, so they work on any hostname:
 
 - `/.../api/webhook/<id>` — MCP webhook (now bearer-protected)
-- `/.../api/mcp_proxy/oauth/protected-resource` — RFC 9728 metadata
-- `/.../api/mcp_proxy/oauth/authorization-server` — RFC 8414 metadata (contents differ per mode)
+- `/.../api/mcp_proxy_dev/oauth/protected-resource` — RFC 9728 metadata
+- `/.../api/mcp_proxy_dev/oauth/authorization-server` — RFC 8414 metadata (contents differ per mode)
 
 The authorize/token endpoints depend on the mode:
 
@@ -178,7 +178,7 @@ The authorize/token endpoints depend on the mode:
 
 - Tokens are HMAC-signed and stateless — they survive HA restarts. Access tokens expire after 1 hour; refresh tokens after 30 days.
 - Rotating the Client ID invalidates all outstanding tokens (the client_id is part of the token's signed payload).
-- The signing key is generated once and persisted at `/config/.mcp_proxy_oauth_secret`. Delete that file to invalidate every token in one shot.
+- The signing key is generated once and persisted at `/config/.mcp_proxy_dev_oauth_secret`. Delete that file to invalidate every token in one shot.
 
 **Beta status:** OAuth is Beta in both modes; the URL-as-secret mode (default) is the stable, documented path. `ha_auth` delegates all protocol steps to Home Assistant's own OAuth (validated live against claude.ai); `legacy` is implemented against the [MCP 2025-06-18 spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization). Real-world MCP-client coverage varies, so treat OAuth as opt-in until tested with your client, and report problems on GitHub.
 
@@ -320,10 +320,10 @@ See [#783](https://github.com/homeassistant-ai/ha-mcp/issues/783) for more detai
 ## Disabling / Uninstalling
 
 - **Stopping** the addon is safe — the webhook URL stays the same and resumes working when the addon is restarted
-- **Reinstalling** the addon always changes the webhook URL. Uninstalling wipes the addon's `/data` (where `webhook_id.txt` is stored), so the next start generates a fresh webhook id and overwrites `/config/.mcp_proxy_config.json` with it. Update your MCP client (and re-add the Claude.ai connector) with the new URL afterwards.
+- **Reinstalling** the addon always changes the webhook URL. Uninstalling wipes the addon's `/data` (where `webhook_id.txt` is stored), so the next start generates a fresh webhook id and overwrites `/config/.mcp_proxy_dev_config.json` with it. Update your MCP client (and re-add the Claude.ai connector) with the new URL afterwards.
 - **Uninstalling** the addon does not automatically remove the custom integration files. To fully clean up after uninstalling:
-  1. Delete `/config/custom_components/mcp_proxy/`
-  2. Delete `/config/.mcp_proxy_config.json`
+  1. Delete `/config/custom_components/mcp_proxy_dev/`
+  2. Delete `/config/.mcp_proxy_dev_config.json`
   3. Delete `/config/.mcp_proxy_inbound.log` (only present if you used **Log inbound requests**; normally removed when the addon stops)
   4. Restart Home Assistant
 

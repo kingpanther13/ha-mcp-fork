@@ -33,7 +33,7 @@
   enables ChatGPT (#1725). Follow-up to #1714.
 - Serve the OAuth metadata at the RFC 8414 / RFC 9728 / OIDC well-known
   locations (issue #1714): the authorization-server document at
-  `/.well-known/oauth-authorization-server/api/mcp_proxy/oauth` (plus the
+  `/.well-known/oauth-authorization-server/api/mcp_proxy_dev/oauth` (plus the
   `openid-configuration` variants), and the protected-resource document at the
   path-scoped `/.well-known/oauth-protected-resource/api/webhook/<id>`. The
   path-scoped document is claude.ai's first fallback probe when the 401's

@@ -16,7 +16,7 @@ Supervisor from the Dockerfile (no prebuilt image) — a "release" is a `version
 
 They are a **hand-maintained duplicate** — no codegen. The dev tree is the stable tree
 with every `mcp_proxy` token rewritten to `mcp_proxy_dev` (this also renames the
-`/config/.mcp_proxy_*` state files, `/opt/mcp_proxy`, the `/api/mcp_proxy/oauth` base,
+`/config/.mcp_proxy_dev_*` state files, `/opt/mcp_proxy_dev`, the `/api/mcp_proxy_dev/oauth` base,
 the HA config-entry domain, and `/config/custom_components/mcp_proxy`). `/data/*` files
 (webhook id, OAuth creds) are already isolated per add-on. CI test
 `tests/src/unit/test_webhook_proxy_dev_isolation.py` fails if any bare `mcp_proxy` token
@@ -72,7 +72,7 @@ manual fallback):
 1. Copy the changed dev files onto the stable dir.
 2. Reverse-rename `mcp_proxy_dev` -> `mcp_proxy` everywhere (the inverse of the dev
    transform): component dir `mcp_proxy_dev/` -> `mcp_proxy/`, `DOMAIN`, `/opt` path,
-   `/config/.mcp_proxy_dev_*` state files, `/api/mcp_proxy_dev/oauth` base, config-entry
+   `/config/.mcp_proxy_dev_dev_*` state files, `/api/mcp_proxy_dev/oauth` base, config-entry
    domain, and the add-on slug `ha_mcp_webhook_proxy_dev` -> `ha_mcp_webhook_proxy`.
 3. In `start.py`, the stable mutual-exclusion constants are `SIBLING_SLUG_BASE =
    "ha_mcp_webhook_proxy_dev"`, `MUTEX_NOTIFICATION_ID = "mcp_proxy_mutex"`,
