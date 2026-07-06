@@ -1,0 +1,394 @@
+<!DOCTYPE html><html lang="en"> <head><meta charset="UTF-8"><meta name="description" content="AI-powered smart home control through the Model Context Protocol"><meta name="viewport" content="width=device-width"><link rel="icon" type="image/svg+xml" href="/ha-mcp/favicon.svg"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"><meta name="generator" content="Astro v6.4.6"><title>Windows Setup Guide - Home Assistant MCP</title><script data-purpose="anti-fouc">
+      // #1572 accessibility-pref resolver — runs before CSS evaluates so
+      // data-theme / data-contrast / data-shade and the root font-size are
+      // set on <html> ahead of paint (no FOUC, no jump). Reads saved choices
+      // from localStorage with safe defaults. Auto is the default (#1574
+      // review: follow the OS preference out of the box); Dark stays one
+      // click away as a preset.
+      // Same logic as in src/ha_mcp/settings_ui/__init__.py head — both surfaces use
+      // the same localStorage key names interpreted identically, but storage
+      // is per-origin, so each surface keeps its own saved values. Any change
+      // here must be mirrored there (and vice versa) or the surfaces drift
+      // apart. Enforced by tests/src/unit/test_anti_fouc_parity.py.
+      (function () {
+        var root = document.documentElement;
+        function readPref(key, fallback) {
+          try { return localStorage.getItem(key) || fallback; } catch (e) { return fallback; }
+        }
+        try {
+          var themePref = readPref('ha-mcp-theme', 'auto');
+          var theme = themePref === 'auto'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : themePref;
+          root.setAttribute('data-theme', theme);
+
+          var contrastPref = readPref('ha-mcp-contrast', 'normal');
+          if (contrastPref === 'high') root.setAttribute('data-contrast', 'high');
+
+          var shadePref = readPref('ha-mcp-shade', 'off-white');
+          if (shadePref !== 'off-white') root.setAttribute('data-shade', shadePref);
+
+          var sizePref = parseInt(readPref('ha-mcp-font-size', '100'), 10);
+          // Range = the UI's offered values; clamps a hand-edited localStorage
+          // value rather than silently honoring arbitrary input.
+          if (!isNaN(sizePref) && sizePref >= 100 && sizePref <= 150 && sizePref !== 100) {
+            // The browser default is 16px; scale the root so every rem-based
+            // size (the bulk of this stylesheet) cascades proportionally.
+            root.style.fontSize = (16 * sizePref / 100) + 'px';
+          }
+
+          // Custom colors layer on top of the preset as inline styles (inline
+          // beats stylesheet rules). Both surfaces' variable names are written;
+          // names a surface does not use are inert. Malformed JSON or non-hex
+          // values are ignored without disturbing the already-applied theme.
+          try {
+            var customRaw = readPref('ha-mcp-custom-colors', '');
+            if (customRaw) {
+              var custom = JSON.parse(customRaw);
+              var hexOk = function (v) { return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v); };
+              var channels = function (v) {
+                return parseInt(v.slice(1, 3), 16) + ' ' + parseInt(v.slice(3, 5), 16) + ' ' + parseInt(v.slice(5, 7), 16);
+              };
+              if (hexOk(custom.bg)) {
+                root.style.setProperty('--bg', custom.bg);
+                root.style.setProperty('--surface-0', channels(custom.bg));
+              }
+              if (hexOk(custom.text)) {
+                root.style.setProperty('--text', custom.text);
+                root.style.setProperty('--text-primary', custom.text);
+              }
+              if (hexOk(custom.accent)) {
+                root.style.setProperty('--accent', custom.accent);
+                root.style.setProperty('--accent-text', custom.accent);
+                root.style.setProperty('--brand', channels(custom.accent));
+              }
+            }
+          } catch (e2) {
+            // Corrupted custom-colors JSON would re-fail on every load; drop
+            // it so the next visit starts clean instead of wedged.
+            try { localStorage.removeItem('ha-mcp-custom-colors'); } catch (e3) { /* storage blocked */ }
+          }
+        } catch (e) {
+          // localStorage is already guarded inside readPref — this catch
+          // guards everything else (matchMedia, attribute writes). Warn so a
+          // shipped bug here is visible in the console instead of hiding
+          // behind the silent dark fallback.
+          console.warn('ha-mcp accessibility prefs failed to apply:', e);
+          root.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script><!-- Cloudflare Web Analytics --><script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon="{&quot;token&quot;: &quot;65196c0f415f4f3690e13ad77fa44cb0&quot;}"></script><link rel="stylesheet" href="/ha-mcp-fork/_astro/Nav.Ct2Ldl3O.css">
+<style>.guide-step[data-astro-cid-zjxnmhz5]{border-radius:.75rem;border-width:1px;border-color:rgb(var(--tw-slate-700, 51 65 85) / .5);background-color:rgb(var(--tw-slate-800, 30 41 59) / .3);padding:1.5rem}.step-header[data-astro-cid-zjxnmhz5]{margin-bottom:1rem;display:flex;align-items:center;gap:.75rem}.step-number[data-astro-cid-zjxnmhz5]{display:flex;height:2rem;width:2rem;flex-shrink:0;align-items:center;justify-content:center;border-radius:9999px;--tw-bg-opacity: 1;background-color:rgb(37 99 235 / var(--tw-bg-opacity, 1));font-weight:600;--tw-text-opacity: 1;color:rgb(255 255 255 / var(--tw-text-opacity, 1))}.step-content[data-astro-cid-zjxnmhz5]{padding-left:2.75rem}
+</style></head> <body class="min-h-screen text-[var(--text-primary)] antialiased body-background"> <a href="#main-content" class="skip-link">Skip to content</a>  <nav class="sticky top-0 z-50 border-b border-white/[0.06] bg-surface-0/95 backdrop-blur-md"> <div class="container mx-auto px-4 max-w-6xl"> <div class="flex items-center justify-between h-16"> <a href="/ha-mcp-fork/" class="flex items-center gap-2.5"> <img src="/ha-mcp-fork/icon.svg" alt="Home Assistant MCP" class="h-8 w-8"> <span class="font-display font-semibold text-white text-lg hidden sm:inline tracking-tight">ha-mcp</span> </a> <div class="flex items-center gap-1"> <a href="/ha-mcp-fork/" class="px-3 py-1.5 rounded-lg text-sm transition-colors text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.04]"> Home </a><a href="/ha-mcp-fork/setup" class="px-3 py-1.5 rounded-lg text-sm transition-colors text-brand font-medium bg-brand/[0.08]"> Setup </a><a href="/ha-mcp-fork/tools" class="px-3 py-1.5 rounded-lg text-sm transition-colors text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.04]"> Tools </a><a href="/ha-mcp-fork/faq" class="px-3 py-1.5 rounded-lg text-sm transition-colors text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.04]"> FAQ </a><a href="/ha-mcp-fork/contribute" class="px-3 py-1.5 rounded-lg text-sm transition-colors text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.04]"> Contribute </a> <label class="theme-control ml-2"> <span class="theme-control-label">Theme</span> <select id="themeToggle" class="theme-toggle" aria-label="Theme: light or dark mode"> <option value="auto">Auto (OS)</option> <option value="light">Light</option> <option value="dark">Dark</option> </select> </label> <div class="relative"> <button id="a11yToggle" type="button" class="theme-toggle ml-1" aria-label="Accessibility settings" aria-haspopup="dialog" aria-expanded="false" title="Accessibility settings">Accessibility</button> <div id="a11yPanel" class="a11y-panel" role="dialog" aria-label="Accessibility settings" hidden> <p class="a11y-contrast-warning" id="a11y-storage-note" hidden>
+Your browser is blocking site storage; choices apply for this
+              session only.</p> <section class="a11y-section"> <h3 class="a11y-section-title">Theme</h3> <fieldset class="a11y-options"> <legend class="visually-hidden">Theme preset</legend> <label class="a11y-option"><input type="radio" name="a11y-preset" value="dark"> <span class="a11y-preset-chip" data-chip="dark" aria-hidden="true">Aa</span> Dark</label> <label class="a11y-option"><input type="radio" name="a11y-preset" value="light"> <span class="a11y-preset-chip" data-chip="light" aria-hidden="true">Aa</span> Light</label> <label class="a11y-option"><input type="radio" name="a11y-preset" value="auto"> <span class="a11y-preset-chip" data-chip="auto" aria-hidden="true"></span> Auto</label> <label class="a11y-option"><input type="radio" name="a11y-preset" value="paper"> <span class="a11y-preset-chip" data-chip="paper" aria-hidden="true">Aa</span> Paper</label> <label class="a11y-option"><input type="radio" name="a11y-preset" value="gray"> <span class="a11y-preset-chip" data-chip="gray" aria-hidden="true">Aa</span> Gray</label> <label class="a11y-option"><input type="radio" name="a11y-preset" value="contrast"> <span class="a11y-preset-chip" data-chip="contrast" aria-hidden="true">Aa</span> High Contrast</label> </fieldset> </section> <section class="a11y-section"> <h3 class="a11y-section-title">Text size</h3> <fieldset class="a11y-options"> <legend class="visually-hidden">Text size</legend> <label class="a11y-option"><input type="radio" name="a11y-font-size" value="100"> 100%</label> <label class="a11y-option"><input type="radio" name="a11y-font-size" value="115"> 115%</label> <label class="a11y-option"><input type="radio" name="a11y-font-size" value="130"> 130%</label> <label class="a11y-option"><input type="radio" name="a11y-font-size" value="150"> 150%</label> </fieldset> </section> <section class="a11y-section"> <h3 class="a11y-section-title">Custom colors</h3> <div class="a11y-swatches"> <label class="a11y-swatch">Background <input type="color" id="a11y-custom-bg" data-custom="bg"></label> <label class="a11y-swatch">Text <input type="color" id="a11y-custom-text" data-custom="text"></label> <label class="a11y-swatch">Accent <input type="color" id="a11y-custom-accent" data-custom="accent"></label> </div> <p class="a11y-contrast-warning" id="a11y-contrast-warning" hidden>
+Heads-up: the chosen background and text colors fall below a 4.5:1
+                contrast ratio and may be hard to read together.</p> <button id="a11y-custom-clear" type="button" class="a11y-reset">Clear custom colors</button> </section> <button id="a11yReset" type="button" class="a11y-reset">Reset to defaults</button> </div> </div> </div> </div> </div> </nav> <main id="main-content" tabindex="-1" class="focus:outline-none" data-astro-cid-zjxnmhz5> <div class="container mx-auto px-4 py-8 max-w-3xl" data-astro-cid-zjxnmhz5> <!-- Header --> <header class="mb-10" data-astro-cid-zjxnmhz5> <div class="flex items-center gap-2 text-sm text-slate-400 mb-4" data-astro-cid-zjxnmhz5> <a href="/ha-mcp-fork/setup" class="hover:text-white" data-astro-cid-zjxnmhz5>&larr; Back to Setup</a> </div> <div class="flex items-center gap-4 mb-4" data-astro-cid-zjxnmhz5> <svg width="40" height="40" viewBox="0 0 24 24" fill="none" class="inline-block text-[var(--text-secondary)] flex-shrink-0" aria-hidden="true">  <path d="M11.49 2H2v9.492h9.492V2h-.002z" fill="currentColor"/><path d="M22 2h-9.492v9.492H22V2z" fill="currentColor"/><path d="M11.49 12.508H2V22h9.492v-9.492h-.002z" fill="currentColor"/><path d="M22 12.508h-9.492V22H22v-9.492z" fill="currentColor"/> </svg> <div data-astro-cid-zjxnmhz5> <h1 class="text-3xl font-bold text-white" data-astro-cid-zjxnmhz5>Windows Setup Guide</h1> <p class="text-slate-400" data-astro-cid-zjxnmhz5>Claude Desktop + Home Assistant in ~10 minutes</p> </div> </div> <div class="bg-green-900/20 border border-green-700/50 rounded-xl p-4" data-astro-cid-zjxnmhz5> <p class="text-green-300 font-medium" data-astro-cid-zjxnmhz5>Works with free Claude account - no subscription needed.</p> </div> </header> <!-- Not the app (add-on) --> <div class="bg-blue-900/20 border border-blue-700/50 rounded-xl p-4 mb-8" data-astro-cid-zjxnmhz5> <p class="text-blue-200/90 text-sm" data-astro-cid-zjxnmhz5><strong class="text-blue-300" data-astro-cid-zjxnmhz5>This is the local (stdio) setup.</strong> ha-mcp runs on this computer and talks to Claude Desktop directly. You do <strong data-astro-cid-zjxnmhz5>not</strong> need the Home Assistant App (add-on) for this, and this config does not use it &mdash; don't set up both. Running Home Assistant OS and prefer to run ha-mcp inside HA with no access token to manage? Use the <a href="/ha-mcp-fork/guide-addon" class="underline hover:text-white" data-astro-cid-zjxnmhz5>App (add-on) guide</a> instead.</p> </div> <!-- Steps --> <div class="space-y-8" data-astro-cid-zjxnmhz5> <!-- Step 1 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>1</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Create a Claude Account</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>Go to <a href="https://claude.ai" class="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" data-astro-cid-zjxnmhz5>claude.ai</a> and create a free account.</p> </div> </section> <!-- Step 2 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>2</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Run the Installer</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>Open <strong data-astro-cid-zjxnmhz5>Windows PowerShell</strong> (from Start menu) and paste:</p> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>irm https://raw.githubusercontent.com/homeassistant-ai/ha-mcp/master/scripts/install-windows.ps1 | iex</code></pre> <p class="text-slate-400 text-sm mt-3" data-astro-cid-zjxnmhz5>This installs the required tools and configures Claude Desktop for the demo environment.</p> <details class="mt-4" data-astro-cid-zjxnmhz5> <summary class="text-slate-400 hover:text-white cursor-pointer font-medium" data-astro-cid-zjxnmhz5>Manual Installation (if the installer doesn't work)</summary> <div class="mt-4 pl-4 border-l-2 border-slate-700" data-astro-cid-zjxnmhz5> <h3 class="font-medium text-white mb-2" data-astro-cid-zjxnmhz5>Install uv</h3> <p class="text-slate-300 mb-2" data-astro-cid-zjxnmhz5>Open <strong data-astro-cid-zjxnmhz5>PowerShell</strong> or <strong data-astro-cid-zjxnmhz5>cmd</strong>:</p> <pre class="code-block mb-4" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>winget install --id=astral-sh.uv -e</code></pre> <h3 class="font-medium text-white mb-2" data-astro-cid-zjxnmhz5>Configure Claude Desktop</h3> <ol class="text-slate-300 space-y-2 mb-4" data-astro-cid-zjxnmhz5> <li data-astro-cid-zjxnmhz5>1. Open Claude Desktop</li> <li data-astro-cid-zjxnmhz5>2. <strong data-astro-cid-zjxnmhz5>Settings</strong> &rarr; <strong data-astro-cid-zjxnmhz5>Developer</strong> &rarr; <strong data-astro-cid-zjxnmhz5>Edit Config</strong></li> <li data-astro-cid-zjxnmhz5>3. Paste the following configuration:</li> </ol> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>{
+  &quot;mcpServers&quot;: {
+    &quot;Home Assistant&quot;: {
+      &quot;command&quot;: &quot;uvx&quot;,
+      &quot;args&quot;: [&quot;ha-mcp@latest&quot;],
+      &quot;env&quot;: {
+        &quot;HOMEASSISTANT_URL&quot;: &quot;https://ha-mcp-demo-server.qc-h.net&quot;,
+        &quot;HOMEASSISTANT_TOKEN&quot;: &quot;demo&quot;
+      }
+    }
+  }
+}</code></pre> <p class="text-slate-400 text-sm mt-3" data-astro-cid-zjxnmhz5>4. Save and restart Claude: <strong data-astro-cid-zjxnmhz5>File &rarr; Exit</strong>, then reopen.</p> </div> </details> <div class="bg-amber-900/20 border border-amber-700/50 rounded-xl p-4 mt-4" data-astro-cid-zjxnmhz5> <p class="text-amber-200/90 text-sm" data-astro-cid-zjxnmhz5><strong class="text-amber-300" data-astro-cid-zjxnmhz5>Behind antivirus or a corporate proxy?</strong> If <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>uvx</code> fails with <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>invalid peer certificate: UnknownIssuer</code> when downloading ha-mcp, your security software's HTTPS scanning is breaking the PyPI download. Open your Claude Desktop config (<strong data-astro-cid-zjxnmhz5>Settings &rarr; Developer &rarr; Edit Config</strong>, or see Step 6) and add <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>"UV_NATIVE_TLS": "1"</code> to the server's <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>env</code> block &mdash; see the <a href="/ha-mcp-fork/faq#uv-tls-interception" class="underline hover:text-white" data-astro-cid-zjxnmhz5>FAQ</a>.</p> </div> </div> </section> <!-- Step 3 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>3</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Install or Restart Claude Desktop</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>Download and install <strong data-astro-cid-zjxnmhz5>Claude Desktop</strong> from <a href="https://claude.ai/download" class="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" data-astro-cid-zjxnmhz5>claude.ai/download</a>.</p> <p class="text-slate-400" data-astro-cid-zjxnmhz5>Already have it? Restart it: <strong data-astro-cid-zjxnmhz5>File &rarr; Exit</strong>, then reopen.</p> </div> </section> <!-- Step 4 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>4</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Test It</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>Open Claude Desktop and ask:</p> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>Can you see my Home Assistant?</code></pre> <p class="text-slate-400 text-sm mt-3" data-astro-cid-zjxnmhz5>Claude should respond with a list of entities from the demo environment (lights, sensors, switches, etc.).</p> </div> </section> <!-- Step 5 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>5</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Explore the Demo</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>The demo environment is a real Home Assistant you can experiment with:</p> <div class="bg-slate-800/50 rounded-lg p-4 mb-4" data-astro-cid-zjxnmhz5> <p class="text-slate-300" data-astro-cid-zjxnmhz5><strong data-astro-cid-zjxnmhz5>Web UI:</strong> <a href="https://ha-mcp-demo-server.qc-h.net" class="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" data-astro-cid-zjxnmhz5>ha-mcp-demo-server.qc-h.net</a></p> <p class="text-slate-300" data-astro-cid-zjxnmhz5><strong data-astro-cid-zjxnmhz5>Login:</strong> <code class="bg-slate-700 px-1 rounded" data-astro-cid-zjxnmhz5>mcp</code> / <code class="bg-slate-700 px-1 rounded" data-astro-cid-zjxnmhz5>mcp</code></p> <p class="text-slate-400 text-sm mt-2" data-astro-cid-zjxnmhz5>Note: Resets weekly - your changes won't persist</p> </div> <p class="text-slate-300 mb-2" data-astro-cid-zjxnmhz5>Try asking Claude:</p> <ul class="text-slate-400 space-y-1 list-disc list-inside" data-astro-cid-zjxnmhz5> <li data-astro-cid-zjxnmhz5>"Turn on the kitchen lights"</li> <li data-astro-cid-zjxnmhz5>"What's the temperature in the living room?"</li> <li data-astro-cid-zjxnmhz5>"Create an automation that turns off all lights at midnight"</li> </ul> </div> </section> <!-- Step 6 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>6</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Connect Your Home Assistant</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>Ready to use your own Home Assistant? Edit the config file:</p> <p class="text-slate-400 text-sm mb-2" data-astro-cid-zjxnmhz5>If you installed Claude Desktop from the <strong data-astro-cid-zjxnmhz5>Microsoft Store</strong>, run this in PowerShell to find your config path:</p> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>$pkg = Get-AppxPackage -Name Claude -ErrorAction SilentlyContinue | Select-Object -First 1; if ($pkg) { &quot;$env:LOCALAPPDATA\Packages\$($pkg.PackageFamilyName)\LocalCache\Roaming\Claude\claude_desktop_config.json&quot; } else { &quot;$env:APPDATA\Claude\claude_desktop_config.json&quot; }</code></pre> <p class="text-slate-400 text-sm mb-2 mt-3" data-astro-cid-zjxnmhz5>Or open it directly (works for the <strong data-astro-cid-zjxnmhz5>traditional installer</strong>):</p> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>notepad "$env:APPDATA\Claude\claude_desktop_config.json"</code></pre> <p class="text-slate-300 mt-4 mb-4" data-astro-cid-zjxnmhz5>Replace the demo values:</p> <pre class="code-block" data-astro-cid-zjxnmhz5><code data-astro-cid-zjxnmhz5>{
+  &quot;mcpServers&quot;: {
+    &quot;Home Assistant&quot;: {
+      &quot;command&quot;: &quot;uvx&quot;,
+      &quot;args&quot;: [&quot;ha-mcp@latest&quot;],
+      &quot;env&quot;: {
+        &quot;HOMEASSISTANT_URL&quot;: &quot;http://homeassistant.local:8123&quot;,
+        &quot;HOMEASSISTANT_TOKEN&quot;: &quot;your_long_lived_token&quot;
+      }
+    }
+  }
+}</code></pre> <div class="bg-amber-900/20 border border-amber-700/50 rounded-xl p-4 mt-4" data-astro-cid-zjxnmhz5> <h3 class="font-medium text-amber-300 mb-2" data-astro-cid-zjxnmhz5>To get your token:</h3> <ol class="text-amber-200/80 space-y-1 text-sm" data-astro-cid-zjxnmhz5> <li data-astro-cid-zjxnmhz5>1. Open Home Assistant in your browser</li> <li data-astro-cid-zjxnmhz5>2. Click your username (bottom left)</li> <li data-astro-cid-zjxnmhz5>3. <strong data-astro-cid-zjxnmhz5>Security</strong> tab &rarr; <strong data-astro-cid-zjxnmhz5>Long-lived access tokens</strong></li> <li data-astro-cid-zjxnmhz5>4. Create token &rarr; Copy immediately (shown only once)</li> </ol> </div> <p class="text-slate-400 mt-4" data-astro-cid-zjxnmhz5>Then restart Claude: <strong data-astro-cid-zjxnmhz5>File &rarr; Exit</strong>, then reopen.</p> </div> </section> <!-- Tip --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>💡</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Tip: The ha-mcp Settings Page</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-2" data-astro-cid-zjxnmhz5>ha-mcp ships a local web settings page where you can enable, disable, and pin individual MCP tools, toggle feature flags and advanced (beta) settings, manage automatic backups, and review tool-approval requests (handy if you find Claude reaching for tools you'd rather it didn't, or want to surface a niche tool you use often).</p> <p class="text-slate-300 mb-2" data-astro-cid-zjxnmhz5>The easiest way to find the URL: ask Claude something like <em data-astro-cid-zjxnmhz5>"how do I open the ha-mcp settings page?"</em> — the URL is included in <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>ha_get_overview</code>'s response. You can also read it directly from <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>%USERPROFILE%\.ha-mcp\ui.url</code>.</p> <p class="text-slate-400 text-sm" data-astro-cid-zjxnmhz5>The page is bound to <code class="bg-slate-800 px-1 rounded" data-astro-cid-zjxnmhz5>127.0.0.1</code> only and gated by a random secret path. See the <a href="/ha-mcp-fork/faq#tool-settings-page" class="text-blue-400 hover:underline" data-astro-cid-zjxnmhz5>FAQ</a> for every way to reach it (Docker, app, remote) and how to disable the settings server if you don't want it.</p> </div> </section> <!-- Step 7 --> <section class="guide-step" data-astro-cid-zjxnmhz5> <div class="step-header" data-astro-cid-zjxnmhz5> <span class="step-number" data-astro-cid-zjxnmhz5>7</span> <h2 class="text-xl font-semibold text-white" data-astro-cid-zjxnmhz5>Share Your Feedback</h2> </div> <div class="step-content" data-astro-cid-zjxnmhz5> <p class="text-slate-300 mb-4" data-astro-cid-zjxnmhz5>We'd love to hear how you're using ha-mcp!</p> <ul class="space-y-2" data-astro-cid-zjxnmhz5> <li data-astro-cid-zjxnmhz5><a href="https://github.com/homeassistant-ai/ha-mcp/discussions" class="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" data-astro-cid-zjxnmhz5>GitHub Discussions</a> — Share your automations, ask questions</li> <li data-astro-cid-zjxnmhz5><a href="https://github.com/homeassistant-ai/ha-mcp/issues" class="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" data-astro-cid-zjxnmhz5>GitHub Issues</a> — Report bugs or request features</li> </ul> </div> </section> </div> <!-- Footer --> <div class="mt-12 pt-8 border-t border-slate-800" data-astro-cid-zjxnmhz5> <p class="text-slate-400 text-center" data-astro-cid-zjxnmhz5>
+Having issues? See the <a href="/ha-mcp-fork/faq" class="text-blue-400 hover:underline" data-astro-cid-zjxnmhz5>FAQ & Troubleshooting Guide</a> </p> </div> </div> </main>  <script data-purpose="theme-toggle">
+      // #1572 accessibility-prefs binding for the docs site — bidirectional
+      // sync between the Nav header theme <select>, the Accessibility
+      // popover controls, and the underlying localStorage / <html>
+      // attributes. The Layout head anti-FOUC script already set the initial
+      // attributes; this module keeps them in sync for the rest of the
+      // session and persists user changes. The block from `const PREFS` to
+      // `const APPLY` must stay logically identical to src/ha_mcp/settings_ui/settings.js
+      // (comments and formatting may differ) — enforced by
+      // tests/src/unit/test_anti_fouc_parity.py.
+      (function bindAccessibilityPrefs() {
+        const root = document.documentElement;
+        const mql = window.matchMedia('(prefers-color-scheme: light)');
+        const PREFS = {
+          theme:    { key: 'ha-mcp-theme',         default: 'auto'      },
+          fontSize: { key: 'ha-mcp-font-size',     default: '100'       },
+          contrast: { key: 'ha-mcp-contrast',      default: 'normal'    },
+          shade:    { key: 'ha-mcp-shade',         default: 'off-white' },
+          custom:   { key: 'ha-mcp-custom-colors', default: ''          },
+        };
+        // One-click presets (Firefox Reader View shape, #1574 review): each sets
+        // the full (theme, shade, contrast) triple; the checked chip is derived
+        // back from the stored triple, so hand-edited combos simply match none.
+        const PRESETS = {
+          dark:     { theme: 'dark',  shade: 'off-white', contrast: 'normal' },
+          light:    { theme: 'light', shade: 'off-white', contrast: 'normal' },
+          auto:     { theme: 'auto',  shade: 'off-white', contrast: 'normal' },
+          paper:    { theme: 'light', shade: 'paper',     contrast: 'normal' },
+          gray:     { theme: 'light', shade: 'gray',      contrast: 'normal' },
+          contrast: { theme: 'light', shade: 'pure',      contrast: 'high'   },
+        };
+        const read = (p) => {
+          try { return localStorage.getItem(PREFS[p].key) || PREFS[p].default; }
+          catch (_) { return PREFS[p].default; }
+        };
+        const write = (p, v) => {
+          let stored = true;
+          try { localStorage.setItem(PREFS[p].key, v); } catch (_) { stored = false; }
+          // Surface-specific follow-up (server sync on the settings UI,
+          // blocked-storage note on both) lives outside this mirrored core.
+          if (window.__haMcpPrefsHook) window.__haMcpPrefsHook(p, v, stored);
+        };
+
+        // Apply functions mirror what the anti-FOUC head script does, so the
+        // runtime path and the pre-paint path stay observably identical.
+        const applyTheme = (pref) => {
+          const resolved = pref === 'auto' ? (mql.matches ? 'light' : 'dark') : pref;
+          root.setAttribute('data-theme', resolved);
+        };
+        const applyFontSize = (pct) => {
+          const n = parseInt(pct, 10);
+          if (isNaN(n) || n <= 100 || n > 150) root.style.fontSize = '';
+          else root.style.fontSize = (16 * n / 100) + 'px';
+        };
+        const applyContrast = (tier) => {
+          if (tier === 'high') root.setAttribute('data-contrast', 'high');
+          else root.removeAttribute('data-contrast');
+        };
+        const applyShade = (shade) => {
+          if (shade && shade !== 'off-white') root.setAttribute('data-shade', shade);
+          else root.removeAttribute('data-shade');
+        };
+        const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+        const channels = (hex) =>
+          parseInt(hex.slice(1, 3), 16) + ' ' + parseInt(hex.slice(3, 5), 16) + ' ' + parseInt(hex.slice(5, 7), 16);
+        // Custom colors layer on top of any preset as inline styles (inline beats
+        // stylesheet rules, so the cascade is: preset CSS -> user custom). Both
+        // surfaces' variable names are written; names a surface does not use are
+        // inert. Returns the parsed object so callers can reuse it.
+        const CUSTOM_VARS = {
+          bg:     { hex: ['--bg'], chan: ['--surface-0'] },
+          text:   { hex: ['--text', '--text-primary'], chan: [] },
+          accent: { hex: ['--accent', '--accent-text'], chan: ['--brand'] },
+        };
+        const applyCustom = (raw) => {
+          for (const part in CUSTOM_VARS) {
+            CUSTOM_VARS[part].hex.concat(CUSTOM_VARS[part].chan).forEach((name) => root.style.removeProperty(name));
+          }
+          let custom = {};
+          try { custom = JSON.parse(raw || '{}') || {}; } catch (_) { return {}; }
+          for (const part in CUSTOM_VARS) {
+            const v = custom[part];
+            if (typeof v !== 'string' || !HEX_RE.test(v)) continue;
+            CUSTOM_VARS[part].hex.forEach((name) => root.style.setProperty(name, v));
+            CUSTOM_VARS[part].chan.forEach((name) => root.style.setProperty(name, channels(v)));
+          }
+          return custom;
+        };
+        const APPLY = { theme: applyTheme, fontSize: applyFontSize, contrast: applyContrast, shade: applyShade, custom: applyCustom };
+
+        // #1574 review: surface a blocked localStorage (private mode /
+        // storage-blocking browsers) once instead of silently losing the
+        // choices on reload. The docs site is a static build, so unlike the
+        // settings UI there is no server to persist to — the note is the
+        // whole story here.
+        const storageNote = document.getElementById('a11y-storage-note');
+        window.__haMcpPrefsHook = (pref, value, stored) => {
+          if (!stored && storageNote) storageNote.hidden = false;
+        };
+
+        const setPref = (pref, value) => {
+          write(pref, value);
+          APPLY[pref](value);
+        };
+        const applyPreset = (name) => {
+          const p = PRESETS[name];
+          if (!p) return;
+          setPref('theme', p.theme);
+          setPref('shade', p.shade);
+          setPref('contrast', p.contrast);
+        };
+        const reflectPreset = () => {
+          const theme = read('theme'), shade = read('shade'), contrast = read('contrast');
+          let active = '';
+          for (const name in PRESETS) {
+            const p = PRESETS[name];
+            if (p.theme === theme && p.shade === shade && p.contrast === contrast) { active = name; break; }
+          }
+          document.querySelectorAll('input[type="radio"][name="a11y-preset"]').forEach((r) => {
+            r.checked = (r.value === active);
+          });
+        };
+        const reflectRadio = (name, value) => {
+          document.querySelectorAll('input[type="radio"][name="' + name + '"]').forEach((r) => {
+            r.checked = (r.value === value);
+          });
+        };
+        // WCAG 2.x relative-luminance contrast for the custom-color warning.
+        const luminance = (hex) => {
+          const f = (i) => {
+            const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+            return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+          };
+          return 0.2126 * f(1) + 0.7152 * f(3) + 0.0722 * f(5);
+        };
+        const updateContrastWarning = (custom) => {
+          const warn = document.getElementById('a11y-contrast-warning');
+          if (!warn) return;
+          const comparable = HEX_RE.test(custom.bg || '') && HEX_RE.test(custom.text || '');
+          if (!comparable) { warn.hidden = true; return; }
+          const l1 = luminance(custom.bg), l2 = luminance(custom.text);
+          warn.hidden = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05) >= 4.5;
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+          const headerToggle = document.getElementById('themeToggle');
+          if (headerToggle) {
+            headerToggle.value = read('theme');
+            headerToggle.addEventListener('change', () => {
+              setPref('theme', headerToggle.value);
+              reflectPreset();
+              refreshSwatches();
+            });
+          }
+
+          reflectRadio('a11y-font-size', read('fontSize'));
+          reflectPreset();
+          // Initialize each swatch from the saved custom value, falling back to
+          // the theme's current computed color so the wells show reality instead
+          // of an arbitrary black default.
+          const cssColorToHex = (value) => {
+            const v = (value || '').trim();
+            if (HEX_RE.test(v)) return v;
+            let m = v.match(/^rgba?\((\d+)[, ]+(\d+)[, ]+(\d+)/);
+            if (!m) m = v.match(/^(\d+) (\d+) (\d+)$/);
+            if (!m) return '';
+            return '#' + [m[1], m[2], m[3]].map((n) => (+n).toString(16).padStart(2, '0')).join('');
+          };
+          const currentColorFor = (part) => {
+            const body = getComputedStyle(document.body);
+            const rootStyle = getComputedStyle(root);
+            if (part === 'bg') return cssColorToHex(body.backgroundColor);
+            if (part === 'text') return cssColorToHex(body.color);
+            return cssColorToHex(rootStyle.getPropertyValue('--accent')) ||
+              cssColorToHex(rootStyle.getPropertyValue('--brand'));
+          };
+          const customInputs = document.querySelectorAll('input[type="color"][data-custom]');
+          // Sync the swatch wells with reality: a stored custom value wins,
+          // otherwise the active theme's computed color. Re-run after anything
+          // that changes the active palette (preset click, header toggle, OS
+          // auto-flip, clear, reset) so the wells never keep showing a previous
+          // theme's colors.
+          const refreshSwatches = () => {
+            let custom = {};
+            try { custom = JSON.parse(read('custom') || '{}') || {}; } catch (_) { /* ignore */ }
+            customInputs.forEach((inp) => {
+              const v = custom[inp.dataset.custom];
+              const fallback = currentColorFor(inp.dataset.custom);
+              if (HEX_RE.test(v || '')) inp.value = v;
+              else if (fallback) inp.value = fallback;
+            });
+          };
+          updateContrastWarning(applyCustom(read('custom')));
+          refreshSwatches();
+          customInputs.forEach((inp) => {
+            inp.addEventListener('input', () => {
+              let custom = {};
+              try { custom = JSON.parse(read('custom') || '{}') || {}; } catch (_) { /* start fresh */ }
+              custom[inp.dataset.custom] = inp.value;
+              write('custom', JSON.stringify(custom));
+              applyCustom(read('custom'));
+              updateContrastWarning(custom);
+            });
+          });
+          const clearBtn = document.getElementById('a11y-custom-clear');
+          if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+              write('custom', '');
+              updateContrastWarning(applyCustom(''));
+              refreshSwatches();
+            });
+          }
+
+          const a11yToggle = document.getElementById('a11yToggle');
+          const a11yPanel = document.getElementById('a11yPanel');
+
+          // Scope the change listener to the Accessibility popover rather
+          // than the document — only the a11y controls live inside it.
+          if (a11yPanel) {
+            a11yPanel.addEventListener('change', (e) => {
+              const t = e.target;
+              if (!(t instanceof HTMLInputElement) || t.type !== 'radio') return;
+              if (t.name === 'a11y-preset') {
+                applyPreset(t.value);
+                if (headerToggle) headerToggle.value = read('theme');
+                refreshSwatches();
+              } else if (t.name === 'a11y-font-size') {
+                setPref('fontSize', t.value);
+              }
+            });
+          }
+
+          // Popover open/close behavior. ESC and outside-click dismiss; the
+          // toggle button flips aria-expanded so screen readers announce the
+          // dialog open/close state.
+          if (a11yToggle && a11yPanel) {
+            const openPanel = () => {
+              a11yPanel.hidden = false;
+              a11yToggle.setAttribute('aria-expanded', 'true');
+            };
+            const closePanel = () => {
+              a11yPanel.hidden = true;
+              a11yToggle.setAttribute('aria-expanded', 'false');
+            };
+            a11yToggle.addEventListener('click', () => {
+              a11yPanel.hidden ? openPanel() : closePanel();
+            });
+            document.addEventListener('click', (e) => {
+              if (a11yPanel.hidden) return;
+              if (a11yPanel.contains(e.target) || a11yToggle.contains(e.target)) return;
+              closePanel();
+            });
+            document.addEventListener('keydown', (e) => {
+              if (e.key === 'Escape' && !a11yPanel.hidden) {
+                closePanel();
+                a11yToggle.focus();
+              }
+            });
+            const resetBtn = document.getElementById('a11yReset');
+            if (resetBtn) {
+              resetBtn.addEventListener('click', () => {
+                setPref('theme', PREFS.theme.default);
+                setPref('shade', PREFS.shade.default);
+                setPref('contrast', PREFS.contrast.default);
+                setPref('fontSize', PREFS.fontSize.default);
+                write('custom', '');
+                updateContrastWarning(applyCustom(''));
+                reflectRadio('a11y-font-size', PREFS.fontSize.default);
+                reflectPreset();
+                if (headerToggle) headerToggle.value = PREFS.theme.default;
+                refreshSwatches();
+              });
+            }
+          }
+
+          // Re-apply when the OS preference flips while in Auto. Registered
+          // here so it can refresh the swatch wells along with the theme.
+          mql.addEventListener('change', () => {
+            if (read('theme') === 'auto') {
+              applyTheme('auto');
+              refreshSwatches();
+            }
+          });
+        });
+      })();
+    </script> <script type="module">(function(){const n='width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"',a=`<svg ${n}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`,i=`<svg ${n}><path d="M20 6L9 17l-5-5"/></svg>`;async function r(e){if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(e);else{const o=document.createElement("textarea");o.value=e,o.style.cssText="position:fixed;opacity:0",document.body.appendChild(o),o.select(),document.execCommand("copy"),o.remove()}}window.initCopyButtons=function(){document.querySelectorAll("pre").forEach(e=>{if(e.parentElement?.classList.contains("pre-wrapper")||!e.parentNode)return;const o=document.createElement("div");o.className="pre-wrapper",e.parentNode.insertBefore(o,e),o.appendChild(e);const t=document.createElement("button");t.type="button",t.className="copy-btn",t.setAttribute("aria-label","Copy to clipboard"),t.innerHTML=a,t.addEventListener("click",async()=>{const c=((e.querySelector("code")||e).textContent?.trim()??"").replace(/^[\$>]\s/gm,"");try{await r(c),t.innerHTML=i,t.setAttribute("aria-label","Copied"),setTimeout(()=>{t.innerHTML=a,t.setAttribute("aria-label","Copy to clipboard")},1500)}catch{t.setAttribute("aria-label","Copy failed"),setTimeout(()=>t.setAttribute("aria-label","Copy to clipboard"),2e3)}}),o.appendChild(t)})},document.addEventListener("DOMContentLoaded",window.initCopyButtons)})();</script> </body> </html>
