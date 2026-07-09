@@ -118,6 +118,8 @@ def hacs_install():
                 "ha_install_mcp_tools", {"restart": False}, timeout=600
             )
             payload = json.loads(res.content[0].text)
+            # Tool responses ride in a {"data": ..., "metadata": ...} envelope.
+            payload = payload.get("data", payload)
             print("install result:", json.dumps(payload)[:400])
             assert payload.get("success"), payload
             assert payload.get("installed") or payload.get("already_installed")
