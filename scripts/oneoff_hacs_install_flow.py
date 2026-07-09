@@ -40,14 +40,21 @@ def rest(method, path, payload=None, timeout=30):
 
 
 def wait_api(budget=420):
+    """Wait for HA to be fully RUNNING (not just answering HTTP).
+
+    /api/ answers while integrations (incl. HACS) are still loading;
+    /api/config carries the core state.
+    """
     deadline = time.time() + budget
     while time.time() < deadline:
         try:
-            rest("GET", "/api/")
-            return
+            cfg = rest("GET", "/api/config")
+            if cfg.get("state") == "RUNNING":
+                return
         except Exception:
-            time.sleep(5)
-    raise SystemExit(f"HA API not up within {budget}s")
+            pass
+        time.sleep(5)
+    raise SystemExit(f"HA not RUNNING within {budget}s")
 
 
 def prep_config() -> Path:
@@ -114,9 +121,21 @@ def hacs_install():
         ha = HomeAssistantClient(base_url=BASE, token=TEST_TOKEN)
         server = HomeAssistantSmartMCPServer(client=ha)
         async with Client(server.mcp) as c:
-            res = await c.call_tool(
-                "ha_install_mcp_tools", {"restart": False}, timeout=600
-            )
+            # HACS finishes its own startup (GitHub metadata fetch) after HA
+            # reports RUNNING — retry a few times instead of racing it.
+            last_exc = None
+            for attempt in range(1, 5):
+                try:
+                    res = await c.call_tool(
+                        "ha_install_mcp_tools", {"restart": False}, timeout=600
+                    )
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"install attempt {attempt} failed: {str(exc)[:300]}")
+                    await asyncio.sleep(20)
+            else:
+                raise SystemExit(f"install never succeeded: {last_exc}")
             payload = json.loads(res.content[0].text)
             # Tool responses ride in a {"data": ..., "metadata": ...} envelope.
             payload = payload.get("data", payload)
