@@ -175,6 +175,26 @@ def main():
         wait_api()
         print("HA back up")
 
+        step("add the integration (user step: Settings > Add integration)")
+        # HACS only installs files; services register when the user adds the
+        # integration. Drive the config flow exactly as the UI would:
+        # menu -> 'tools' -> confirm -> create_entry.
+        flow = rest(
+            "POST", "/api/config/config_entries/flow", {"handler": "ha_mcp_tools"}
+        )
+        assert flow.get("type") == "menu", flow
+        flow = rest(
+            "POST",
+            f"/api/config/config_entries/flow/{flow['flow_id']}",
+            {"next_step_id": "tools"},
+        )
+        assert flow.get("type") == "form", flow
+        flow = rest(
+            "POST", f"/api/config/config_entries/flow/{flow['flow_id']}", {}
+        )
+        assert flow.get("type") == "create_entry", flow
+        print("tools config entry created")
+
         step("verify the HACS-installed component WORKS post-restart")
         deadline = time.time() + 120
         last = None
