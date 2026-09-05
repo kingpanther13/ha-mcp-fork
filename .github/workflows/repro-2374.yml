@@ -1,0 +1,49 @@
+name: repro-2374
+on:
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["8.3.0", "8.4.3"]
+        python: ["3.13", "3.14"]
+        shell: [cmd, pwsh]
+    env:
+      HOMEASSISTANT_URL: http://127.0.0.1:1
+      HOMEASSISTANT_TOKEN: dummy-token
+      HA_MCP_DISABLE_UPDATE_CHECK: "1"
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - name: versions
+        shell: pwsh
+        run: |
+          uv --version
+          uvx --python ${{ matrix.python }} --from ha-mcp==${{ matrix.version }} python -c "import sys, importlib.metadata as m; print(sys.version); print({p: m.version(p) for p in ['ha-mcp','fastmcp','mcp','rich','anyio','pydantic']})"
+      - name: pipe (cmd)
+        if: matrix.shell == 'cmd'
+        shell: cmd
+        run: |
+          echo {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}} | uvx --python ${{ matrix.python }} ha-mcp==${{ matrix.version }} > out.txt 2> err.txt
+          echo rc=%ERRORLEVEL%
+      - name: pipe (pwsh)
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | uvx --python ${{ matrix.python }} ha-mcp==${{ matrix.version }} > out.txt 2> err.txt
+          "rc=$LASTEXITCODE"
+      - name: report
+        if: always()
+        shell: pwsh
+        run: |
+          "=== out.txt bytes: $((Get-Item out.txt).Length)"
+          $out = Get-Content -Raw out.txt -ErrorAction SilentlyContinue
+          "--- out.txt (first 3000 chars) ---"
+          if ($out) { $out.Substring(0, [Math]::Min(3000, $out.Length)) }
+          "=== err.txt bytes: $((Get-Item err.txt).Length)"
+          $err = Get-Content -Raw err.txt -ErrorAction SilentlyContinue
+          "--- err.txt (first 4000 chars) ---"
+          if ($err) { $err.Substring(0, [Math]::Min(4000, $err.Length)) }
+          "=== VERDICT: out.txt starts with '{' = $($out -and $out.TrimStart().StartsWith('{'))"
