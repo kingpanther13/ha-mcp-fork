@@ -6,46 +6,6 @@ env:
   HOMEASSISTANT_TOKEN: dummy-token
   HA_MCP_DISABLE_UPDATE_CHECK: "1"
 jobs:
-  ts-sdk-client:
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.11.26"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: connect via MCP TypeScript SDK StdioClientTransport (what Claude Code uses)
-        shell: pwsh
-        run: |
-          uv --version
-          mkdir cli; cd cli
-          npm init -y | Out-Null
-          npm i @modelcontextprotocol/sdk@latest | Out-Null
-          @'
-          import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-          import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-          const t = new StdioClientTransport({ command: "uvx", args: ["ha-mcp@latest"], env: { ...process.env }, stderr: "inherit" });
-          const c = new Client({ name: "repro-2374", version: "1.0" });
-          const timer = setTimeout(() => { console.log("VERDICT: TIMEOUT after 120s"); process.exit(2); }, 120000);
-          const t0 = Date.now();
-          try {
-            await c.connect(t);
-            clearTimeout(timer);
-            console.log(`CONNECTED in ${Date.now() - t0} ms; serverInfo=${JSON.stringify(c.getServerVersion())}`);
-            const tools = await c.listTools();
-            console.log(`tools listed: ${tools.tools.length}`);
-            await c.close();
-            console.log("VERDICT: OK");
-            process.exit(0);
-          } catch (e) {
-            clearTimeout(timer);
-            console.log("VERDICT: FAILED", e);
-            process.exit(1);
-          }
-          '@ | Set-Content -Path repro.mjs
-          node repro.mjs
   claude-code-cli:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -53,6 +13,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.26"
+          prune-cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -61,7 +22,7 @@ jobs:
         run: |
           npm i -g @anthropic-ai/claude-code | Out-Null
           claude --version
-          claude mcp add -s user ha-mcp -e HOMEASSISTANT_URL=http://127.0.0.1:1 -e HOMEASSISTANT_TOKEN=dummy-token -e HA_MCP_DISABLE_UPDATE_CHECK=1 -- uvx ha-mcp@latest
+          claude mcp add-json -s user ha-mcp '{"type":"stdio","command":"uvx","args":["ha-mcp@latest"],"env":{"HOMEASSISTANT_URL":"http://127.0.0.1:1","HOMEASSISTANT_TOKEN":"dummy-token","HA_MCP_DISABLE_UPDATE_CHECK":"1"}}'
           claude mcp get ha-mcp
           "=== claude mcp list ==="
           claude mcp list
