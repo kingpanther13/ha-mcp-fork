@@ -15,11 +15,13 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
+from ha_mcp.read_only import READ_ONLY_EXEMPT_TOOLS
 from ha_mcp.transforms.categorized_search import (
     DEFAULT_PINNED_TOOLS,
     CategorizedSearchTransform,
     SearchKeywordsTransform,
     _categorize_tool,
+    _is_manage_tool,
 )
 
 
@@ -90,6 +92,23 @@ class TestCategorizeTool:
         assert _categorize_tool(tool) == "read"
 
 
+class TestManageToolConvention:
+    """Cross-category proxy admission keys on the ``manage`` naming convention."""
+
+    def test_manage_names_match(self):
+        assert _is_manage_tool("ha_manage_backup")
+        assert _is_manage_tool("ha_dev_manage_server")
+        assert not _is_manage_tool("ha_config_set_automation")
+        assert not _is_manage_tool("ha_manager")
+
+    def test_every_read_only_exemption_is_a_manage_tool(self):
+        """The read route in search results is advertised for manage tools
+        the read-only table knows. A table entry that is not a manage tool
+        would be admitted on the read proxy yet never advertised there."""
+        for name in READ_ONLY_EXEMPT_TOOLS:
+            assert _is_manage_tool(name), name
+
+
 # ---------------------------------------------------------------------------
 # CategorizedSearchTransform._render_results (execute_via hints)
 # ---------------------------------------------------------------------------
@@ -119,22 +138,51 @@ class TestRenderResults:
         results = await transform._render_results(tools)
         assert "ha_call_write_tool" in results[0]["execute_via"]
         assert "ha_call_read_tool" not in results[0]["execute_via"]
+        assert "ha_call_delete_tool" not in results[0]["execute_via"]
         assert "ha_config_set_automation" in results[0]["execute_via"]
 
     @pytest.mark.anyio
-    async def test_mixed_manage_tool_execute_via_read_and_write(self, transform):
-        """Mixed tools advertise both proxies so reads can use the safe path."""
+    async def test_manage_tool_with_read_actions_execute_via_every_proxy(
+        self, transform
+    ):
+        """A manage tool the read-only table knows advertises all three
+        proxies, read first, each labelled with the actions it is for."""
         tools = [
             _make_tool("ha_manage_updates", destructive=True, description="Manage")
         ]
 
         results = await transform._render_results(tools)
 
-        hint = results[0]["execute_via"]
-        assert "ha_call_read_tool" in hint
-        assert "ha_call_write_tool" in hint
-        assert hint.index("ha_call_read_tool") < hint.index("ha_call_write_tool")
-        assert "ha_manage_updates" in hint
+        assert results[0]["execute_via"] == (
+            "Read actions: "
+            'client.ha_call_read_tool(name="ha_manage_updates", arguments={...}) '
+            'or ha_call_read_tool(name="ha_manage_updates", arguments={...}); '
+            "write actions: "
+            'client.ha_call_write_tool(name="ha_manage_updates", arguments={...}) '
+            'or ha_call_write_tool(name="ha_manage_updates", arguments={...}); '
+            "delete actions: "
+            'client.ha_call_delete_tool(name="ha_manage_updates", arguments={...}) '
+            'or ha_call_delete_tool(name="ha_manage_updates", arguments={...})'
+        )
+
+    @pytest.mark.anyio
+    async def test_manage_tool_without_read_actions_execute_via_write_and_delete(
+        self, transform
+    ):
+        """A manage tool outside the read-only table has no read route to
+        advertise — the read proxy would refuse every call to it."""
+        tools = [_make_tool("ha_manage_hacs", destructive=True, description="HACS")]
+
+        results = await transform._render_results(tools)
+
+        assert results[0]["execute_via"] == (
+            "Write actions: "
+            'client.ha_call_write_tool(name="ha_manage_hacs", arguments={...}) '
+            'or ha_call_write_tool(name="ha_manage_hacs", arguments={...}); '
+            "delete actions: "
+            'client.ha_call_delete_tool(name="ha_manage_hacs", arguments={...}) '
+            'or ha_call_delete_tool(name="ha_manage_hacs", arguments={...})'
+        )
 
     @pytest.mark.anyio
     async def test_delete_tool_execute_via(self, transform):
@@ -431,8 +479,8 @@ class TestCategorizedCallDispatch:
         self, transform: CategorizedSearchTransform
     ) -> None:
         """A write-categorised tool's read actions stay reachable on the read
-        proxy (#2329). Category membership is unchanged, but tool-search results
-        advertise both proxy paths and a read-approved call is admitted."""
+        proxy (#2329). Category membership is unchanged; the call is admitted
+        because the read-only predicate approves it."""
         _prepopulate_cache(
             transform,
             [
@@ -467,12 +515,125 @@ class TestCategorizedCallDispatch:
         ctx = _make_ctx()
         fn = self._get_proxy_fn(transform, "read")
 
-        with pytest.raises(ToolError):
+        with pytest.raises(ToolError) as exc_info:
             await fn(
                 "ha_manage_blueprints",
                 {"action": "delete", "path": "user/motion.yaml", "confirm": True},
                 ctx,
             )
+        body = json.loads(str(exc_info.value))
+        error = body["error"]
+        assert error["code"] == "VALIDATION_INVALID_PARAMETER"
+        assert body["correct_proxy"] == "ha_call_write_tool"
+        ctx.fastmcp.call_tool.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_read_proxy_refuses_a_manage_tool_outside_the_read_only_table(
+        self, transform: CategorizedSearchTransform
+    ) -> None:
+        """No exemption entry means no read predicate, so the read proxy fails
+        closed for every call — even one whose action sounds harmless."""
+        _prepopulate_cache(
+            transform,
+            [
+                _make_tool("ha_manage_hacs", destructive=True),
+                _make_tool("ha_get_state", read_only=True),
+            ],
+        )
+        ctx = _make_ctx()
+        fn = self._get_proxy_fn(transform, "read")
+
+        with pytest.raises(ToolError) as exc_info:
+            await fn("ha_manage_hacs", {"action": "update_information"}, ctx)
+        body = json.loads(str(exc_info.value))
+        assert body["correct_proxy"] == "ha_call_write_tool"
+        ctx.fastmcp.call_tool.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_read_proxy_reports_an_exempt_tool_missing_from_the_catalog(
+        self, transform: CategorizedSearchTransform
+    ) -> None:
+        """The read-only table alone does not admit a call: the tool must be
+        in the live catalog, or the caller gets not-found rather than a
+        dispatch into FastMCP's unknown-tool error."""
+        ctx = _make_ctx()
+        fn = self._get_proxy_fn(transform, "read")
+
+        with pytest.raises(ToolError) as exc_info:
+            await fn("ha_manage_blueprints", {"action": "list"}, ctx)
+        body = json.loads(str(exc_info.value))
+        error = body["error"]
+        assert error["code"] == "RESOURCE_NOT_FOUND"
+        ctx.fastmcp.call_tool.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_write_proxy_runs_every_action_of_a_manage_tool(
+        self, transform: CategorizedSearchTransform
+    ) -> None:
+        """The write proxy is the manage tool's home category and admits all
+        of it, delete actions included: those are not statically enumerable
+        (ha_manage_radio and ha_manage_updates take a free-form action), so
+        the proxy does not pretend to carve them out."""
+        _prepopulate_cache(
+            transform,
+            [
+                _make_tool("ha_manage_blueprints", destructive=True),
+                _make_tool("ha_get_state", read_only=True),
+            ],
+        )
+        ctx = _make_ctx(call_tool_return={"success": True})
+        fn = self._get_proxy_fn(transform, "write")
+
+        for arguments in (
+            {"action": "list"},
+            {"action": "import", "url": "https://example.invalid/bp.yaml"},
+            {"action": "delete", "path": "user/motion.yaml", "confirm": True},
+        ):
+            assert await fn("ha_manage_blueprints", arguments, ctx) == {"success": True}
+        assert ctx.fastmcp.call_tool.await_count == 3
+
+    @pytest.mark.anyio
+    async def test_delete_proxy_runs_every_action_of_a_manage_tool(
+        self, transform: CategorizedSearchTransform
+    ) -> None:
+        """The delete proxy is the most gated one, so it runs the whole
+        manage tool — reads included — with no per-call check."""
+        _prepopulate_cache(
+            transform,
+            [
+                _make_tool("ha_manage_blueprints", destructive=True),
+                _make_tool("ha_manage_hacs", destructive=True),
+                _make_tool("ha_get_state", read_only=True),
+            ],
+        )
+        ctx = _make_ctx(call_tool_return={"success": True})
+        fn = self._get_proxy_fn(transform, "delete")
+
+        for name, arguments in (
+            ("ha_manage_blueprints", {"action": "list"}),
+            ("ha_manage_blueprints", {"action": "import", "url": "https://x.invalid"}),
+            (
+                "ha_manage_blueprints",
+                {"action": "delete", "path": "x", "confirm": True},
+            ),
+            ("ha_manage_hacs", {"action": "remove", "repository": "a/b"}),
+        ):
+            assert await fn(name, arguments, ctx) == {"success": True}
+        assert ctx.fastmcp.call_tool.await_count == 4
+
+    @pytest.mark.anyio
+    async def test_delete_proxy_refuses_a_plain_write_tool(
+        self, transform: CategorizedSearchTransform
+    ) -> None:
+        """Only manage tools cross categories — an ordinary write tool on
+        the delete proxy is still the wrong category."""
+        ctx = _make_ctx()
+        fn = self._get_proxy_fn(transform, "delete")
+
+        with pytest.raises(ToolError) as exc_info:
+            await fn("ha_config_set_automation", {"config": {}}, ctx)
+        body = json.loads(str(exc_info.value))
+        assert body["correct_proxy"] == "ha_call_write_tool"
         ctx.fastmcp.call_tool.assert_not_called()
 
     @pytest.mark.anyio
