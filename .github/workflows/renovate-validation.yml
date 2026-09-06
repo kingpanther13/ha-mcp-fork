@@ -7,6 +7,8 @@ on:
       - .github/workflows/renovate*.yml
       - tests/haos_image_build/**
       - tests/src/unit/test_renovate_configuration.py
+      - tests/src/unit/test_renovate_vendoring.py
+      - scripts/vendor_websockets.py
       - tests/renovate/**
   workflow_dispatch:
 
@@ -17,7 +19,7 @@ jobs:
   validate:
     name: Validate Renovate configuration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -64,6 +66,17 @@ jobs:
               node /source/tests/renovate/policy.mjs
               node /source/tests/renovate/dashboard-events.mjs
             '
+      - name: Verify vendored updates with the scanner's executor
+        env:
+          ENGINE: ${{ steps.validate.outputs.engine }}
+        # No GitHub credentials. The fixture updates a disposable local repo.
+        # Keep the image entrypoint: it loads the containerbase environment and
+        # initializes tools before Node exercises the dynamic-install executor.
+        run: |
+          docker run --rm -v "$PWD:/source:ro" \
+            -e RENOVATE_TEST_ROOT=/usr/local/renovate \
+            "ghcr.io/renovatebot/renovate:$ENGINE" node \
+            /source/tests/renovate/vendoring.mjs
       - name: Verify promoted Supervisor lookup produces an update
         if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
         # Local-platform lookup has no GitHub writer. Work on a disposable copy
