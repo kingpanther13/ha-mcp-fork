@@ -33,4 +33,4 @@ jobs:
           docker run --rm \
             -v "$PWD/renovate.json:/config/renovate.json:ro" \
             "ghcr.io/renovatebot/renovate:$engine" \
-            renovate-config-validator /config/renovate.json
+            renovate-config-validator --no-global /config/renovate.json

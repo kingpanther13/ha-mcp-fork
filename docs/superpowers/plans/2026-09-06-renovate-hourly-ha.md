@@ -49,7 +49,9 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 - Implemented beta OS resolution, download override, cache key, three-component skip decision, and live OS attestation.
 - Added a credential-free CI workflow to validate configuration with the scanner's pinned Renovate engine. Full Renovate behavior has not been executed locally; production dashboard cleanup still requires the deployed workflow's next scan.
 - Regression evidence: before the image/beta implementation, focused tests reported 11 failures and 3 passes; the missing OS-only-beta behavior was reproduced. After implementation, release-input, workflow-contract, and Renovate-extraction/policy tests passed (23 tests) in proot.
-- Expanded focused run including Supervisor readiness tests passed: 79 tests in 35.82 seconds. Ruff format completed on the eight changed Python files. Full CI and automated review remain pending the draft PR.
+- Expanded focused run including Supervisor readiness tests passed: 79 tests in 35.82 seconds. Ruff format completed on the eight changed Python files.
+- Draft PR: https://github.com/homeassistant-ai/ha-mcp/pull/2379, targeting master. Initial implementation commit: `309eeb85eada12c9112f293fafcb6ff99a100fc1`. All six stable HAOS lanes and container CI started; automated reviews started without extra requests.
+- First CI validator run succeeded, but its log showed explicit filenames default to global validation. Corrected the CI command to `--no-global` so the next run validates repository configuration, matching production discovery. Full E2E/review remains in progress; the live scanner is not deployed yet.
 
 ## Resume state and investigation evidence
 
@@ -216,7 +218,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 - [ ] Self-audit the completed diff against every prompt row and decision-table case. Run `git diff --check` and inspect final branch/status before committing.
 - [ ] Validate Renovate configuration and non-mutating behavior separately from Python workflow tests. Do not invoke the production Renovate writer from an unmerged implementation merely to test it.
-- [ ] Commit scoped changes on `fix/renovate-hourly-ha`, push the fork branch, and open one draft against `homeassistant-ai/ha-mcp:master`. Use the repository PR template and preserve all headings/generated sections.
+- [x] Commit scoped changes on `fix/renovate-hourly-ha`, push the fork branch, and open one draft against `homeassistant-ai/ha-mcp:master`. Use the repository PR template and preserve all headings/generated sections.
 - [ ] Inspect CI on the exact pushed head, including container and stable HAOS lanes. Inspect full automated/human review bodies after every push and fix verified findings within the approved scope. Do not manually request extra reviews or cancel CI.
 - [ ] Validate beta workflow behavior at the PR head through an available scoped GitHub Actions path; beta lanes do not automatically run on pull requests. If that runtime verification cannot be performed before merge, explicitly distinguish unit/contract coverage from unexecuted beta runtime coverage; do not claim all beta E2E passed.
 - [ ] Refresh dashboard/run/PR evidence at handoff. Separate what the draft changes guarantee from what is active on default branch: the new cron and issue trigger are not deployed until this PR is merged.
