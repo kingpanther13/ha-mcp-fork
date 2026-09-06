@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "엔티티당 보관 개수",
     "backup.fields.auto_backup_retain_per_entity.help": "엔티티당 보관하는 최대 스냅숏 수(1~10000)입니다. 오래된 것부터 밀려납니다.",
     "backup.fields.auto_backup_dir.label": "백업 디렉터리 재정의",
-    "backup.fields.auto_backup_dir.help": "기본 디렉터리를 쓰려면 비워 두고, 그렇지 않으면 절대 경로를 입력하세요.",
+    "backup.fields.auto_backup_dir.help": "기본값을 사용하려면 비워 두세요. 앱(애드온)의 경우 /data/ha_mcp_backups가 사용되며, 그 외에는 ha-mcp 데이터 디렉터리 내의 backups/ 하위 디렉터리가 사용됩니다. 이전 기본값에 이미 스냅샷이 있는 설치 건은 계속 해당 경로를 사용합니다. 현재 사용 중인 디렉터리는 백업 상태에 표시됩니다. 또는 절대 경로를 입력할 수도 있습니다.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "캘린더 조회 기간(일)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "편집 전 스냅숏을 위해 캘린더 이벤트를 얼마나 앞까지 조회할지 정합니다. 범위 1~365.",
     "backup.fields.enable_snapshot_delete.label": "스냅숏 삭제 허용",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "다음 조건에 맞는 백업을 모두 삭제할까요? {filters}",
     "backup.bulk.deleted": "백업 {count}개를 삭제했습니다",
     "filesystem.custom.title": "사용자 지정 파일 시스템 경로 (고급)",
-    "filesystem.custom.help": "파일 도구가 <strong>읽고 쓸 수 있는</strong> 추가 경로입니다(줄당 하나씩). 설정 상대 경로(<code>sensor.yaml</code> 같은 정확한 파일 이름 포함) 및 <code>/share</code>, <code>/media</code>, <code>/ssl</code>, <code>/backup</code> 하위 경로가 지원됩니다. 각 항목은 해당 경로 및 그 하위의 모든 항목을 허용합니다. Home Assistant의 설정 → 기기 및 서비스 → HA-MCP Custom Component → HA-MCP File & YAML Tools → 구성에서도 이러한 경로를 관리할 수 있습니다. 두 위치 모두 동일한 설정을 편집하며 즉시 변경 사항이 적용됩니다.",
+    "filesystem.custom.help": "파일 도구가 <strong>읽고 쓸 수 있는</strong> 추가 경로입니다(줄당 하나씩 입력). 정확한 파일 이름(<code>sensor.yaml</code> 등)을 포함한 설정 상대 경로와 <code>/share</code>, <code>/media</code>, <code>/ssl</code>, <code>/backup</code> 하위 경로가 지원됩니다. 각 항목은 해당 경로와 그 하위의 모든 항목을 허용합니다. 항목은 문자 그대로 일치하며 <code>*</code> 같은 와일드카드는 지원되지 않습니다. 홈 아시스턴트의 설정 → 기기 및 서비스 → HA-MCP 사용자 정의 구성 요소 → HA-MCP 파일 및 YAML 도구 → 구성에서도 이 경로들을 관리할 수 있으며, 두 위치 모두 동일한 설정을 편집하고 즉시 변경 사항이 적용됩니다.",
     "filesystem.custom.blocked": "항상 차단됨: {paths}, 경로 탈출(<code>..</code>), 허용된 HAOS 볼륨 밖의 절대 경로.",
     "filesystem.custom.enable_first": "편집하려면 위에서 베타 기능과 파일 시스템 도구를 켜세요.",
     "filesystem.custom.unavailable": "현재 사용자 지정 경로를 사용할 수 없습니다.",
@@ -662,10 +662,6 @@
       "title": "자동화 추적 기록 조회",
       "description": "문제를 진단할 수 있도록 자동화와 스크립트의 실행 추적 기록을 가져옵니다."
     },
-    "ha_get_blueprint": {
-      "title": "블루프린트 조회",
-      "description": "블루프린트 정보를 가져옵니다. 전체 목록을 보거나 특정 블루프린트의 상세 정보를 확인합니다."
-    },
     "ha_get_camera_image": {
       "title": "카메라 이미지 조회",
       "description": "Home Assistant 카메라 엔티티에서 스냅숏 이미지를 가져옵니다."
@@ -726,10 +722,6 @@
       "title": "구역 조회",
       "description": "구역 정보를 가져옵니다. 전체 구역을 나열하거나 특정 구역의 상세 정보를 확인합니다."
     },
-    "ha_import_blueprint": {
-      "title": "블루프린트 가져오기",
-      "description": "URL에서 블루프린트를 가져옵니다."
-    },
     "ha_list_files": {
       "title": "파일 목록",
       "description": "Home Assistant 설정 디렉터리 안의 디렉터리에서 파일을 나열합니다."
@@ -749,6 +741,10 @@
     "ha_manage_backup": {
       "title": "백업 관리",
       "description": "여러 역할을 겸하는 백업 도구입니다. 라우팅 표는 도구 설명을 참고하세요."
+    },
+    "ha_manage_blueprints": {
+      "title": "블루프린트 관리",
+      "description": "홈 아시스턴트 블루프린트를 관리합니다 — 목록 조회, 읽기, 가져오기, 저장, 삭제 또는 독립형 설정 렌더링."
     },
     "ha_manage_custom_tool": {
       "title": "사용자 지정 도구",

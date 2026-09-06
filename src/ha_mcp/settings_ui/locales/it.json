@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Snapshot conservati per entità",
     "backup.fields.auto_backup_retain_per_entity.help": "Numero massimo di snapshot conservati per entità (1–10000). I più vecchi vengono eliminati a rotazione.",
     "backup.fields.auto_backup_dir.label": "Cartella di backup personalizzata",
-    "backup.fields.auto_backup_dir.help": "Lascia vuoto per usare la cartella predefinita; altrimenti inserisci un percorso assoluto.",
+    "backup.fields.auto_backup_dir.help": "Lascia vuoto per il valore predefinito: /data/ha_mcp_backups nell'App (add-on), altrimenti la sottodirectory backups/ della directory dati di ha-mcp; un'installazione che contiene già backup con il precedente valore predefinito continuerà a usarlo. La directory in uso è mostrata nello stato del backup. Oppure inserisci un percorso assoluto.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Anticipo del calendario (giorni)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Con quanto anticipo interrogare gli eventi del calendario per gli snapshot precedenti a una modifica. Intervallo 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Consenti l'eliminazione degli snapshot",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "Eliminare tutti i backup che corrispondono a: {filters}?",
     "backup.bulk.deleted": "Backup eliminati: {count}",
     "filesystem.custom.title": "Percorsi di file system personalizzati (avanzato)",
-    "filesystem.custom.help": "Percorsi aggiuntivi (uno per riga) che gli strumenti per i file possono <strong>leggere e scrivere</strong>. Sono supportati i percorsi relativi alla configurazione, inclusi nomi di file esatti come <code>sensor.yaml</code>, e i percorsi sotto <code>/share</code>, <code>/media</code>, <code>/ssl</code> e <code>/backup</code>. Ogni voce consente l'accesso a quel percorso e a tutto ciò che si trova al di sotto di esso. Puoi anche gestire questi percorsi in Home Assistant in Impostazioni → Dispositivi e servizi → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configura; entrambe le posizioni modificano la stessa impostazione e applicano le modifiche immediatamente.",
+    "filesystem.custom.help": "Percorsi aggiuntivi (uno per riga) che gli strumenti di file possono <strong>leggere e scrivere</strong>. Sono supportati i percorsi relativi alla configurazione, inclusi nomi di file esatti come <code>sensor.yaml</code>, e i percorsi sotto <code>/share</code>, <code>/media</code>, <code>/ssl</code> e <code>/backup</code>. Ogni voce consente l'accesso a quel percorso e a tutto ciò che si trova al di sotto di esso. Le voci vengono abbinate letteralmente; i caratteri jolly come <code>*</code> non sono supportati. Puoi anche gestire questi percorsi in Home Assistant andando su Impostazioni → Dispositivi e servizi → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configura; entrambe le posizioni modificano la stessa impostazione e applicano le modifiche immediatamente.",
     "filesystem.custom.blocked": "Sempre bloccati: {paths}, il path traversal (<code>..</code>) e i percorsi assoluti al di fuori dei volumi HAOS consentiti.",
     "filesystem.custom.enable_first": "Attiva le funzioni beta e gli strumenti per il filesystem qui sopra per poter modificare.",
     "filesystem.custom.unavailable": "I percorsi personalizzati non sono attualmente disponibili.",
@@ -662,10 +662,6 @@
       "title": "Ottieni le tracce delle automazioni",
       "description": "Recupera le tracce di esecuzione di automazioni e script per analizzare i problemi."
     },
-    "ha_get_blueprint": {
-      "title": "Ottieni un blueprint",
-      "description": "Ottiene informazioni sui blueprint: elenca tutti i blueprint o restituisce i dettagli di uno specifico."
-    },
     "ha_get_camera_image": {
       "title": "Ottieni l'immagine di una telecamera",
       "description": "Recupera un'istantanea da un'entità telecamera di Home Assistant."
@@ -726,10 +722,6 @@
       "title": "Ottieni una zona",
       "description": "Ottiene informazioni sulle zone: le elenca tutte o restituisce i dettagli di una specifica."
     },
-    "ha_import_blueprint": {
-      "title": "Importa un blueprint",
-      "description": "Importa un blueprint da un URL."
-    },
     "ha_list_files": {
       "title": "Elenca i file",
       "description": "Elenca i file di una cartella all'interno della cartella di configurazione di Home Assistant."
@@ -749,6 +741,10 @@
     "ha_manage_backup": {
       "title": "Gestisci i backup",
       "description": "Strumento di backup polimorfico. Vedi la descrizione dello strumento per la matrice di instradamento."
+    },
+    "ha_manage_blueprints": {
+      "title": "Gestisci i blueprint",
+      "description": "Gestisci i blueprint di Home Assistant: elenca, leggi, importa, salva, elimina o genera una configurazione indipendente."
     },
     "ha_manage_custom_tool": {
       "title": "Strumento personalizzato",

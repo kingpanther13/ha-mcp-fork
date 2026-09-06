@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Behouden per entiteit",
     "backup.fields.auto_backup_retain_per_entity.help": "Maximaal aantal momentopnamen per entiteit (1–10000). Oudere worden verwijderd.",
     "backup.fields.auto_backup_dir.label": "Backupmap overschrijven",
-    "backup.fields.auto_backup_dir.help": "Laat leeg om de standaardmap te gebruiken; anders voer een absoluut pad in.",
+    "backup.fields.auto_backup_dir.help": "Laat leeg voor de standaard: /data/ha_mcp_backups in de app (add-on), anders de submap backups/ van de ha-mcp-datamap; een installatie die al snapshots bevat onder de eerdere standaard blijft deze gebruiken. De map die in gebruik is, wordt weergegeven in de backupstatus. Of voer een absoluut pad in.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Agenda vooruitblik (dagen)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Hoe ver vooruit agenda-evenementen moeten worden opgevraagd voor momentopnamen vóór bewerking. Bereik 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Momentopname verwijdering toestaan",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "Alle backups verwijderen die overeenkomen met: {filters}?",
     "backup.bulk.deleted": "{count} backup(s) verwijderd",
     "filesystem.custom.title": "Aangepaste bestandssysteempaden (geavanceerd)",
-    "filesystem.custom.help": "Extra paden (één per regel) die bestandstools mogen <strong>lezen en schrijven</strong>. Config-relatieve paden, inclusief exacte bestandsnamen zoals <code>sensor.yaml</code>, en paden onder <code>/share</code>, <code>/media</code>, <code>/ssl</code> en <code>/backup</code> worden ondersteund. Elke invoer geeft toegang tot dat pad en alles daaronder. Je kunt deze paden ook beheren in Home Assistant onder Instellingen → Apparaten en diensten → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configureren; beide locaties bewerken dezelfde instelling en passen wijzigingen direct toe.",
+    "filesystem.custom.help": "Extra paden (één per regel) die bestandstools mogen <strong>lezen en schrijven</strong>. Config-relatieve paden, inclusief exacte bestandsnamen zoals <code>sensor.yaml</code>, en paden onder <code>/share</code>, <code>/media</code>, <code>/ssl</code> en <code>/backup</code> worden ondersteund. Elke invoer staat dat pad en alles daaronder toe. Vermeldingen worden letterlijk gematcht; jokers zoals <code>*</code> worden niet ondersteund. Je kunt deze paden ook beheren in Home Assistant onder Instellingen → Apparaten & Diensten → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configureer; beide locaties bewerken dezelfde instelling en passen wijzigingen direct toe.",
     "filesystem.custom.blocked": "Altijd geblokkeerd: {paths}, padtraversal (<code>..</code>), en absolute paden buiten toegestane HAOS-volumes.",
     "filesystem.custom.enable_first": "Schakel bètafuncties en bestandssysteemtools hierboven in om te bewerken.",
     "filesystem.custom.unavailable": "Aangepaste paden zijn momenteel niet beschikbaar.",
@@ -631,10 +631,6 @@
       "title": "Haal Automatiseringstraceringen op",
       "description": "Haal uitvoeringstraceringen op voor automatiseringen en scripts om problemen op te sporen."
     },
-    "ha_get_blueprint": {
-      "title": "Haal Blueprint op",
-      "description": "Haal blueprintinformatie op - lijst alle blueprints of haal details op voor een specifieke."
-    },
     "ha_get_camera_image": {
       "title": "Haal Camerabeeld op",
       "description": "Haal een momentopname van een afbeelding op van een Home Assistant-camera-entiteit."
@@ -695,10 +691,6 @@
       "title": "Haal Zone op",
       "description": "Haal zone-informatie op - lijst alle zones of haal details op voor een specifieke."
     },
-    "ha_import_blueprint": {
-      "title": "Importeer Blueprint",
-      "description": "Importeer een blueprint van een URL."
-    },
     "ha_list_files": {
       "title": "Lijst Bestanden",
       "description": "Lijst bestanden in een map binnen de Home Assistant-configuratie."
@@ -718,6 +710,10 @@
     "ha_manage_backup": {
       "title": "Back-ups Beheren",
       "description": "Polymorfe back-uptool. Zie de toolbeschrijving voor de routeringsmatrix."
+    },
+    "ha_manage_blueprints": {
+      "title": "Blauwdrukken beheren",
+      "description": "Beheer Home Assistant-blauwdrukken — weergeven, lezen, importeren, opslaan, verwijderen of een losse configuratie renderen."
     },
     "ha_manage_custom_tool": {
       "title": "Aangepaste Tool",

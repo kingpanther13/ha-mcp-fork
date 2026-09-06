@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Conservar por entidad",
     "backup.fields.auto_backup_retain_per_entity.help": "Número máximo de instantáneas conservadas por entidad (1–10000). Las más antiguas se rotan.",
     "backup.fields.auto_backup_dir.label": "Directorio de copias alternativo",
-    "backup.fields.auto_backup_dir.help": "Déjalo vacío para usar el directorio predeterminado; si no, introduce una ruta absoluta.",
+    "backup.fields.auto_backup_dir.help": "Déjalo vacío para usar el valor predeterminado: /data/ha_mcp_backups en la App (complemento), o el subdirectorio backups/ del directorio de datos de ha-mcp en caso contrario; una instalación que ya tenga copias de seguridad bajo el valor predeterminado anterior seguirá utilizándolo. El directorio en uso se muestra en el estado de la copia de seguridad. O introduce una ruta absoluta.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Antelación del calendario (días)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Con cuánta antelación se consultan los eventos de calendario para las instantáneas previas a la edición. Rango 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Permitir la eliminación de instantáneas",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "¿Eliminar todas las copias de seguridad que coinciden con: {filters}?",
     "backup.bulk.deleted": "Se han eliminado {count} copia(s) de seguridad",
     "filesystem.custom.title": "Rutas de sistema de archivos personalizadas (avanzado)",
-    "filesystem.custom.help": "Rutas adicionales (una por línea) que las herramientas de archivos pueden <strong>leer y escribir</strong>. Se admiten rutas relativas a la configuración, incluidos nombres de archivo exactos como <code>sensor.yaml</code>, y rutas bajo <code>/share</code>, <code>/media</code>, <code>/ssl</code> y <code>/backup</code>. Cada entrada permite esa ruta y todo lo que esté debajo de ella. También puedes administrar estas rutas en Home Assistant en Ajustes → Dispositivos y servicios → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configurar; ambas ubicaciones editan la misma configuración y aplican los cambios de inmediato.",
+    "filesystem.custom.help": "Rutas adicionales (una por línea) que las herramientas de archivos pueden <strong>leer y escribir</strong>. Se admiten rutas relativas a la configuración, incluidos nombres de archivo exactos como <code>sensor.yaml</code>, y rutas bajo <code>/share</code>, <code>/media</code>, <code>/ssl</code> y <code>/backup</code>. Cada entrada permite acceder a esa ruta y a todo lo que contenga. Las entradas se evalúan literalmente; no se admiten comodines como <code>*</code>. También puedes gestionar estas rutas en Home Assistant en Ajustes → Dispositivos y servicios → HA-MCP Custom Component → HA-MCP File & YAML Tools → Configurar; ambas ubicaciones modifican la misma configuración y aplican los cambios de inmediato.",
     "filesystem.custom.blocked": "Siempre bloqueados: {paths}, el recorrido de rutas (<code>..</code>) y las rutas absolutas fuera de los volúmenes de HAOS permitidos.",
     "filesystem.custom.enable_first": "Activa arriba las funciones beta y las herramientas de sistema de archivos para poder editar.",
     "filesystem.custom.unavailable": "Las rutas personalizadas no están disponibles actualmente.",
@@ -662,10 +662,6 @@
       "title": "Obtener trazas de automatización",
       "description": "Consulta las trazas de ejecución de automatizaciones y scripts para depurar problemas."
     },
-    "ha_get_blueprint": {
-      "title": "Obtener plano",
-      "description": "Muestra todos los planos o los detalles de uno concreto."
-    },
     "ha_get_camera_image": {
       "title": "Obtener imagen de cámara",
       "description": "Captura una imagen de una entidad de cámara de Home Assistant."
@@ -726,10 +722,6 @@
       "title": "Obtener zona",
       "description": "Lista todas las zonas u obtiene los detalles de una concreta."
     },
-    "ha_import_blueprint": {
-      "title": "Importar plano",
-      "description": "Importa un plano desde una URL."
-    },
     "ha_list_files": {
       "title": "Listar archivos",
       "description": "Lista los archivos de un directorio dentro del directorio de configuración de Home Assistant."
@@ -749,6 +741,10 @@
     "ha_manage_backup": {
       "title": "Gestionar copias de seguridad",
       "description": "Herramienta polimórfica de copias de seguridad. Consulta su descripción para ver la matriz de enrutado."
+    },
+    "ha_manage_blueprints": {
+      "title": "Gestionar Blueprints",
+      "description": "Gestiona los blueprints de Home Assistant: lista, lee, importa, guarda, elimina o renderiza una configuración independiente."
     },
     "ha_manage_custom_tool": {
       "title": "Herramienta personalizada",

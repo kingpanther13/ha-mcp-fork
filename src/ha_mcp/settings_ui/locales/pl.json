@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Zachowaj na encję",
     "backup.fields.auto_backup_retain_per_entity.help": "Maksymalna liczba migawek przechowywanych na encję (1–10000). Starsze są usuwane.",
     "backup.fields.auto_backup_dir.label": "Nadpisanie katalogu kopii zapasowych",
-    "backup.fields.auto_backup_dir.help": "Pozostaw puste, aby użyć domyślnego katalogu; w przeciwnym razie wprowadź ścieżkę absolutną.",
+    "backup.fields.auto_backup_dir.help": "Pozostaw puste, aby użyć domyślnej ścieżki: /data/ha_mcp_backups w aplikacji (dodatku), w przeciwnym razie podkatalogu backups/ katalogu danych ha-mcp; instalacja, która przechowuje już kopie zapasowe w ramach wcześniejszego domyślnego katalogu, nadal z niego korzysta. Używany katalog jest widoczny w stanie kopii zapasowej. Możesz też wpisać ścieżkę bezwzględną.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Przewidywanie kalendarza (dni)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Jak daleko w przyszłość wysyłać zapytania o zdarzenia kalendarza dla migawek przed edycją. Zakres 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Zezwól na usuwanie migawek",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "Usunąć wszystkie kopie zapasowe pasujące do: {filters}?",
     "backup.bulk.deleted": "Usunięto {count} kopii zapasowych",
     "filesystem.custom.title": "Niestandardowe ścieżki systemu plików (zaawansowane)",
-    "filesystem.custom.help": "Dodatkowe ścieżki (po jednej w linii), do których narzędzia plików mogą <strong>mieć dostęp do odczytu i zapisu</strong>. Obsługiwane są ścieżki względne konfiguracji, w tym dokładne nazwy plików, takie jak <code>sensor.yaml</code>, oraz ścieżki w katalogach <code>/share</code>, <code>/media</code>, <code>/ssl</code> i <code>/backup</code>. Każdy wpis zezwala na dostęp do tej ścieżki oraz wszystkiego, co się w niej znajduje. Możesz również zarządzać tymi ścieżkami w Home Assistant w sekcji Ustawienia → Urządzenia i usługi → HA-MCP Custom Component → HA-MCP File & YAML Tools → Konfiguruj; obie lokalizacje edytują to samo ustawienie i wprowadzają zmiany natychmiast.",
+    "filesystem.custom.help": "Dodatkowe ścieżki (po jednej w linii), które narzędzia plikowe mogą <strong>odczytywać i zapisywać</strong>. Obsługiwane są ścieżki względne względem konfiguracji, w tym dokładne nazwy plików, takie jak <code>sensor.yaml</code>, oraz ścieżki w katalogach <code>/share</code>, <code>/media</code>, <code>/ssl</code> i <code>/backup</code>. Każdy wpis zezwala na dostęp do tej ścieżki oraz wszystkiego, co się w niej znajduje. Wpisy są dopasowywane dosłownie; znaki wieloznaczne, takie jak <code>*</code>, nie są obsługiwane. Możesz również zarządzać tymi ścieżkami w Home Assistant w sekcji Ustawienia → Urządzenia i usługi → HA-MCP Custom Component → HA-MCP File & YAML Tools → Konfiguruj; obie lokalizacje edytują to samo ustawienie i natychmiast wprowadzają zmiany.",
     "filesystem.custom.blocked": "Zawsze blokowane: {paths}, przechodzenie po ścieżkach (<code>..</code>) oraz ścieżki bezwzględne poza dozwolonymi woluminami HAOS.",
     "filesystem.custom.enable_first": "Włącz funkcje beta i narzędzia systemu plików powyżej, aby edytować.",
     "filesystem.custom.unavailable": "Niestandardowe ścieżki są obecnie niedostępne.",
@@ -631,10 +631,6 @@
       "title": "Pobierz ślady automatyzacji",
       "description": "Pobierz ślady wykonania dla automatyzacji i skryptów w celu debugowania problemów."
     },
-    "ha_get_blueprint": {
-      "title": "Pobierz schemat",
-      "description": "Pobierz informacje o schemacie - wyświetl wszystkie schematy lub pobierz szczegóły dla konkretnego."
-    },
     "ha_get_camera_image": {
       "title": "Pobierz obraz z kamery",
       "description": "Pobierz obraz migawki z encji kamery Home Assistant."
@@ -695,10 +691,6 @@
       "title": "Pobierz strefę",
       "description": "Pobierz informacje o strefie - wyświetl wszystkie strefy lub pobierz szczegóły dla konkretnej."
     },
-    "ha_import_blueprint": {
-      "title": "Importuj schemat",
-      "description": "Importuj schemat z adresu URL."
-    },
     "ha_list_files": {
       "title": "Wyświetl pliki",
       "description": "Wyświetl pliki w katalogu w konfiguracji Home Assistant."
@@ -718,6 +710,10 @@
     "ha_manage_backup": {
       "title": "Zarządzaj kopiami zapasowymi",
       "description": "Polimorficzne narzędzie do tworzenia kopii zapasowych. Zobacz opis narzędzia, aby uzyskać matrycę routingu."
+    },
+    "ha_manage_blueprints": {
+      "title": "Zarządzaj szablonami",
+      "description": "Zarządzaj szablonami Home Assistant — wyświetlaj listę, czytaj, importuj, zapisuj, usuwaj lub renderuj niezależną konfigurację."
     },
     "ha_manage_custom_tool": {
       "title": "Niestandardowe narzędzie",

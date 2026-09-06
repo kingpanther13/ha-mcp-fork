@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Konservi po ento",
     "backup.fields.auto_backup_retain_per_entity.help": "Maksimumaj momentfotoj konservitaj po ento (1–10000). Pli malnovaj elrotacias.",
     "backup.fields.auto_backup_dir.label": "Anstataŭa sekurkopia dosierujo",
-    "backup.fields.auto_backup_dir.help": "Lasu malplena por uzi la defaŭltan dosierujon; alie enigu absolutan vojon.",
+    "backup.fields.auto_backup_dir.help": "Lasu malplena por la defaŭlto: /data/ha_mcp_backups en la aplikaĵo (aldonaĵo), alie la subdosierujo backups/ de la ha-mcp datendosierujo; instalado, kiu jam konservas momentfotojn sub la pli frua defaŭlto, plu uzas ĝin. La uzata dosierujo estas montrata en la sekurkopia statuso. Aŭ enmetu absolutan vojon.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Kalendara antaŭvido (tagoj)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Kiom antaŭen demandi kalendarajn eventojn por antaŭ-redaktaj momentfotoj. Intervalo 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Permesi forigon de momentfotoj",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "Forigi ĉiujn sekurkopiojn kongruantajn: {filters}?",
     "backup.bulk.deleted": "Forigitaj {count} sekurkopio(j)n",
     "filesystem.custom.title": "Propraj dosiersistemaj vojoj (disvolvita)",
-    "filesystem.custom.help": "Ekstraj vojoj (unu po linio) kiujn dosieraj iloj rajtas <strong>legi kaj skribi</strong>. Agord-rilataj vojoj, inkluzive de ekzaktaj dosiernomoj kiel <code>sensor.yaml</code>, kaj vojoj sub <code>/share</code>, <code>/media</code>, <code>/ssl</code>, kaj <code>/backup</code> estas subtenataj. Ĉiu eniro permesas tiun vojon kaj ĉion sub ĝi. Vi ankaŭ povas administri ĉi tiujn vojojn en Home Assistant sub Agordoj → Aparatoj kaj Servoj → HA-MCP Custom Component → HA-MCP File & YAML Tools → Agordi; ambaŭ lokoj redaktas la saman agordon kaj tuj aplikas ŝanĝojn.",
+    "filesystem.custom.help": "Kromaj vojoj (unu po linio), kiujn dosieraj iloj rajtas <strong>legi kaj skribi</strong>. Agord-rilataj vojoj, inkluzive de ekzaktaj dosiernomoj kiel <code>sensor.yaml</code>, kaj vojoj sub <code>/share</code>, <code>/media</code>, <code>/ssl</code>, kaj <code>/backup</code> estas subtenataj. Ĉiu eniro permesas tiun vojon kaj ĉion sub ĝi. Eniroj estas komparataj laŭvorte; ĵokeroj kiel <code>*</code> ne estas subtenataj. Vi ankaŭ povas administri ĉi tiujn vojojn en Home Assistant sub Agordoj → Aparatoj kaj Servoj → HA-MCP Custom Component → HA-MCP File & YAML Tools → Agordi; ambaŭ lokoj redaktas la saman agordon kaj tuj aplikas ŝanĝojn.",
     "filesystem.custom.blocked": "Ĉiam blokita: {paths}, trairo de vojo (<code>..</code>), kaj absolutaj vojoj ekster permesitaj HAOS-volumoj.",
     "filesystem.custom.enable_first": "Ebligu beta-funkciojn kaj dosiersistemajn ilojn supre por redakti.",
     "filesystem.custom.unavailable": "Propraj vojoj nuntempe ne disponeblas.",
@@ -631,10 +631,6 @@
       "title": "Akiri Aŭtomatigajn Spurojn",
       "description": "Reakiru ekzekutajn spurojn por aŭtomatigoj kaj skriptoj por sencimigi problemojn."
     },
-    "ha_get_blueprint": {
-      "title": "Akiri Skizon",
-      "description": "Akiru skizan informon - listigu ĉiujn skizojn aŭ akiru detalojn por specifa."
-    },
     "ha_get_camera_image": {
       "title": "Akiri Kameran Bildon",
       "description": "Reakiru momentfoton de bildo de kameraa ento de Home Assistant."
@@ -695,10 +691,6 @@
       "title": "Akiri Zonon",
       "description": "Akiru zonan informon - listigu ĉiujn zonojn aŭ akiru detalojn por specifa."
     },
-    "ha_import_blueprint": {
-      "title": "Importi Skizon",
-      "description": "Importu skizon el URL."
-    },
     "ha_list_files": {
       "title": "Listigi Dosierojn",
       "description": "Listigu dosierojn en dosierujo ene de la agordo de Home Assistant."
@@ -718,6 +710,10 @@
     "ha_manage_backup": {
       "title": "Administri Rezervojn",
       "description": "Polimorfa rezerva ilo. Vidu la ilopriskribon por la vojiga matrico."
+    },
+    "ha_manage_blueprints": {
+      "title": "Administri Skizojn",
+      "description": "Administri Home Assistant skizojn — listigi, legi, importi, konservi, forigi, aŭ vidigi sendependan agordon."
     },
     "ha_manage_custom_tool": {
       "title": "Propra Ilo",

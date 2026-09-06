@@ -251,7 +251,7 @@
     "backup.fields.auto_backup_retain_per_entity.label": "Behåll per entitet",
     "backup.fields.auto_backup_retain_per_entity.help": "Maximalt antal ögonblicksbilder som behålls per entitet (1–10000). Äldre roteras ut.",
     "backup.fields.auto_backup_dir.label": "Åsidosätt säkerhetskopieringskatalog",
-    "backup.fields.auto_backup_dir.help": "Lämna tom för att använda standardkatalogen; annars ange en absolut sökväg.",
+    "backup.fields.auto_backup_dir.help": "Lämna tom för standardvärdet: /data/ha_mcp_backups i tillägget (add-on), annars underkatalogen backups/ i ha-mcp:s datakatalog; eninstallation som redan sparar säkerhetskopior under det tidigare standardvärdet fortsätter att använda det. Katalogen som används visas i statusen för säkerhetskopiering. Eller ange en absolut sökväg.",
     "backup.fields.auto_backup_calendar_lookahead_days.label": "Kalenderframåtblick (dagar)",
     "backup.fields.auto_backup_calendar_lookahead_days.help": "Hur långt framåt kalenderhändelser ska efterfrågas för ögonblicksbilder före redigering. Område 1–365.",
     "backup.fields.enable_snapshot_delete.label": "Tillåt borttagning av ögonblicksbilder",
@@ -288,7 +288,7 @@
     "backup.bulk.confirm": "Ta bort alla säkerhetskopior som matchar: {filters}?",
     "backup.bulk.deleted": "Tog bort {count} säkerhetskopia(or)",
     "filesystem.custom.title": "Anpassade filsystemssökvägar (avancerat)",
-    "filesystem.custom.help": "Extra sökvägar (en per rad) som filverktyg får <strong>läsa och skriva till</strong>. Konfigurationsrelaterade sökvägar, inklusive exakta filnamn som <code>sensor.yaml</code>, samt sökvägar under <code>/share</code>, <code>/media</code>, <code>/ssl</code> och <code>/backup</code> stöds. Varje post tillåter den sökvägen och allt under den. Du kan också hantera dessa sökvägar i Home Assistant under Inställningar → Enheter och tjänster → HA-MCP Custom Component → HA-MCP File & YAML Tools → Konfigurera; båda platserna redigerar samma inställning och tillämpar ändringar omedelbart.",
+    "filesystem.custom.help": "Extra sökvägar (en per rad) som filverktyg kan <strong>läsa och skriva</strong> till. Konfigurationsrelaterade sökvägar, inklusive exakta filnamn som <code>sensor.yaml</code>, samt sökvägar under <code>/share</code>, <code>/media</code>, <code>/ssl</code> och <code>/backup</code> stöds. Varje post tillåter den sökvägen och allt under den. Posterna matchas bokstavligen; jokertecken som <code>*</code> stöds inte. Du kan också hantera dessa sökvägar i Home Assistant under Inställningar → Enheter och tjänster → HA-MCP Custom Component → HA-MCP File & YAML Tools → Konfigurera; båda platserna redigerar samma inställning och tillämpar ändringar omedelbart.",
     "filesystem.custom.blocked": "Alltid blockerad: {paths}, sökvägsgenomgång (<code>..</code>), och absoluta sökvägar utanför tillåtna HAOS-volymer.",
     "filesystem.custom.enable_first": "Aktivera beta-funktioner och filsystemverktyg ovan för att redigera.",
     "filesystem.custom.unavailable": "Anpassade sökvägar är för närvarande inte tillgängliga.",
@@ -631,10 +631,6 @@
       "title": "Hämta Automatiseringsspårningar",
       "description": "Hämta exekveringsspårningar för automatiseringar och skript för att felsöka problem."
     },
-    "ha_get_blueprint": {
-      "title": "Hämta Blueprint",
-      "description": "Hämta blueprint-information - lista alla blueprints eller hämta detaljer för en specifik."
-    },
     "ha_get_camera_image": {
       "title": "Hämta Kamerabild",
       "description": "Hämta en ögonblicksbild från en Home Assistant-kameraentitet."
@@ -695,10 +691,6 @@
       "title": "Hämta Zon",
       "description": "Hämta zoninformation - lista alla zoner eller hämta detaljer för en specifik."
     },
-    "ha_import_blueprint": {
-      "title": "Importera Blueprint",
-      "description": "Importera en blueprint från en URL."
-    },
     "ha_list_files": {
       "title": "Lista Filer",
       "description": "Lista filer i en katalog inom Home Assistant-konfigurationen."
@@ -718,6 +710,10 @@
     "ha_manage_backup": {
       "title": "Hantera säkerhetskopior",
       "description": "Polymorft säkerhetskopieringsverktyg. Se verktygsbeskrivningen för routingmatrisen."
+    },
+    "ha_manage_blueprints": {
+      "title": "Hantera blåkopior",
+      "description": "Hantera Home Assistant-blåkopior — lista, läs, importera, spara, ta bort eller rendera en fristående konfiguration."
     },
     "ha_manage_custom_tool": {
       "title": "Anpassat verktyg",
