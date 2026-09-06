@@ -21,6 +21,7 @@
 - Preserve environment overrides and Supervisor self-update behavior; a tracked Supervisor minimum is not a freeze or downgrade requirement.
 - Preserve existing beta triggers, lane topology, sole cache writer, manual forced runs, and PR coverage boundaries unless a scoped correctness fix requires a change.
 - Use the existing isolated worktree and preserve unrelated work. Open a draft PR only; no merge, ready transition, releases, or branch deletion is authorized.
+- Before every further push, wait for the current head’s fast CI lanes to finish (Fast Checks, Unit Tests, CodeQL, Renovate validation, site, version/changes gates, and Docker/app validation). E2E/performance runs are not the push gate. Wait for the first bot review and bundle verified fixes into the next push. Do not cancel CI.
 - Local execution is limited to CodeQL, mypy, Ruff format, and lightweight unit tests in proot, as explicitly authorized on 2026-09-06. All heavier tests/builds/E2E run in GitHub CI. Do not describe unrun tests as passing.
 
 ## Prompt-by-prompt scope audit
@@ -51,7 +52,8 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 - Regression evidence: before the image/beta implementation, focused tests reported 11 failures and 3 passes; the missing OS-only-beta behavior was reproduced. After implementation, release-input, workflow-contract, and Renovate-extraction/policy tests passed (23 tests) in proot.
 - Expanded focused run including Supervisor readiness tests passed: 79 tests in 35.82 seconds. Ruff format completed on the eight changed Python files.
 - Draft PR: https://github.com/homeassistant-ai/ha-mcp/pull/2379, targeting master. Initial implementation commit: `309eeb85eada12c9112f293fafcb6ff99a100fc1`. All six stable HAOS lanes and container CI started; automated reviews started without extra requests.
-- First CI validator run succeeded, but its log showed explicit filenames default to global validation. Corrected the CI command to `--no-global` so the next run validates repository configuration, matching production discovery. Full E2E/review remains in progress; the live scanner is not deployed yet.
+- First CI validator run succeeded, but its log showed explicit filenames default to global validation. Corrected to `--no-global`; repository-mode validation then passed at `8d81fe0c`. All fast CI lanes at that head subsequently passed.
+- First Codex review identified missing behavioral coverage for the policy and dashboard guard. The next bundled push adds fixtures using the pinned Renovate package’s actual rule/schedule/age/limit functions, GitHub’s expression evaluator for nine event cases, and a credential-free Supervisor datasource lookup. These new CI fixtures are not locally executed under the user’s execution limits. Full E2E/review remains in progress; the live scanner is not deployed yet.
 
 ## Resume state and investigation evidence
 
@@ -77,7 +79,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 - [x] Inspect actual workflow, dashboard, previous run logs, stable/beta metadata, historical Supervisor behavior, and Dependabot ownership.
 - [x] Refresh the exact master head, dashboard body and open dependency PRs before final implementation so any new runs or human changes are preserved.
-- [ ] Finish the existing hourly trigger draft and retain workflow dispatch:
+- [x] Finish the existing hourly trigger draft and retain workflow dispatch:
 
   ```yaml
   schedule:
@@ -86,8 +88,8 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
     types: [edited]
   ```
 
-- [ ] Gate issue-triggered jobs to edits of the real Renovate dashboard authored by `ha-mcp-renovate[bot]`, a non-bot sender, a changed body, and a checked request. Exclude unrelated issue edits and Renovate's own edits. Keep event data out of shell interpolation.
-- [ ] Serialize Renovate writers with job-level `concurrency` and `cancel-in-progress: false`; preserve the existing app-token permission boundary.
+- [x] Gate issue-triggered jobs to edits of the real Renovate dashboard authored by `ha-mcp-renovate[bot]`, a non-bot sender, a changed body, and a checked request. Exclude unrelated issue edits and Renovate's own edits. Keep event data out of shell interpolation.
+- [x] Serialize Renovate writers with job-level `concurrency` and `cancel-in-progress: false`; preserve the existing app-token permission boundary.
 - [ ] Remove `configurationFile: renovate.json` from the action input and let normal repository discovery load it once. Verify custom manager extraction and dashboard entries are no longer duplicated in a non-mutating Renovate run.
 - [ ] Add regression coverage for hourly cadence, preserved dispatch, issue guard, and single configuration loading. A representative contract assertion is:
 
@@ -99,7 +101,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   ```
 
 - [ ] Record expected event cases: human checked dashboard edit runs; bot edit does not; unrelated issue edit does not; unchecked edit does not; manual dispatch runs. Verify guards beyond simple string presence through event-expression evaluation where available.
-- [ ] Document scan cadence versus PR policy and explain why checked requests previously waited for the next scheduled scan.
+- [x] Document scan cadence versus PR policy and explain why checked requests previously waited for the next scheduled scan.
 
 ## Task 2: Prove the HA exception and ordinary-dependency protections
 
@@ -107,8 +109,8 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 **Interface:** Exact dependency names select the immediate-release policy; other packages retain inherited ordinary policy. Manual dashboard instructions remain Renovate-native overrides.
 
-- [ ] Keep global `minimumReleaseAge: "7 days"`, `minimumReleaseAgeBehaviour: "timestamp-optional"`, UTC Tuesday schedule, and existing vulnerability exception. Set `updateNotScheduled: false` so hourly scans do not churn ordinary PR branches outside their window.
-- [ ] Finish the immediate rule, restricted to precisely these dependencies:
+- [x] Keep global `minimumReleaseAge: "7 days"`, `minimumReleaseAgeBehaviour: "timestamp-optional"`, UTC Tuesday schedule, and existing vulnerability exception. Set `updateNotScheduled: false` so hourly scans do not churn ordinary PR branches outside their window.
+- [x] Finish the immediate rule, restricted to precisely these dependencies:
 
   ```json
   {
@@ -125,7 +127,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   }
   ```
 
-- [ ] Confirm inherited branch/PR caps cannot delay those HA updates and later package rules do not override this exception. Keep stable selection free of prereleases.
+- [x] Confirm inherited branch/PR caps cannot delay those HA updates and later package rules do not override this exception. Keep stable selection free of prereleases.
 - [ ] Validate against the pinned Renovate engine/schema and use a non-mutating dry run or equivalent controlled fixture to exercise the following decision table. Configuration shape alone is not proof of scheduling behavior.
 
   | Case | Expected result |
@@ -137,7 +139,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   | Explicit checked dashboard request outside normal gates | Renovate processes the requested override |
   | Hourly scan or manual workflow dispatch without checked overrides | No blanket schedule/age bypass |
 
-- [ ] Verify the checked create-all-awaiting-schedule and individual approval/rebase request paths against Renovate 44.50.1. Do not delete checked requests, disable dashboard approvals, or add a global forced schedule override.
+- [x] Verify the checked create-all-awaiting-schedule and individual approval/rebase request paths against Renovate 44.50.1. Do not delete checked requests, disable dashboard approvals, or add a global forced schedule override.
 
 ## Task 3: Track stable image inputs and catch up Core
 
@@ -145,7 +147,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 **Interface:** Renovate updates concrete stable literals used by actual builds. Existing `HAOS_BUILD_*` environment variables override those defaults. Changes to the builder invalidate the existing stable image cache key.
 
-- [ ] Add a stable-channel Supervisor datasource using authoritative promotion metadata, not an inference from the latest GitHub release:
+- [x] Add a stable-channel Supervisor datasource using authoritative promotion metadata, not an inference from the latest GitHub release:
 
   ```json
   "ha-supervisor-stable": {
@@ -157,8 +159,8 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   }
   ```
 
-- [ ] Use Supervisor calendar versioning `regex:^(?<major>\\d{4})\\.(?<minor>\\d{1,2})\\.(?<patch>\\d+)$` so zero-padded monthly versions compare correctly.
-- [ ] Add real builder defaults, with refreshed stable versions at implementation time:
+- [x] Use Supervisor calendar versioning `regex:^(?<major>\\d{4})\\.(?<minor>\\d{1,2})\\.(?<patch>\\d+)$` so zero-padded monthly versions compare correctly.
+- [x] Add real builder defaults, with refreshed stable versions at implementation time:
 
   ```python
   # renovate: datasource=github-releases depName=home-assistant/operating-system
@@ -176,12 +178,12 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   CORE_VERSION = os.environ.get("HAOS_BUILD_CORE_VERSION", STABLE_CORE_VERSION)
   ```
 
-- [ ] Define `HAOS_VERSION` before constructing its download URL. Ensure existing Supervisor/Core configuration functions consume the defaults, and make their beta-specific log messages generic where now used by stable builds. Preserve newer Supervisor versions rather than forcing a downgrade.
-- [ ] Align the four existing Core image pins and the new HAOS Core pin to current stable (2026.9.1 at investigation). Do not alter unrelated frozen-version test fixtures merely because their example contains 2026.9.0.
+- [x] Define `HAOS_VERSION` before constructing its download URL. Ensure existing Supervisor/Core configuration functions consume the defaults, and make their beta-specific log messages generic where now used by stable builds. Preserve newer Supervisor versions rather than forcing a downgrade.
+- [x] Align the four existing Core image pins and the new HAOS Core pin to current stable (2026.9.1 at investigation). Do not alter unrelated frozen-version test fixtures merely because their example contains 2026.9.0.
 - [ ] Verify regex managers extract every intended pin exactly once; verify datasource transformation emits only the promoted stable Supervisor; verify beta/dev Supervisor versions are excluded from stable PR selection.
-- [ ] Confirm stable cache invalidation and all stable HAOS consumers rebuild/restore images keyed on the changed builder inputs. Do not introduce a marker pin that is unused by the running build.
-- [ ] Cover no-override stable defaults and explicit beta overrides in builder tests; assert the OS override is reflected in the actual download URL and the existing build workflow can still read `HAOS_VERSION`.
-- [ ] Update the image-builder README to describe all stable pins, environment overrides, cache invalidation, and the distinction between a Supervisor minimum and automatic channel self-updates.
+- [x] Confirm stable cache invalidation and all stable HAOS consumers rebuild/restore images keyed on the changed builder inputs. Do not introduce a marker pin that is unused by the running build.
+- [x] Cover no-override stable defaults and explicit beta overrides in builder tests; assert the OS override is reflected in the actual download URL and the existing build workflow can still read `HAOS_VERSION`.
+- [x] Update the image-builder README to describe all stable pins, environment overrides, cache invalidation, and the distinction between a Supervisor minimum and automatic channel self-updates.
 
 ## Task 4: Complete beta OS coverage without disturbing the Renovate fix
 
@@ -189,16 +191,16 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 **Interface:** Each beta resolver emits `os_version`, `supervisor_version`, and `core_version`. Build uses `HAOS_BUILD_OS_VERSION`; live attestation uses `HAOS_EXPECTED_OS_VERSION`.
 
-- [ ] Extend both lane resolvers to read `metadata["hassos"]["ova"]`, validate stable and prerelease OS formats with `^[0-9]+\.[0-9]+([.]rc[0-9]+)?$`, and output `os_version` alongside the existing two outputs. Missing, malformed, or failed metadata must fail visibly rather than falsely skip coverage.
-- [ ] Extend the initial stable-versus-beta comparison to compare all three versions. Only when OS, Supervisor, and Core all match may automatic beta runs be skipped; manual dispatch still runs.
-- [ ] Include OS in the identical cache key used by both lanes:
+- [x] Extend both lane resolvers to read `metadata["hassos"]["ova"]`, validate stable and prerelease OS formats with `^[0-9]+\.[0-9]+([.]rc[0-9]+)?$`, and output `os_version` alongside the existing two outputs. Missing, malformed, or failed metadata must fail visibly rather than falsely skip coverage.
+- [x] Extend the initial stable-versus-beta comparison to compare all three versions. Only when OS, Supervisor, and Core all match may automatic beta runs be skipped; manual dispatch still runs.
+- [x] Include OS in the identical cache key used by both lanes:
 
   ```text
   haos-beta-image-${{ steps.versions.outputs.os_version }}-${{ steps.versions.outputs.supervisor_version }}-${{ steps.versions.outputs.core_version }}-$hash
   ```
 
-- [ ] Add `HAOS_BUILD_OS_VERSION: ${{ steps.versions.outputs.os_version }}` to both builds and preserve the existing beta Supervisor channel/minimum and exact Core overrides. Validate OS values before they become URL/path components.
-- [ ] Add `HAOS_EXPECTED_OS_VERSION` to both test environments and to beta-attestation marker setup. Extend `test_beta_image_versions_match_manifest` to query the running VM through the existing Supervisor WebSocket proxy:
+- [x] Add `HAOS_BUILD_OS_VERSION: ${{ steps.versions.outputs.os_version }}` to both builds and preserve the existing beta Supervisor channel/minimum and exact Core overrides. Validate OS values before they become URL/path components.
+- [x] Add `HAOS_EXPECTED_OS_VERSION` to both test environments and to beta-attestation marker setup. Extend `test_beta_image_versions_match_manifest` to query the running VM through the existing Supervisor WebSocket proxy:
 
   ```python
   response = await ha_client.send_websocket_message(
@@ -208,15 +210,15 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   assert response["result"]["version"] == os.environ["HAOS_EXPECTED_OS_VERSION"]
   ```
 
-- [ ] Update existing workflow-contract tests for the third output, six individually checked channel reads, OS-aware cache key, new build environment, and expected OS version. Preserve the in-app lane as sole cache writer.
-- [ ] Add behavioral comparison fixtures: all equal → skip; OS-only `18.2.rc1` difference → run; Supervisor-only difference → run; Core-only difference → run; missing/invalid OS → fail. Use mocked metadata, not live release values, so the regression tests remain stable.
-- [ ] Confirm the OS currently being identical across channels does not hide the new path: CI must cover an OS-only beta fixture even if real metadata has no OS beta today.
+- [x] Update existing workflow-contract tests for the third output, six individually checked channel reads, OS-aware cache key, new build environment, and expected OS version. Preserve the in-app lane as sole cache writer.
+- [x] Add behavioral comparison fixtures: all equal → skip; OS-only `18.2.rc1` difference → run; Supervisor-only difference → run; Core-only difference → run; missing/invalid OS → fail. Use mocked metadata, not live release values, so the regression tests remain stable.
+- [x] Confirm the OS currently being identical across channels does not hide the new path: CI must cover an OS-only beta fixture even if real metadata has no OS beta today.
 
 ## Task 5: Verification, draft PR, and honest handoff
 
 **Files:** Relevant changed files above, this plan, and `.github/pull_request_template.md` as the read-only PR-body template.
 
-- [ ] Self-audit the completed diff against every prompt row and decision-table case. Run `git diff --check` and inspect final branch/status before committing.
+- [x] Self-audit the completed diff against every prompt row and decision-table case. Run `git diff --check` and inspect final branch/status before committing.
 - [ ] Validate Renovate configuration and non-mutating behavior separately from Python workflow tests. Do not invoke the production Renovate writer from an unmerged implementation merely to test it.
 - [x] Commit scoped changes on `fix/renovate-hourly-ha`, push the fork branch, and open one draft against `homeassistant-ai/ha-mcp:master`. Use the repository PR template and preserve all headings/generated sections.
 - [ ] Inspect CI on the exact pushed head, including container and stable HAOS lanes. Inspect full automated/human review bodies after every push and fix verified findings within the approved scope. Do not manually request extra reviews or cancel CI.

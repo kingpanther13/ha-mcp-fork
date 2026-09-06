@@ -7,6 +7,7 @@ on:
       - .github/workflows/renovate*.yml
       - tests/haos_image_build/**
       - tests/src/unit/test_renovate_configuration.py
+      - tests/renovate/**
   workflow_dispatch:
 
 permissions:
@@ -22,6 +23,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate with the same engine used by the scanner
+        id: validate
         # No credentials are passed to the container; validation cannot write
         # dependency PRs or process the live dashboard's checked requests.
         run: |
@@ -30,7 +32,70 @@ jobs:
             echo "::error::Missing or invalid Renovate engine pin"
             exit 1
           fi
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
           docker run --rm \
             -v "$PWD/renovate.json:/config/renovate.json:ro" \
             "ghcr.io/renovatebot/renovate:$engine" \
             renovate-config-validator --no-global /config/renovate.json
+      - name: Exercise release policy and dashboard event decisions
+        env:
+          ENGINE: ${{ steps.validate.outputs.engine }}
+        run: |
+          docker run --rm -v "$PWD:/source:ro" \
+            --entrypoint bash "ghcr.io/renovatebot/renovate:$ENGINE" -c '
+              set -euo pipefail
+              RENOVATE_TEST_ROOT=$(dirname "$(dirname "$(readlink -f "$(command -v renovate)")")")
+              export RENOVATE_TEST_ROOT
+              node /source/tests/renovate/policy.mjs
+              npm install --prefix /tmp/expression-tests --ignore-scripts \
+                --no-audit --no-fund @actions/expressions@0.3.61
+              node /source/tests/renovate/dashboard-events.mjs
+            '
+      - name: Verify promoted Supervisor lookup produces an update
+        # Local-platform lookup has no GitHub writer. Work on a disposable copy
+        # with an old fixture pin, never on the checkout or live dashboard.
+        env:
+          ENGINE: ${{ steps.validate.outputs.engine }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/source:ro" \
+            -e RENOVATE_PLATFORM=local \
+            -e RENOVATE_DRY_RUN=lookup \
+            -e RENOVATE_ONBOARDING=false \
+            -e 'RENOVATE_INCLUDE_PATHS=["tests/haos_image_build/build_image.py"]' \
+            -e 'RENOVATE_IGNORE_DEPS=["ghcr.io/home-assistant/home-assistant","home-assistant/operating-system"]' \
+            -e LOG_LEVEL=debug -e LOG_FORMAT=json \
+            --entrypoint bash "ghcr.io/renovatebot/renovate:$ENGINE" -c '
+              set -euo pipefail
+              cp -R /source /tmp/ha-renovate
+              cd /tmp/ha-renovate
+              sed -i "s/^STABLE_SUPERVISOR_VERSION = .*/STABLE_SUPERVISOR_VERSION = \"2020.1.0\"/" \
+                tests/haos_image_build/build_image.py
+              renovate > /tmp/lookup.jsonl
+              python3 - <<"PY"
+          import json
+          from pathlib import Path
+
+          records = [json.loads(line) for line in Path("/tmp/lookup.jsonl").read_text().splitlines() if line.startswith("{")]
+
+          def dependencies(value):
+              if isinstance(value, dict):
+                  if value.get("depName") == "home-assistant/supervisor" and "updates" in value:
+                      yield value
+                  for item in value.values():
+                      yield from dependencies(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      yield from dependencies(item)
+
+          candidates = [
+              dep for record in records for dep in dependencies(record)
+              if dep.get("currentValue") == "2020.1.0" and dep.get("updates")
+          ]
+          assert candidates, (
+              "Supervisor stable datasource produced no update candidate: "
+              + json.dumps(records[-10:], indent=2)
+          )
+          print("Promoted Supervisor update is discoverable from the stable datasource.")
+          PY
+            '
