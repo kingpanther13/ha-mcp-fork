@@ -170,9 +170,11 @@ summary only when the pull request actually reaches that state.
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `pr.yml` | Pull request | Fast checks and validation orchestration. |
+| `renovate.yml` | Hourly, human dashboard checkbox edit, or manual | Refresh dependency discovery and process eligible updates. |
+| `renovate-validation.yml` | Relevant pull request or manual | Validate configuration with the scanner’s pinned Renovate engine, without credentials. |
 | `e2e-tests.yml` | Push to `master` touching code, or manual | Full container-backend E2E validation on the pinned stable Core image. |
 | `haos-e2e-tests.yml` | Pull request or manual | Six HAOS lanes against a baked qcow2; required status checks. |
-| `haos-e2e-beta-tests.yml` | Push to `master`, nightly, or manual | The inaddon and embedded HAOS lanes against the current beta Supervisor and Core; skipped on push and nightly when beta equals stable. |
+| `haos-e2e-beta-tests.yml` | Push to `master`, nightly, or manual | The inaddon and embedded HAOS lanes against the current beta OS, Supervisor, and Core; skipped on push and nightly only when all three equal stable. |
 | `e2e-beta-tests.yml` | Push to `master`, nightly, or manual | The container-backend E2E jobs against the current beta Core image; skipped on push and nightly when beta equals the stable lane's pin. |
 | `publish-dev.yml` | Push to `master` | Development `.devN` release. |
 | `notify-dev-channel.yml` | Push to `master` touching `src/` | Development-testing notices. |
@@ -194,6 +196,32 @@ The fast-check order in `pr.yml` is security-sensitive. HACS and Hassfest run
 before anything that executes pull-request-controlled code. The AGENTS size
 check may precede them because it only reads a text file. Do not insert another
 step ahead of those validators without preserving that invariant.
+
+## Dependency scans and release policy
+
+Renovate scans the whole repository hourly, at minute 17 UTC. Scanning refreshes
+the dependency dashboard even when a package is not eligible for a PR.
+Ordinary dependencies retain the Tuesday-after-15:00-UTC window and seven-day
+release-age policy (including the existing timestamp-optional and vulnerability
+exceptions). `updateNotScheduled: false` also prevents ordinary branch updates
+outside that window.
+
+Stable Home Assistant Core, Supervisor, and HAOS are exact-name exceptions:
+no release-age delay, any-time scheduling, immediate PR creation, and no
+ordinary PR rate/concurrency cap. Core pins include the container lanes and
+HAOS builder; Supervisor's minimum comes from `stable.json`; HAOS tracks
+stable OS releases. Changes to these builder inputs invalidate the stable
+HAOS image cache. Supervisor still self-updates within its configured channel.
+
+Human checked requests on the Renovate-authored dependency dashboard trigger a
+scan promptly; Renovate's own edits and unrelated issues do not. Native
+dashboard approvals/rebase requests retain their override semantics. Manual
+workflow dispatch starts a scan without globally disabling ordinary policy.
+Runs serialize without cancelling an active writer.
+
+The action must discover `renovate.json` as repository configuration only.
+Passing the same file as action-global `configurationFile` as well duplicates
+custom managers and dependency-dashboard entries.
 
 ## Releases
 
