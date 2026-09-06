@@ -1,0 +1,36 @@
+name: Renovate configuration
+
+on:
+  pull_request:
+    paths:
+      - renovate.json
+      - .github/workflows/renovate*.yml
+      - tests/haos_image_build/**
+      - tests/src/unit/test_renovate_configuration.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Renovate configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate with the same engine used by the scanner
+        # No credentials are passed to the container; validation cannot write
+        # dependency PRs or process the live dashboard's checked requests.
+        run: |
+          engine=$(sed -n 's/^ *renovate-version: \([0-9.]*\)$/\1/p' .github/workflows/renovate.yml)
+          if ! [[ "$engine" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Missing or invalid Renovate engine pin"
+            exit 1
+          fi
+          docker run --rm \
+            -v "$PWD/renovate.json:/config/renovate.json:ro" \
+            "ghcr.io/renovatebot/renovate:$engine" \
+            renovate-config-validator /config/renovate.json

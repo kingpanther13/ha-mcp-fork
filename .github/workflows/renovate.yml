@@ -2,8 +2,11 @@ name: Renovate
 
 on:
   schedule:
-    # Run every Tuesday at 15:00 UTC (after Dependabot on Monday)
-    - cron: '0 15 * * 2'
+    # Refresh the dashboard hourly. Ordinary updates retain their Tuesday
+    # window; Core, Supervisor, and HAOS can open PRs on every scan.
+    - cron: '17 * * * *'
+  issues:
+    types: [edited]
   workflow_dispatch:
     inputs:
       logLevel:
@@ -23,6 +26,20 @@ permissions:
 jobs:
   renovate:
     name: Renovate
+    # Checked boxes explicitly override schedule/age gates. Process human
+    # requests promptly without looping on Renovate's own dashboard edits.
+    if: >-
+      github.event_name != 'issues' ||
+      (github.event.issue.title == 'Dependency Dashboard' &&
+       github.event.issue.user.login == 'ha-mcp-renovate[bot]' &&
+       github.event.sender.type != 'Bot' &&
+       github.event.changes.body &&
+       contains(github.event.issue.body, '[x]'))
+    # Serialize writers without interrupting a run partway through PR creation.
+    # Job-level concurrency keeps unrelated issue edits out of this queue.
+    concurrency:
+      group: renovate-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,7 +78,8 @@ jobs:
       - name: Self-hosted Renovate
         uses: renovatebot/github-action@5402b206248e5a8c8427a15102702eb9c1793efc # v46.2.4
         with:
-          configurationFile: renovate.json
+          # Repository config is discovered normally. Loading renovate.json as
+          # global config too duplicates its managers and dashboard entries.
           renovate-version: 44.50.1
           token: ${{ steps.app-token.outputs.token }}
         env:

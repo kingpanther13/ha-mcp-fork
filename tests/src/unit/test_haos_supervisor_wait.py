@@ -1,7 +1,7 @@
 """Unit tests for HAOS Supervisor/Core image-variant readiness helpers.
 
-HAOS pins only the OS version; the bundled Supervisor self-updates to the
-channel head after boot. Until that finishes ``need_update`` is True and store
+The image pins stable OS/Core and a Supervisor minimum; Supervisor self-updates
+to the channel head after boot. Until that finishes ``need_update`` is True and store
 operations are blocked by ``JobCondition.SUPERVISOR_UPDATED``. The helpers wait
 for readiness, select the requested channel, and install an exact Core version.
 These tests mock the WebSocket so they need no booted HAOS; ``time.sleep`` is

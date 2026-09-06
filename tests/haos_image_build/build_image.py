@@ -36,12 +36,18 @@ from typing import Any
 
 LOG = logging.getLogger("haos_image_build")
 
-# Pin both the HAOS release and app set. Renovate watches the annotation below
-# for the HAOS bump; the app set is hand-curated to cover distinct E2E shapes
-# without unnecessarily inflating the cached image.
-#
+# Stable image inputs are Renovate-managed; changing any pin invalidates the
+# shared image cache. Beta lanes explicitly override all three at build time.
 # renovate: datasource=github-releases depName=home-assistant/operating-system
-HAOS_VERSION = "18.2"
+STABLE_HAOS_VERSION = "18.2"
+# renovate: datasource=custom.ha-supervisor-stable depName=home-assistant/supervisor
+STABLE_SUPERVISOR_VERSION = "2026.08.0"
+# renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
+STABLE_CORE_VERSION = "2026.9.1"
+
+HAOS_VERSION = os.environ.get("HAOS_BUILD_OS_VERSION", STABLE_HAOS_VERSION)
+if re.fullmatch(r"[0-9]+\.[0-9]+(?:\.rc[0-9]+)?", HAOS_VERSION) is None:
+    raise ValueError(f"Invalid HAOS version: {HAOS_VERSION!r}")
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"
@@ -78,13 +84,13 @@ SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 # Arch under /usr/share/edk2-ovmf).
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
 
-# Optional image variant used by the Supervisor-beta E2E lanes. The normal
-# shared image leaves these settings unset and keeps following stable. Both
-# beta lanes resolve their Supervisor minimum and exact Core version from
-# beta.json; the in-app lane saves the shared cache.
-SUPERVISOR_CHANNEL = os.environ.get("HAOS_BUILD_SUPERVISOR_CHANNEL")
-SUPERVISOR_MIN_VERSION = os.environ.get("HAOS_BUILD_SUPERVISOR_MIN_VERSION")
-CORE_VERSION = os.environ.get("HAOS_BUILD_CORE_VERSION")
+# Stable uses the tracked Supervisor minimum and exact Core pin. Supervisor
+# may self-update past that minimum; beta lanes supply their channel's values.
+SUPERVISOR_CHANNEL = os.environ.get("HAOS_BUILD_SUPERVISOR_CHANNEL", "stable")
+SUPERVISOR_MIN_VERSION = os.environ.get(
+    "HAOS_BUILD_SUPERVISOR_MIN_VERSION", STABLE_SUPERVISOR_VERSION
+)
+CORE_VERSION = os.environ.get("HAOS_BUILD_CORE_VERSION", STABLE_CORE_VERSION)
 
 
 @dataclass(frozen=True)
@@ -2230,11 +2236,11 @@ def _configure_core_image_variant(
     """Install and verify the requested Home Assistant Core version."""
     core_info = ws.supervisor_api("/core/info", method="get", timeout=30.0)
     if core_info.get("version") == core_version:
-        LOG.info("Core beta already installed: version=%s", core_version)
+        LOG.info("Requested Core already installed: version=%s", core_version)
         return
 
     LOG.info(
-        "Updating Core for beta image: %s -> %s",
+        "Updating Core for test image: %s -> %s",
         core_info.get("version"),
         core_version,
     )
@@ -2255,7 +2261,7 @@ def _configure_core_image_variant(
 
     _wait_http_ok(f"{base_url}/manifest.json", timeout=600.0)
     _wait_core_version(ws, core_version, timeout=600.0)
-    LOG.info("Core beta installed: version=%s", core_version)
+    LOG.info("Requested Core installed: version=%s", core_version)
 
 
 def _configure_supervisor_image_variant(
