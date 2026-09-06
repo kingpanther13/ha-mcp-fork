@@ -70,10 +70,12 @@ jobs:
         env:
           ENGINE: ${{ steps.validate.outputs.engine }}
         # No GitHub credentials. The fixture updates a disposable local repo.
+        # Keep the image entrypoint: it loads the containerbase environment and
+        # initializes tools before Node exercises the dynamic-install executor.
         run: |
           docker run --rm -v "$PWD:/source:ro" \
             -e RENOVATE_TEST_ROOT=/usr/local/renovate \
-            --entrypoint node "ghcr.io/renovatebot/renovate:$ENGINE" \
+            "ghcr.io/renovatebot/renovate:$ENGINE" node \
             /source/tests/renovate/vendoring.mjs
       - name: Verify promoted Supervisor lookup produces an update
         if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
