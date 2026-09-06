@@ -28,7 +28,11 @@ from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.server import HomeAssistantSmartMCPServer
 from ha_mcp.utils.data_paths import get_data_dir
 
-from ..utilities.assertions import parse_mcp_result, tool_error_to_result
+from ..utilities.assertions import (
+    MCPAssertions,
+    parse_mcp_result,
+    tool_error_to_result,
+)
 
 
 async def _call(client: Client, tool: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -121,14 +125,14 @@ async def test_read_proxy_runs_a_manage_tools_read_action(toolsearch_mcp):
 async def test_read_proxy_refuses_a_manage_tools_write_action(toolsearch_mcp):
     """The read proxy is the hard boundary: a write action never reaches
     the tool, so the tool's own argument validation never runs here."""
-    body = await _call(
-        toolsearch_mcp,
-        "ha_call_read_tool",
-        {
-            "name": "ha_manage_energy_prefs",
-            "arguments": {"mode": "set", "config": {}},
-        },
-    )
+    async with MCPAssertions(toolsearch_mcp) as mcp:
+        body = await mcp.call_tool_failure(
+            "ha_call_read_tool",
+            {
+                "name": "ha_manage_energy_prefs",
+                "arguments": {"mode": "set", "config": {}},
+            },
+        )
     _expect_wrong_proxy(body, correct_proxy="ha_call_write_tool")
 
 
