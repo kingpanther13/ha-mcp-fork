@@ -13,11 +13,14 @@ import { pathToFileURL } from 'node:url';
 const engine = process.env.RENOVATE_TEST_ROOT;
 assert.ok(engine, 'RENOVATE_TEST_ROOT must name the installed Renovate package');
 const load = (path) => import(pathToFileURL(join(engine, 'dist', path)).href);
+const { init: initLogger } = await load('logger/index.js');
+await initLogger();
 const { getConfig } = await load('config/defaults.js');
 const { GlobalConfig } = await load('config/global.js');
 const { applyPackageRules } = await load('util/package-rules/index.js');
 const { initRepo, syncGit } = await load('util/git/index.js');
 const { isDynamicInstall } = await load('util/exec/containerbase.js');
+const { api: pythonVersioning } = await load('modules/versioning/python/index.js');
 const { default: executePostUpgradeCommands } = await load(
   'workers/repository/update/branch/execute-post-upgrade-commands.js'
 );
@@ -46,6 +49,16 @@ for (const other of [
 }
 assert.equal(matched.minimumReleaseAge, '7 days');
 assert.deepEqual(matched.schedule, ['after 3pm on tuesday']);
+
+// Resolving a Python range uses GitHub GraphQL, which requires authentication.
+// Keep this fixture credential-free: install a published, compatible exact
+// version through the real executor. The live scanner retains its range and
+// authenticated lookup; this fixture does not test that external lookup.
+const fixturePython = '3.13.7';
+assert.ok(pythonVersioning.matches(fixturePython, matched.constraints.python));
+const fixtureUpgrade = {
+  ...matched, constraints: { ...matched.constraints, python: fixturePython },
+};
 
 const scratch = mkdtempSync(join(tmpdir(), 'renovate-vendoring-'));
 const seed = join(scratch, 'seed');
@@ -78,7 +91,7 @@ writeFileSync(join(localDir, 'unrelated.txt'), 'Never include this in the bot co
 
 const branch = (contents) => ({
   ...matched, branchName: 'renovate/websockets-17.x', baseBranch: 'master',
-  upgrades: [{ ...matched, currentValue: '17.0.1', newValue: '17.1' }],
+  upgrades: [{ ...fixtureUpgrade, currentValue: '17.0.1', newValue: '17.1' }],
   updatedPackageFiles: [{ type: 'addition', path: pinFile, contents }],
   updatedArtifacts: [], artifactErrors: [],
 });
