@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Exercise release policy and dashboard event decisions
+      - name: Exercise release policy and dashboard/PR event decisions
         env:
           ENGINE: ${{ steps.validate.outputs.engine }}
         run: |

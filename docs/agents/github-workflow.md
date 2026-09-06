@@ -170,7 +170,7 @@ summary only when the pull request actually reaches that state.
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `pr.yml` | Pull request | Fast checks and validation orchestration. |
-| `renovate.yml` | Hourly, human dashboard checkbox edit, or manual | Refresh dependency discovery and process eligible updates. |
+| `renovate.yml` | Hourly, human dashboard/PR checkbox edit, or manual | Refresh dependency discovery and process eligible updates. |
 | `renovate-validation.yml` | Relevant pull request or manual | Validate configuration with the scanner’s pinned Renovate engine, without credentials. |
 | `e2e-tests.yml` | Push to `master` touching code, or manual | Full container-backend E2E validation on the pinned stable Core image. |
 | `haos-e2e-tests.yml` | Pull request or manual | Six HAOS lanes against a baked qcow2; required status checks. |
@@ -214,10 +214,18 @@ stable OS releases. Changes to these builder inputs invalidate the stable
 HAOS image cache. Supervisor still self-updates within its configured channel.
 
 Human checked requests on the Renovate-authored dependency dashboard trigger a
-scan promptly; Renovate's own edits and unrelated issues do not. Native
-dashboard approvals/rebase requests retain their override semantics. Manual
-workflow dispatch starts a scan without globally disabling ordinary policy.
-Runs serialize without cancelling an active writer.
+scan promptly. Checking the native rebase/retry box on an open, same-repository
+Renovate PR targeting master also starts a scan via `pull_request_target: edited`.
+The PR guard requires a human body edit that changes the rebase box from not
+checked to checked; bot edits, unrelated PRs, and edits leaving it checked do not
+start the scanner. Checkout uses trusted default-branch code, never PR code.
+Renovate itself consumes the checkbox and applies its native override semantics;
+the workflow does not rebase branches or force dependency policy globally.
+Manual workflow dispatch likewise starts an ordinary scan. Runs serialize
+without cancelling an active writer. GitHub's scheduled events are best-effort
+and may be delayed or dropped; checkbox events avoid waiting for the hourly scan.
+See [GitHub's event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+and [Renovate's native rebase documentation](https://docs.renovatebot.com/updating-rebasing/#manual-rebasing).
 
 The action must discover `renovate.json` as repository configuration only.
 Passing the same file as action-global `configurationFile` as well duplicates
