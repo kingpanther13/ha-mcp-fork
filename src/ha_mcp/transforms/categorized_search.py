@@ -13,7 +13,8 @@ Tools are categorized by their existing MCP annotations:
 A ``manage`` tool combines several operations behind one name, so it is
 reachable from every proxy — read-approved calls only on the read proxy,
 the whole tool on the write and delete proxies (see ``_admits``) — and
-search results point each kind of action at its own proxy.
+search results point each kind of action at its own proxy. In Read Only
+Mode only the read proxy is registered.
 """
 
 from __future__ import annotations
@@ -273,6 +274,28 @@ def _execute_via(proxy: str, tool_name: str) -> str:
     )
 
 
+def _read_only_mode() -> bool:
+    """Whether Read Only Mode is on — consulted per request, like its filter."""
+    from ..config import get_global_settings
+
+    return bool(get_global_settings().read_only_mode)
+
+
+def _advertised_routes(name: str, category: Capability) -> list[Capability]:
+    """Proxies a search result points at for *name*, in listing order.
+
+    A manage tool lists every proxy it is reachable through (see
+    ``_admits``); the read route exists only when the read-only predicate can
+    approve calls to it. In Read Only Mode the destructive proxies are not
+    registered, so only the read route remains.
+    """
+    if category != "write" or not _is_manage_tool(name):
+        return [category]
+    if _has_read_actions(name):
+        return ["read"] if _read_only_mode() else ["read", "write", "delete"]
+    return ["write", "delete"]
+
+
 def _categorize_tool(tool: Tool) -> Capability:
     """Categorize a Tool as read, write, or delete based on annotations and name."""
     annotations = tool.annotations
@@ -501,21 +524,15 @@ class CategorizedSearchTransform(BM25SearchTransform):
         results = []
         for tool in tools:
             data = tool.to_mcp_tool().model_dump(mode="json", exclude_none=True)
-            category = _categorize_tool(tool)
-            if category == "write" and _is_manage_tool(tool.name):
-                # Reachable from every proxy (see ``_admits``), so point each
-                # kind of action at its own. The read route exists only when
-                # the read-only predicate can approve calls to this tool.
-                routes: list[Capability] = ["write", "delete"]
-                if _has_read_actions(tool.name):
-                    routes.insert(0, "read")
+            routes = _advertised_routes(tool.name, _categorize_tool(tool))
+            if len(routes) == 1:
+                data["execute_via"] = _execute_via(proxy_map[routes[0]], tool.name)
+            else:
                 hint = "; ".join(
                     f"{route} actions: {_execute_via(proxy_map[route], tool.name)}"
                     for route in routes
                 )
                 data["execute_via"] = hint[:1].upper() + hint[1:]
-            else:
-                data["execute_via"] = _execute_via(proxy_map[category], tool.name)
             results.append(data)
         return results
 
@@ -646,6 +663,11 @@ class CategorizedSearchTransform(BM25SearchTransform):
             description=self._proxy_descs["delete"],
         )
 
+        if _read_only_mode():
+            # ReadOnlyToolsTransform runs before this one and never sees the
+            # proxies synthesised here; with every write blocked at call time
+            # the destructive proxies would only advertise dead ends.
+            return [*pinned, search_tool, call_read]
         return [*pinned, search_tool, call_read, call_write, call_delete]
 
     async def get_tool(
@@ -664,6 +686,11 @@ class CategorizedSearchTransform(BM25SearchTransform):
                 ToolAnnotations(openWorldHint=True, readOnlyHint=True),
                 self._proxy_descs["read"],
             )
+        if (
+            name in (self._call_write_name, self._call_delete_name)
+            and _read_only_mode()
+        ):
+            return None
         if name == self._call_write_name:
             return self._make_categorized_proxy(
                 self._call_write_name,

@@ -7,6 +7,7 @@ proxy category validation, dispatch execution, and SearchKeywordsTransform.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +24,14 @@ from ha_mcp.transforms.categorized_search import (
     _categorize_tool,
     _is_manage_tool,
 )
+
+
+@pytest.fixture
+def read_only_on(monkeypatch):
+    monkeypatch.setattr(
+        "ha_mcp.config.get_global_settings",
+        lambda: SimpleNamespace(read_only_mode=True),
+    )
 
 
 def _make_tool(
@@ -166,6 +175,23 @@ class TestRenderResults:
         )
 
     @pytest.mark.anyio
+    async def test_read_only_mode_hints_only_the_read_route(
+        self, transform, read_only_on
+    ):
+        """With the destructive proxies unregistered, the hint is the plain
+        read form — no dead-end write or delete route."""
+        tools = [
+            _make_tool("ha_manage_updates", destructive=True, description="Manage")
+        ]
+
+        results = await transform._render_results(tools)
+
+        assert results[0]["execute_via"] == (
+            'client.ha_call_read_tool(name="ha_manage_updates", arguments={...}) '
+            'or ha_call_read_tool(name="ha_manage_updates", arguments={...})'
+        )
+
+    @pytest.mark.anyio
     async def test_manage_tool_without_read_actions_execute_via_write_and_delete(
         self, transform
     ):
@@ -266,6 +292,19 @@ class TestTransformTools:
         assert "ha_remove_area_or_floor" not in names
 
     @pytest.mark.anyio
+    async def test_read_only_mode_registers_only_the_read_proxy(
+        self, transform, sample_tools, read_only_on
+    ):
+        """Every write is blocked at call time in Read Only Mode, so the
+        write and delete proxies are left out of the catalog."""
+        names = [t.name for t in await transform.transform_tools(sample_tools)]
+
+        assert "ha_search_tools" in names
+        assert "ha_call_read_tool" in names
+        assert "ha_call_write_tool" not in names
+        assert "ha_call_delete_tool" not in names
+
+    @pytest.mark.anyio
     async def test_total_count(self, transform, sample_tools):
         result = await transform.transform_tools(sample_tools)
         # 2 pinned + 4 synthetic (search + 3 proxies)
@@ -334,6 +373,18 @@ class TestGetTool:
         tool = await transform.get_tool("ha_call_delete_tool", call_next)
         assert tool is not None
         assert tool.name == "ha_call_delete_tool"
+        call_next.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_read_only_mode_does_not_resolve_destructive_proxies(
+        self, transform, read_only_on
+    ):
+        call_next = AsyncMock(return_value=None)
+
+        assert await transform.get_tool("ha_call_write_tool", call_next) is None
+        assert await transform.get_tool("ha_call_delete_tool", call_next) is None
+        read = await transform.get_tool("ha_call_read_tool", call_next)
+        assert read is not None and read.name == "ha_call_read_tool"
         call_next.assert_not_called()
 
     @pytest.mark.anyio
