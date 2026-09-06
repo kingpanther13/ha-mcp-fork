@@ -223,6 +223,15 @@ The action must discover `renovate.json` as repository configuration only.
 Passing the same file as action-global `configurationFile` as well duplicates
 custom managers and dependency-dashboard entries.
 
+The private websockets pin has a narrowly scoped post-upgrade task. Renovate
+installs Python 3.13, runs `python3 -I scripts/vendor_websockets.py`, and includes
+only `src/ha_mcp/_vendor/websockets/**` as generated artifacts alongside the pin.
+The scanner allows only that exact command, with shell execution disabled.
+This dependency retains the ordinary schedule and release-age policy. Source,
+license, manifest, drift, and API checks still gate the update; a failed
+generator is an artifact error, not an accepted pin-only update.
+The credential-free vendoring fixture exercises the pinned Renovate executor.
+
 ## Releases
 
 Conventional commit effects:
