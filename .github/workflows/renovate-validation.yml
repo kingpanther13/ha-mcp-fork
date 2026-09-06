@@ -37,11 +37,20 @@ jobs:
             -v "$PWD/renovate.json:/config/renovate.json:ro" \
             "ghcr.io/renovatebot/renovate:$engine" \
             renovate-config-validator --no-global /config/renovate.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - name: Exercise release policy and dashboard event decisions
         env:
           ENGINE: ${{ steps.validate.outputs.engine }}
         run: |
+          # The slim Renovate image bundles Node, but not npm. Prepare the
+          # expression evaluator on the runner and mount it read-only.
+          npm install --prefix "$RUNNER_TEMP/expression-tests" --ignore-scripts \
+            --no-audit --no-fund @actions/expressions@0.3.61
           docker run --rm -v "$PWD:/source:ro" \
+            -v "$RUNNER_TEMP/expression-tests:/tmp/expression-tests:ro" \
             --entrypoint bash "ghcr.io/renovatebot/renovate:$ENGINE" -c '
               set -euo pipefail
               # The CLI is a containerbase wrapper, not a symlink to its JS entry.
@@ -50,8 +59,6 @@ jobs:
               test -f "$RENOVATE_TEST_ROOT/dist/config/defaults.js"
               export RENOVATE_TEST_ROOT
               node /source/tests/renovate/policy.mjs
-              npm install --prefix /tmp/expression-tests --ignore-scripts \
-                --no-audit --no-fund @actions/expressions@0.3.61
               node /source/tests/renovate/dashboard-events.mjs
             '
       - name: Verify promoted Supervisor lookup produces an update
