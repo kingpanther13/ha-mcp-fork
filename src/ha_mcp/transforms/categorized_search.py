@@ -14,7 +14,7 @@ A ``manage`` tool combines several operations behind one name, so it is
 reachable from every proxy — read-approved calls only on the read proxy,
 the whole tool on the write and delete proxies (see ``_admits``) — and
 search results point each kind of action at its own proxy. In Read Only
-Mode only the read proxy is registered.
+Mode only the read proxy is listed.
 """
 
 from __future__ import annotations
@@ -287,7 +287,10 @@ def _advertised_routes(name: str, category: Capability) -> list[Capability]:
     A manage tool lists every proxy it is reachable through (see
     ``_admits``); the read route exists only when the read-only predicate can
     approve calls to it. In Read Only Mode the destructive proxies are not
-    registered, so only the read route remains.
+    listed, so only the read route remains. The ``["write", "delete"]`` case
+    cannot occur in that mode: ``ReadOnlyToolsTransform`` drops every
+    non-exempt write tool from the catalog before the search index is built,
+    and every exempt tool has read actions.
     """
     if category != "write" or not _is_manage_tool(name):
         return [category]
@@ -666,7 +669,12 @@ class CategorizedSearchTransform(BM25SearchTransform):
         if _read_only_mode():
             # ReadOnlyToolsTransform runs before this one and never sees the
             # proxies synthesised here; with every write blocked at call time
-            # the destructive proxies would only advertise dead ends.
+            # the destructive proxies would only advertise dead ends. They
+            # stay resolvable by name so a client holding a stale catalog gets
+            # the proxy's own structured answer (ReadOnlyMiddleware blocks a
+            # write before the proxy is even resolved) rather than a bare
+            # not-found that ToolSearchHintMiddleware declines to explain
+            # while tool search is on.
             return [*pinned, search_tool, call_read]
         return [*pinned, search_tool, call_read, call_write, call_delete]
 
@@ -686,11 +694,6 @@ class CategorizedSearchTransform(BM25SearchTransform):
                 ToolAnnotations(openWorldHint=True, readOnlyHint=True),
                 self._proxy_descs["read"],
             )
-        if (
-            name in (self._call_write_name, self._call_delete_name)
-            and _read_only_mode()
-        ):
-            return None
         if name == self._call_write_name:
             return self._make_categorized_proxy(
                 self._call_write_name,

@@ -348,7 +348,7 @@ Set ENABLE_TOOL_SEARCH=true (or toggle the option in the HA app). The full catal
 
 The proxy split lets MCP clients apply different permission policies per category (e.g. auto-approve reads, prompt for writes, confirm deletes) without parsing tool docstrings.
 
-A `ha_manage_*` tool combines several operations, so it is reachable from more than one proxy: `ha_call_write_tool` and `ha_call_delete_tool` run the whole tool, while `ha_call_read_tool` runs only the read actions Read Only Mode approves (the same per-call verdict), so a manage tool with no approved read actions is not reachable there. Search results list each proxy the tool can be reached through. In Read Only Mode only `ha_call_read_tool` is registered.
+A `ha_manage_*` tool combines several operations, so it is reachable from more than one proxy: `ha_call_write_tool` and `ha_call_delete_tool` run the whole tool, while `ha_call_read_tool` runs only the read actions Read Only Mode approves (the same per-call verdict), so a manage tool with no approved read actions is not reachable there. Search results list each proxy the tool can be reached through. In Read Only Mode only `ha_call_read_tool` is listed.
 
 | Setting | Default | Description |
 |---------|---------|-------------|

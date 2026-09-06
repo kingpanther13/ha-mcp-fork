@@ -10,7 +10,7 @@ against the testcontainer HA (function-scoped — the session-scoped
   and their write actions return the structured READ_ONLY_MODE error;
 - direct calls to hidden write tools return the same error;
 - with tool search enabled, proxy-dispatched writes are blocked too, and
-  only the read proxy is registered;
+  only the read proxy is listed;
 - ``ha_get_overview`` reports the mode to the LLM;
 - the real catalog satisfies the invariant that every mandatory tool is
   either read-safe or exempt (a unit test cannot see the real registered
@@ -415,7 +415,7 @@ async def test_string_envelope_proxy_write_blocked(readonly_toolsearch_mcp):
 
 
 @pytest.mark.asyncio
-async def test_tool_search_registers_only_the_read_proxy(readonly_toolsearch_mcp):
+async def test_tool_search_lists_only_the_read_proxy(readonly_toolsearch_mcp):
     """The read-only filter runs before the search transform and never sees
     the proxies it synthesises, so the transform leaves the write and delete
     proxies out itself; a manage tool's read action still works through the

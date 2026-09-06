@@ -178,7 +178,7 @@ class TestRenderResults:
     async def test_read_only_mode_hints_only_the_read_route(
         self, transform, read_only_on
     ):
-        """With the destructive proxies unregistered, the hint is the plain
+        """With the destructive proxies unlisted, the hint is the plain
         read form — no dead-end write or delete route."""
         tools = [
             _make_tool("ha_manage_updates", destructive=True, description="Manage")
@@ -292,11 +292,11 @@ class TestTransformTools:
         assert "ha_remove_area_or_floor" not in names
 
     @pytest.mark.anyio
-    async def test_read_only_mode_registers_only_the_read_proxy(
+    async def test_read_only_mode_lists_only_the_read_proxy(
         self, transform, sample_tools, read_only_on
     ):
         """Every write is blocked at call time in Read Only Mode, so the
-        write and delete proxies are left out of the catalog."""
+        write and delete proxies are left out of the listing."""
         names = [t.name for t in await transform.transform_tools(sample_tools)]
 
         assert "ha_search_tools" in names
@@ -376,15 +376,17 @@ class TestGetTool:
         call_next.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_read_only_mode_does_not_resolve_destructive_proxies(
+    async def test_read_only_mode_still_resolves_destructive_proxies(
         self, transform, read_only_on
     ):
+        """Unlisted is not unresolvable: a client holding a stale catalog must
+        reach the proxy's own structured answer, and ToolSearchHintMiddleware
+        only explains a miss while tool search is off."""
         call_next = AsyncMock(return_value=None)
 
-        assert await transform.get_tool("ha_call_write_tool", call_next) is None
-        assert await transform.get_tool("ha_call_delete_tool", call_next) is None
-        read = await transform.get_tool("ha_call_read_tool", call_next)
-        assert read is not None and read.name == "ha_call_read_tool"
+        for name in ("ha_call_write_tool", "ha_call_delete_tool"):
+            tool = await transform.get_tool(name, call_next)
+            assert tool is not None and tool.name == name
         call_next.assert_not_called()
 
     @pytest.mark.anyio
