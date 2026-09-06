@@ -18,6 +18,7 @@
 - Scanning ordinary dependencies hourly is permitted. It must not create or update ordinary dependency PRs outside their schedule except through existing explicit overrides/security policy.
 - Human dashboard approval/rebase requests must remain effective and be processed promptly. A manual workflow dispatch runs a scan; it does not globally force ordinary dependencies past their policy.
 - Stable lanes consume stable releases; beta lanes consume the latest version listed in beta metadata, including when beta currently equals stable. Do not assume every patch release had an advance beta soak.
+- User correction: remove manual Core bumps from this PR. Preserve the four existing 2026.9.0 pins and initialize the new HAOS Core pin at 2026.9.0. After an explicitly approved merge, manually dispatch Renovate and verify that the bot itself proposes the latest stable Core update across all five pins; do not merge or dispatch during this PR-preparation phase.
 - Preserve environment overrides and Supervisor self-update behavior; a tracked Supervisor minimum is not a freeze or downgrade requirement.
 - Preserve existing beta triggers, lane topology, sole cache writer, manual forced runs, and PR coverage boundaries unless a scoped correctness fix requires a change.
 - Use the existing isolated worktree and preserve unrelated work. Open a draft PR only; no merge, ready transition, releases, or branch deletion is authorized.
@@ -46,21 +47,22 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 - Implemented hourly scans, the guarded human dashboard-edit trigger, writer serialization, and single repository-config loading.
 - Implemented immediate rules for precisely Core/Supervisor/HAOS; ordinary Tuesday/seven-day policy remains in place with off-schedule branch updates disabled.
-- Implemented the stable Supervisor datasource and real stable image inputs; aligned all five Core pins to freshly verified 2026.9.1.
+- Implemented the stable Supervisor datasource and real stable image inputs. The initial manual Core 2026.9.1 bump is being removed at the user’s request; all five Core pins stay at 2026.9.0 so the later live Renovate dispatch can demonstrate the update end to end.
 - Implemented beta OS resolution, download override, cache key, three-component skip decision, and live OS attestation.
 - Added a credential-free CI workflow to validate configuration with the scanner's pinned Renovate engine. Full Renovate behavior has not been executed locally; production dashboard cleanup still requires the deployed workflow's next scan.
 - Regression evidence: before the image/beta implementation, focused tests reported 11 failures and 3 passes; the missing OS-only-beta behavior was reproduced. After implementation, release-input, workflow-contract, and Renovate-extraction/policy tests passed (23 tests) in proot.
 - Expanded focused run including Supervisor readiness tests passed: 79 tests in 35.82 seconds. Ruff format completed on the eight changed Python files.
 - Draft PR: https://github.com/homeassistant-ai/ha-mcp/pull/2379, targeting master. Initial implementation commit: `309eeb85eada12c9112f293fafcb6ff99a100fc1`. All six stable HAOS lanes and container CI started; automated reviews started without extra requests.
 - First CI validator run succeeded, but its log showed explicit filenames default to global validation. Corrected to `--no-global`; repository-mode validation then passed at `8d81fe0c`. All fast CI lanes at that head subsequently passed.
-- First Codex review identified missing behavioral coverage for the policy and dashboard guard. The next bundled push adds fixtures using the pinned Renovate package’s actual rule/schedule/age/limit functions, GitHub’s expression evaluator for nine event cases, and a credential-free Supervisor datasource lookup. These new CI fixtures are not locally executed under the user’s execution limits. Full E2E/review remains in progress; the live scanner is not deployed yet.
+- First Codex review identified missing behavioral coverage for the policy and dashboard guard. Commit `c6281089` added fixtures using the pinned Renovate package’s actual rule/schedule/age/limit functions, GitHub’s expression evaluator for nine event cases, and a credential-free Supervisor datasource lookup. Its CI failed before fixtures executed because the CLI wrapper resolved to `/usr/local`, not the installed package root. Verified the pinned image Dockerfile and corrected the root to `/usr/local/renovate` with explicit package/module existence checks (also the first actionable CodeRabbit finding). All other fast lanes at `c6281089` finished successfully before the next push.
+- Removed the manual Core bumps and reran the four focused lightweight test files in proot: 23 tests passed in 7.05 seconds. The four existing pin files now have no net diff against master; the new HAOS Core pin remains 2026.9.0. The next push bundles this correction and the CI path fix. Reply to and resolve the two Codex threads and the CodeRabbit path thread after the behavioral fixtures pass in CI. The live scanner is not deployed yet.
 
 ## Resume state and investigation evidence
 
 - Worktree: `/data/data/com.termux/files/home/ha-mcp/worktree/renovate-hourly-ha`.
 - Branch: `fix/renovate-hourly-ha`; starting fetched `origin/master`: `70ec6c109d29dc140090e46076cf4c78cf17be6c`.
 - Upstream: `homeassistant-ai/ha-mcp`; push remote: `kingpanther13/ha-mcp-fork`.
-- Before this plan, only `.github/workflows/renovate.yml` and `renovate.json` were modified. Those changes are draft implementation, not validated completion. No commit, push, or PR exists yet.
+- Initial pre-plan state had only the workflow and Renovate configuration edits. Implementation is now published as draft PR #2379; use the checkpoint above for current verification state.
 - Root `AGENTS.md`, applicable tests guidance, development/workflow references, and `SECURITY.md` were read during investigation. Re-read applicable guidance when resuming changes to those areas.
 - The original workflow ran Tuesday at 15:00 UTC or by manual dispatch; it did not react to dashboard edits. The repository already exempted Core from release age and schedule, but exemption did not cause scans to run.
 - [Renovate run 33871075811](https://github.com/homeassistant-ai/ha-mcp/actions/runs/33871075811) was the last observed run. It predated the current Core pin/schedule correction and logged a 2026.8.3 → 2026.9.0 update as not scheduled.
@@ -141,7 +143,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 
 - [x] Verify the checked create-all-awaiting-schedule and individual approval/rebase request paths against Renovate 44.50.1. Do not delete checked requests, disable dashboard approvals, or add a global forced schedule override.
 
-## Task 3: Track stable image inputs and catch up Core
+## Task 3: Track stable image inputs without manually advancing Core
 
 **Files:** `tests/haos_image_build/build_image.py`; `tests/haos_image_build/README.md`; `.github/workflows/pr.yml`; `.github/workflows/e2e-tests.yml`; `.github/workflows/performance-tests.yml`; `tests/test_constants.py`; `renovate.json`; focused builder/manager tests.
 
@@ -168,7 +170,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   # renovate: datasource=custom.ha-supervisor-stable depName=home-assistant/supervisor
   STABLE_SUPERVISOR_VERSION = "2026.08.0"
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-  STABLE_CORE_VERSION = "2026.9.1"
+  STABLE_CORE_VERSION = "2026.9.0"
 
   HAOS_VERSION = os.environ.get("HAOS_BUILD_OS_VERSION", STABLE_HAOS_VERSION)
   SUPERVISOR_CHANNEL = os.environ.get("HAOS_BUILD_SUPERVISOR_CHANNEL", "stable")
@@ -179,7 +181,7 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
   ```
 
 - [x] Define `HAOS_VERSION` before constructing its download URL. Ensure existing Supervisor/Core configuration functions consume the defaults, and make their beta-specific log messages generic where now used by stable builds. Preserve newer Supervisor versions rather than forcing a downgrade.
-- [x] Align the four existing Core image pins and the new HAOS Core pin to current stable (2026.9.1 at investigation). Do not alter unrelated frozen-version test fixtures merely because their example contains 2026.9.0.
+- [x] Preserve the four existing Core image pins at 2026.9.0 and initialize the new HAOS Core pin at the same version. The user explicitly requested that Renovate, not this implementation PR, perform the later stable Core upgrade. Keep unrelated metadata/version test fixtures unchanged.
 - [ ] Verify regex managers extract every intended pin exactly once; verify datasource transformation emits only the promoted stable Supervisor; verify beta/dev Supervisor versions are excluded from stable PR selection.
 - [x] Confirm stable cache invalidation and all stable HAOS consumers rebuild/restore images keyed on the changed builder inputs. Do not introduce a marker pin that is unused by the running build.
 - [x] Cover no-override stable defaults and explicit beta overrides in builder tests; assert the OS override is reflected in the actual download URL and the existing build workflow can still read `HAOS_VERSION`.
@@ -224,9 +226,9 @@ Latest instruction: continue until the draft PR exists; do not stop after planni
 - [ ] Inspect CI on the exact pushed head, including container and stable HAOS lanes. Inspect full automated/human review bodies after every push and fix verified findings within the approved scope. Do not manually request extra reviews or cancel CI.
 - [ ] Validate beta workflow behavior at the PR head through an available scoped GitHub Actions path; beta lanes do not automatically run on pull requests. If that runtime verification cannot be performed before merge, explicitly distinguish unit/contract coverage from unexecuted beta runtime coverage; do not claim all beta E2E passed.
 - [ ] Refresh dashboard/run/PR evidence at handoff. Separate what the draft changes guarantee from what is active on default branch: the new cron and issue trigger are not deployed until this PR is merged.
-- [ ] Explain that a real post-merge scan is required to demonstrate cleanup of dashboard #1237 and creation/handling of remaining eligible updates. Do not merge or activate the change without further authorization.
+- [ ] After an explicitly approved merge, manually dispatch the deployed Renovate workflow; verify refreshed dashboard #1237, a bot-authored stable Core upgrade across all five pins, expected Supervisor/OS discovery, and preserved ordinary-dependency policy/manual overrides. This is a post-merge validation step, not authorization to merge or dispatch now.
 - [ ] Update this plan's checkboxes and resume state with commit, draft PR link, exact tested head, CI/review outcomes, and any remaining verification gaps.
 
 ## Completion criteria
 
-The implementation is ready for handoff only when the Renovate schedule, dashboard refresh, manual-request path, stable HA tracking, ordinary dependency protections, stable pin catch-up, and beta OS selection/cache/gate/attestation changes are all accounted for. A passing fast check alone is insufficient. Keep the PR draft and report any unexecuted deployment or runtime validation plainly.
+The implementation is ready for handoff only when the Renovate schedule, dashboard refresh, manual-request path, stable HA tracking, ordinary dependency protections, preserved 2026.9.0 Core baseline, and beta OS selection/cache/gate/attestation changes are all accounted for. A passing fast check alone is insufficient. Keep the PR draft and report unexecuted deployment/runtime validation plainly; the actual Core upgrade is reserved for a verified Renovate PR after merge.

@@ -44,7 +44,10 @@ jobs:
           docker run --rm -v "$PWD:/source:ro" \
             --entrypoint bash "ghcr.io/renovatebot/renovate:$ENGINE" -c '
               set -euo pipefail
-              RENOVATE_TEST_ROOT=$(dirname "$(dirname "$(readlink -f "$(command -v renovate)")")")
+              # The CLI is a containerbase wrapper, not a symlink to its JS entry.
+              RENOVATE_TEST_ROOT=/usr/local/renovate
+              test -f "$RENOVATE_TEST_ROOT/package.json"
+              test -f "$RENOVATE_TEST_ROOT/dist/config/defaults.js"
               export RENOVATE_TEST_ROOT
               node /source/tests/renovate/policy.mjs
               npm install --prefix /tmp/expression-tests --ignore-scripts \
