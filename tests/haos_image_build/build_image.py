@@ -2227,6 +2227,37 @@ def _apply_supervisor_image_update(
             time.sleep(min(5.0, remaining))
 
 
+def _request_core_image_update(ws: HAWebSocket, core_version: str) -> None:
+    """Retry only Core-job rejections, with a bounded admission deadline."""
+    deadline = time.monotonic() + 600.0
+    while True:
+        _remaining_deadline_budget(deadline, "Core job admission")
+        try:
+            ws.supervisor_api(
+                "/core/update",
+                method="post",
+                data={"version": core_version, "backup": False},
+                timeout=1800.0,
+            )
+        except _SUPERVISOR_WAIT_TRANSIENT_ERRORS as exc:
+            # Supervisor's GROUP_REJECT guard raises before the update starts.
+            # Do not retry ambiguous transport failures or other semantic errors.
+            if (
+                isinstance(exc, WSCommandError)
+                and exc.code == "unknown_error"
+                and exc.supervisor_message
+                == "Another job is running for job group home_assistant_core"
+            ):
+                LOG.info("Core job busy during image setup; waiting to request update")
+                remaining = _remaining_deadline_budget(deadline, "Core job admission")
+                time.sleep(min(5.0, remaining))
+                continue
+            if not _is_transient_supervisor_error(exc):
+                raise
+            LOG.info("Core update outcome inconclusive; polling version: %r", exc)
+        return
+
+
 def _configure_core_image_variant(
     ws: HAWebSocket,
     *,
@@ -2244,20 +2275,9 @@ def _configure_core_image_variant(
         core_info.get("version"),
         core_version,
     )
-    try:
-        ws.supervisor_api(
-            "/core/update",
-            method="post",
-            data={"version": core_version, "backup": False},
-            timeout=1800.0,
-        )
-    except _SUPERVISOR_WAIT_TRANSIENT_ERRORS as exc:
-        if not _is_transient_supervisor_error(exc):
-            raise
-        # Updating Core may close the transport or make Core's Supervisor bridge
-        # return a blank unknown_error after dispatch. Exact-version polling below
-        # establishes the actual outcome.
-        LOG.info("Core update outcome inconclusive; polling version: %r", exc)
+    _request_core_image_update(ws, core_version)
+    # Updating Core may close the transport after dispatch. Exact-version polling
+    # establishes the outcome without blindly retrying an accepted request.
 
     _wait_http_ok(f"{base_url}/manifest.json", timeout=600.0)
     _wait_core_version(ws, core_version, timeout=600.0)
