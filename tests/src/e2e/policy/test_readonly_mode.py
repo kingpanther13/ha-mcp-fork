@@ -457,6 +457,26 @@ async def test_tool_search_lists_only_the_read_proxy(readonly_toolsearch_mcp):
 
 
 @pytest.mark.asyncio
+async def test_unlisted_write_proxy_still_runs_a_manage_tools_read_action(
+    readonly_toolsearch_mcp,
+):
+    """Unlisted is not unresolvable. A client holding ``ha_call_write_tool``
+    in a cached tool list must still reach the proxy: the middleware lets an
+    exempt read action through, and the search transform resolves the name
+    even though the read-only catalog filter would hide it. This exercises
+    transform registration order, the catalog filter and the middleware
+    together, which only the real server composes."""
+    client, _server = readonly_toolsearch_mcp
+    body = parse_mcp_result(
+        await client.call_tool(
+            "ha_call_write_tool",
+            {"name": "ha_manage_energy_prefs", "arguments": {"mode": "get"}},
+        )
+    )
+    assert body.get("success") is True, body
+
+
+@pytest.mark.asyncio
 async def test_search_results_exclude_non_exempt_write_tools(readonly_toolsearch_mcp):
     """ha_search_tools must never surface a hidden (non-exempt write) tool:
     the read-only catalog filter runs before the BM25 index is built, so a
