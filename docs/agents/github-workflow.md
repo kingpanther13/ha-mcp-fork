@@ -172,6 +172,7 @@ summary only when the pull request actually reaches that state.
 | `pr.yml` | Pull request | Fast checks and validation orchestration. |
 | `renovate.yml` | Hourly, human dashboard/PR checkbox edit, or manual | Refresh dependency discovery and process eligible updates. |
 | `renovate-validation.yml` | Relevant pull request or manual | Validate configuration with the scanner’s pinned Renovate engine, without credentials. |
+| `renovate-auto-merge.yml` | Renovate enables auto-merge or updates its PR | Approve the verified current head with the separate maintainer account; GitHub enforces merge requirements. |
 | `e2e-tests.yml` | Push to `master` touching code, or manual | Full container-backend E2E validation on the pinned stable Core image. |
 | `haos-e2e-tests.yml` | Pull request or manual | Six HAOS lanes against a baked qcow2; required status checks. |
 | `haos-e2e-beta-tests.yml` | Push to `master`, nightly, or manual | The inaddon and embedded HAOS lanes against the current beta OS, Supervisor, and Core; skipped on push and nightly only when all three equal stable. |
@@ -239,6 +240,25 @@ This dependency retains the ordinary schedule and release-age policy. Source,
 license, manifest, drift, and API checks still gate the update; a failed
 generator is an artifact error, not an accepted pin-only update.
 The credential-free vendoring fixture exercises the pinned Renovate executor.
+
+Renovate enables GitHub-native squash auto-merge for minor, patch, and digest
+updates, and for its ungrouped vulnerability-alert fixes. Ordinary major
+upgrades remain manual. This does not bypass creation schedules or release-age
+gates. Once eligible PRs exist, GitHub merges only when the repository's required
+checks and reviews are satisfied, including required E2E checks.
+
+The approval workflow mirrors Dependabot's separate-account, exact-head
+approval boundary: Renovate's app token enables auto-merge, and the existing
+`ghhamcp` maintainers-team account approves with the Actions secret
+`GH_TOKEN_CODEX_COMMENT`. That token must grant pull-request write access;
+`DEPENDABOT_APPROVAL_TOKEN` remains in Dependabot's separate secret store.
+The workflow executes no checkout or PR code, re-reads the PR, verifies that
+Renovate enabled squash auto-merge and the event head is still current, checks
+the approval token's identity, and skips an existing approval on that head.
+Renovate pushes trigger fresh approval after stale reviews are dismissed.
+Human-enabled auto-merge and human pushes do not issue new automated approvals.
+Toggling auto-merge does not revoke an existing approval of unchanged content.
+No workflow grants a bypass or performs an admin merge.
 
 ## Releases
 
