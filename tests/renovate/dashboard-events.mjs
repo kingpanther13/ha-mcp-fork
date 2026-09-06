@@ -10,6 +10,9 @@ const { parse } = engineRequire('yaml');
 const { Lexer, Parser, Evaluator, data } = await import(pathToFileURL(
   '/tmp/expression-tests/node_modules/@actions/expressions/dist/index.js'
 ).href);
+const { truthy } = await import(pathToFileURL(
+  '/tmp/expression-tests/node_modules/@actions/expressions/dist/result.js'
+).href);
 const workflow = parse(readFileSync('/source/.github/workflows/renovate.yml', 'utf8'));
 const expression = new Parser(new Lexer(workflow.jobs.renovate.if).lex().tokens, ['github'], []).parse();
 const dashboard = {
@@ -34,6 +37,8 @@ for (const [name, mutate, expected] of cases) {
   const github = structuredClone(dashboard);
   mutate(github);
   const context = JSON.parse(JSON.stringify({ github }), data.reviver);
-  assert.equal(new Evaluator(expression, context).evaluate().coerceString(), String(expected), name);
+  // Logical expressions can short-circuit to null; a job guard uses truthiness,
+  // not the string representation of the result.
+  assert.equal(truthy(new Evaluator(expression, context).evaluate()), expected, name);
 }
 console.log(`GitHub expression evaluator passed ${cases.length} dashboard-event cases.`);
