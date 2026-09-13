@@ -19,10 +19,15 @@ jobs:
       - run: uv sync --all-extras --dev
       - name: Focused endpoint regression
         working-directory: tests
-        run: uv run pytest addon/test_webhook_proxy.py src/unit/test_webhook_proxy_dev_isolation.py src/unit/test_mcp_webhook.py src/unit/test_readonly_endpoint.py src/unit/test_read_only.py src/unit/test_call_service_read_only.py src/unit/test_http_transport_options.py src/unit/test_server_readonly_wiring.py --maxfail=0 -q
+        run: uv run pytest src/unit/test_webhook_proxy_dev_isolation.py src/unit/test_mcp_webhook.py src/unit/test_readonly_endpoint.py src/unit/test_read_only.py src/unit/test_call_service_read_only.py src/unit/test_http_transport_options.py src/unit/test_server_readonly_wiring.py --maxfail=0 -q
+      - name: Proxy app regressions
+        if: always()
+        run: uv run pytest tests/addon/test_webhook_proxy.py --maxfail=0 -q
       - name: Lint
+        if: always()
         run: uv run ruff check src/ custom_components/ha_mcp_tools/ homeassistant-addon-webhook-proxy-dev/mcp_proxy_dev/ tests/src/unit/test_readonly_endpoint.py tests/src/unit/test_mcp_webhook.py tests/src/e2e/policy/test_readonly_endpoint.py tests/addon/test_webhook_proxy.py
       - name: Types
+        if: always()
         run: uv run mypy src/
   e2e:
     runs-on: ubuntu-latest
@@ -42,3 +47,21 @@ jobs:
         working-directory: tests
         run: uv run pytest src/e2e/policy/test_readonly_endpoint.py src/e2e/policy/test_readonly_mode.py --maxfail=0 -q
 
+  embedded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      E2E_BACKEND: embedded
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.12.9"
+      - run: uv sync --all-extras --dev
+      - name: Real Home Assistant webhook E2E
+        working-directory: tests
+        run: uv run pytest src/e2e/policy/test_readonly_endpoint.py::test_embedded_webhook_readonly_endpoint --maxfail=0 -q
