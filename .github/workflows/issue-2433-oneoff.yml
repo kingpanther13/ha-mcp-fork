@@ -1,0 +1,22 @@
+name: Issue 2433 one-off validation
+on:
+  push:
+    branches: [ci/issue-2433-readonly]
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.12.9"
+      - run: uv sync --all-extras --dev
+      - name: Focused endpoint regression
+        working-directory: tests
+        run: uv run pytest src/unit/test_readonly_endpoint.py --maxfail=0 -q
