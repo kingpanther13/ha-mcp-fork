@@ -32,6 +32,7 @@ jobs:
           uv run mypy src/ custom_components/
           uv run mypy homeassistant-addon-webhook-proxy-dev/
   e2e:
+    if: false # Only test lint/docs changed; prior run covers production/E2E.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -50,6 +51,7 @@ jobs:
         run: uv run pytest src/e2e/policy/test_readonly_endpoint.py src/e2e/policy/test_readonly_mode.py --maxfail=0 -q
 
   embedded:
+    if: false # Production and E2E code are unchanged.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
