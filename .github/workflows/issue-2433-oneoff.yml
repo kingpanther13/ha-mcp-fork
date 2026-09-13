@@ -76,9 +76,9 @@ jobs:
     container:
       # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
       image: ghcr.io/astral-sh/uv:0.12.11-python3.13-trixie-slim
-    # Bumped 5 → 8 for the issue #2027 regression tests, which spawn real
-    # subprocesses — including a full stdio server session — costing tens
-    # of seconds on a slow runner. 8 → 10 after #2360: pytest alone is ~3.6
+    # Bumped 5 â†’ 8 for the issue #2027 regression tests, which spawn real
+    # subprocesses â€” including a full stdio server session â€” costing tens
+    # of seconds on a slow runner. 8 â†’ 10 after #2360: pytest alone is ~3.6
     # min and the `npm ci` step swung from 1s to 4 min during an npm registry
     # incident, so 8 left no room for one slow install.
     timeout-minutes: 10
@@ -118,17 +118,20 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Install JS test dependencies (jsdom, esbuild)
-      # `npm ci` enforces package-lock.json — same reproducibility
+      # `npm ci` enforces package-lock.json â€” same reproducibility
       # discipline as uv.lock on the Python side. setup-node caches npm's
       # download cache; node_modules is intentionally recreated by npm ci.
       run: cd tests/js && corepack npm ci
+
+    - name: Exclude the throwaway-only workflow from repository contract checks
+      run: rm .github/workflows/issue-2433-oneoff.yml
 
     - name: Run unit tests
       run: uv run pytest tests/src/unit/ -n auto --tb=short -v
 
     - name: Run add-on structure tests
       # tests/addon/ validates add-on packaging / config.yaml structure (e.g.
-      # the backup-filename-safe name guard, #1707) — previously these ran
+      # the backup-filename-safe name guard, #1707) â€” previously these ran
       # nowhere in CI. Excludes test_addon_startup.py, which spins up real
       # Docker containers (testcontainers) this lint/unit runner doesn't have.
       run: >-
