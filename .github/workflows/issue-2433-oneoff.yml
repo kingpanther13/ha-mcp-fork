@@ -19,4 +19,25 @@ jobs:
       - run: uv sync --all-extras --dev
       - name: Focused endpoint regression
         working-directory: tests
-        run: uv run pytest src/unit/test_readonly_endpoint.py --maxfail=0 -q
+        run: uv run pytest src/unit/test_readonly_endpoint.py src/unit/test_read_only.py src/unit/test_call_service_read_only.py src/unit/test_http_transport_options.py src/unit/test_server_readonly_wiring.py --maxfail=0 -q
+      - name: Lint
+        run: uv run ruff check src/ha_mcp/http_transport.py src/ha_mcp/read_only.py src/ha_mcp/transforms/categorized_search.py src/ha_mcp/tools/tools_search.py tests/src/unit/test_readonly_endpoint.py tests/src/e2e/policy/test_readonly_endpoint.py
+      - name: Types
+        run: uv run mypy src/
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.12.9"
+      - run: uv sync --all-extras --dev
+      - name: Read-only E2E against isolated HA
+        working-directory: tests
+        run: uv run pytest src/e2e/policy/test_readonly_endpoint.py src/e2e/policy/test_readonly_mode.py --maxfail=0 -q
