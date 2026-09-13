@@ -19,7 +19,7 @@ jobs:
       - run: uv sync --all-extras --dev
       - name: Focused endpoint regression
         working-directory: tests
-        run: uv run pytest src/unit/test_webhook_proxy_dev_isolation.py src/unit/test_mcp_webhook.py src/unit/test_readonly_endpoint.py src/unit/test_read_only.py src/unit/test_call_service_read_only.py src/unit/test_http_transport_options.py src/unit/test_server_readonly_wiring.py --maxfail=0 -q
+        run: uv run pytest src/unit/test_dashboard_screenshot_theme_guard.py src/unit/test_webhook_proxy_dev_isolation.py src/unit/test_mcp_webhook.py src/unit/test_readonly_endpoint.py src/unit/test_read_only.py src/unit/test_call_service_read_only.py src/unit/test_http_transport_options.py src/unit/test_server_readonly_wiring.py --maxfail=0 -q
       - name: Proxy app regressions
         if: always()
         run: uv run pytest tests/addon/test_webhook_proxy.py --maxfail=0 -q
@@ -28,7 +28,9 @@ jobs:
         run: uv run ruff check src/ custom_components/ha_mcp_tools/ homeassistant-addon-webhook-proxy-dev/mcp_proxy_dev/ tests/src/unit/test_readonly_endpoint.py tests/src/unit/test_mcp_webhook.py tests/src/e2e/policy/test_readonly_endpoint.py tests/addon/test_webhook_proxy.py
       - name: Types
         if: always()
-        run: uv run mypy src/
+        run: |
+          uv run mypy src/ custom_components/
+          uv run mypy homeassistant-addon-webhook-proxy-dev/
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
