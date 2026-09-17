@@ -224,6 +224,12 @@ class HomeAssistantSmartMCPServer:
         # indexes the enriched descriptions.
         self._apply_search_keyword_enrichment()
 
+        # Capability-specific metadata supersedes legacy/lite descriptions,
+        # and must reach the catalog before categorized search indexes it.
+        from .transforms import ComponentSearchSchemaTransform
+
+        self.mcp.add_transform(ComponentSearchSchemaTransform(self.client))
+
         # Apply tool search transform (must come after all tools and
         # the skill guide tool are registered so it can wrap everything)
         self._apply_tool_search()

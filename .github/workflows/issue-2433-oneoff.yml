@@ -1,0 +1,24 @@
+name: Issue 2477 regression validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.13'
+      - run: uv sync --all-extras --dev
+      - name: Search and scene regression suite
+        run: uv run pytest tests/src/unit/ -k "search or scene or transform" -q --tb=short --maxfail=0
+      - name: Lint and type checks
+        if: always()
+        run: |
+          uv run ruff check src/ custom_components/ tests/
+          uv run mypy src/ha_mcp/
