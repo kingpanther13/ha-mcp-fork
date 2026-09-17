@@ -1,0 +1,47 @@
+name: Issue 2477 regression validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.13'
+      - run: uv sync --all-extras --dev
+      - name: Search and scene regression suite
+        run: uv run pytest tests/src/unit/ -k "search or scene or transform or component" -q --tb=short --maxfail=0
+      - name: Lint and type checks
+        if: always()
+        run: |
+          uv run ruff check src/ custom_components/ tests/
+          uv run mypy src/ha_mcp/
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        no_component: ['0', '1']
+    env:
+      E2E_NO_TOOLS_ENTRY: ${{ matrix.no_component }}
+      HAMCP_ENV_FILE: tests/.env.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.13'
+      - run: uv sync --all-extras --dev
+      - name: Search and scene workflows on disposable HA
+        working-directory: tests
+        run: uv run pytest src/e2e/tools/test_search_entities.py src/e2e/tools/test_search_reference_graph.py src/e2e/workflows/scenes/ -q --tb=short --maxfail=0
