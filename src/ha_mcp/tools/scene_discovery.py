@@ -30,18 +30,22 @@ REGISTRY_CHUNK_SIZE = 500
 
 async def _component_inventory(client: Any) -> list[dict[str, Any]] | None:
     """Enumerate scenes through the existing capability-gated search command."""
-    caps = await get_component_caps(client)
-    if not (
-        component_supports(caps, "search")
-        and component_supports(caps, DEVICE_REGISTRY_CHILD_SEMANTICS)
-    ):
-        return None
-    assert caps is not None
-    advertised = caps.limits.get("max_results", 500)
-    limit = (
-        min(advertised, 500) if isinstance(advertised, int) and advertised > 0 else 500
-    )
     try:
+        caps = await get_component_caps(client)
+        if not (
+            component_supports(caps, "search")
+            and component_supports(caps, DEVICE_REGISTRY_CHILD_SEMANTICS)
+        ):
+            return None
+        assert caps is not None
+        advertised = caps.limits.get("max_results", 500)
+        limit = (
+            min(advertised, 500)
+            if isinstance(advertised, int)
+            and not isinstance(advertised, bool)
+            and advertised > 0
+            else 500
+        )
         async with asyncio.timeout(CONFIG_SCAN_TIMEOUT):
             ws = await get_websocket_client(
                 url=client.base_url,
@@ -76,6 +80,8 @@ async def _component_inventory_pages(
         if not isinstance(result, dict) or not isinstance(result.get("entities"), list):
             return None
         if not isinstance(result.get("entity_has_more"), bool):
+            return None
+        if result.get("partial") or result.get("diagnostics"):
             return None
         page = result["entities"]
         if not all(
@@ -186,14 +192,38 @@ async def _read_config(client: Any, row: dict[str, Any], query: str) -> None:
         row["config_status"] = "failed"
         logger.debug("Scene config discovery failed for %s: %r", row["entity_id"], exc)
         return
+    if not isinstance(envelope, dict):
+        row["config_status"] = "failed"
+        logger.debug(
+            "Scene config discovery returned a malformed envelope for %s",
+            row["entity_id"],
+        )
+        return
     config = envelope.get("config", envelope)
+    if not isinstance(config, dict):
+        row["config_status"] = "failed"
+        logger.debug(
+            "Scene config discovery returned a malformed config for %s",
+            row["entity_id"],
+        )
+        return
+    try:
+        match_in_config = bool(
+            query and query in json.dumps(config, ensure_ascii=False).casefold()
+        )
+    except (TypeError, ValueError) as exc:
+        row["config_status"] = "failed"
+        logger.debug(
+            "Scene config discovery could not serialize %s: %r",
+            row["entity_id"],
+            exc,
+        )
+        return
     row.update(
         scene_id=envelope.get("scene_id") or config.get("id") or resolution.storage_key,
         config_available=True,
         config_status="available",
-        match_in_config=bool(
-            query and query in json.dumps(config, ensure_ascii=False).casefold()
-        ),
+        match_in_config=match_in_config,
     )
 
 

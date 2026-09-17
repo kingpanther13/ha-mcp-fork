@@ -210,6 +210,71 @@ async def test_component_inventory_failure_falls_back_to_rest(
     scene_client.get_states.assert_awaited_once()
 
 
+async def test_component_capability_failure_falls_back_to_rest(
+    scene_client, monkeypatch
+):
+    from ha_mcp.tools import scene_discovery as discovery
+
+    monkeypatch.setattr(
+        discovery, "get_component_caps", AsyncMock(side_effect=OSError("offline"))
+    )
+
+    result = await ConfigSceneTools(scene_client).ha_config_get_scene()
+
+    assert result["total"] == 2
+    scene_client.get_states.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "incomplete_signal",
+    [
+        {"partial": True, "partial_reason": "snapshot incomplete"},
+        {"diagnostics": {"entities": "registry unavailable"}},
+    ],
+)
+async def test_incomplete_component_inventory_falls_back_to_rest(
+    scene_client, monkeypatch, incomplete_signal
+):
+    from ha_mcp.tools import scene_discovery as discovery
+    from ha_mcp.tools.component_api import (
+        DEVICE_REGISTRY_CHILD_SEMANTICS,
+        ComponentCaps,
+    )
+
+    caps = ComponentCaps(
+        1, "2.1.0", frozenset({"search", DEVICE_REGISTRY_CHILD_SEMANTICS}), {}
+    )
+    monkeypatch.setattr(discovery, "get_component_caps", AsyncMock(return_value=caps))
+    ws = MagicMock()
+    ws.send_command = AsyncMock(
+        return_value={
+            "result": {
+                "entities": [{"entity_id": "scene.renamed", "friendly_name": "Movie"}],
+                "entity_has_more": False,
+                **incomplete_signal,
+            }
+        }
+    )
+    monkeypatch.setattr(discovery, "get_websocket_client", AsyncMock(return_value=ws))
+
+    result = await ConfigSceneTools(scene_client).ha_config_get_scene()
+
+    assert result["total"] == 2
+    scene_client.get_states.assert_awaited_once()
+
+
+async def test_malformed_config_is_reported_as_partial(scene_client):
+    scene_client.get_scene_config.return_value = {"config": None}
+
+    result = await ConfigSceneTools(scene_client).ha_config_get_scene(
+        query="northern lights", search_in_config=True
+    )
+
+    assert result["partial"] is True
+    assert result["config_scan"]["failed"] == 1
+    assert result["total_is_exact"] is False
+
+
 async def test_content_timeout_cancels_reads_and_reports_incomplete_total(
     scene_client, monkeypatch
 ):

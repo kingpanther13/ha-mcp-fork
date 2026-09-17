@@ -1170,8 +1170,8 @@ def _dashboard_split_serviceable(req: _ResolvedSearch, caps: Any) -> bool:
       ``search_types=["dashboard"]`` would send an empty request and leave the
       split as a dashboards leg wearing a component envelope — the legacy path
       already produces exactly that, with its own bucket.
-    - The window fetch would ask for more records than the component's
-      ``limit`` ceiling (``_component_max_results``), which its schema rejects
+    - On older components without ``search_unified``, the window fetch would
+      ask for more records than the component's ``limit`` ceiling (``_component_max_results``), which its schema rejects
       outright.
     """
     serves_body = req.body_eligible and bool(_component_body_search_types(req))
@@ -1423,6 +1423,15 @@ def _component_config_payload(
     return payload
 
 
+def _component_entity_search_mode(req: _ResolvedSearch) -> str:
+    """Retain each public listing mode while using component matching."""
+    if (req.area_filter or "").strip():
+        return "area_filtered_query" if req.query_text else "area_only"
+    if req.query_text:
+        return "exact_match" if req.exact_match else "fuzzy_search"
+    return "domain_listing" if (req.domain_filter or "").strip() else "state_listing"
+
+
 def _shape_component_search_response(
     req: _ResolvedSearch,
     component_result: dict[str, Any],
@@ -1478,15 +1487,7 @@ def _shape_component_search_response(
             "offset": req.offset,
             "limit": req.limit,
             "count": len(entities),
-            "search_type": (
-                ("area_filtered_query" if req.query_text else "area_only")
-                if (req.area_filter or "").strip()
-                else (
-                    ("exact_match" if req.exact_match else "fuzzy_search")
-                    if req.query_text
-                    else ("domain_listing" if req.domain_filter else "state_listing")
-                )
-            ),
+            "search_type": _component_entity_search_mode(req),
         }
         domain_filter = _normalized_domain_filter(req.domain_filter)
         if domain_filter:

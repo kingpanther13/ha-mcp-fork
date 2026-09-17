@@ -1120,7 +1120,8 @@ class TestDashboardSearchTypesGate:
         assert resp["success"] is True
         assert resp["dashboards"][0]["url_path"] == "energy"
         assert not resp.get("partial")
-        assert resp.get("warnings", []) == []
+        assert len(resp["warnings"]) == 1
+        assert "entity search skipped" in resp["warnings"][0]
         # Zero legacy lovelace round-trips.
         assert client.ws_types.get("lovelace/dashboards/list", 0) == 0
         assert client.ws_types.get("lovelace/config", 0) == 0
@@ -1154,7 +1155,8 @@ class TestDashboardSearchTypesGate:
             f"a config-less auto-generated dashboard must not flag the "
             f"ha_search envelope partial; got {resp.get('partial_reason')!r}"
         )
-        assert resp.get("warnings", []) == []
+        assert len(resp["warnings"]) == 1
+        assert "entity search skipped" in resp["warnings"][0]
         # Both dashboards were visited: the registry one answered
         # config_not_found, the default one served a clean config.
         assert client.ws_types["lovelace/config"] == 2
