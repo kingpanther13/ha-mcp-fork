@@ -1,0 +1,19 @@
+name: Issue 2477 regression validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.13'
+      - run: uv sync --all-extras --dev
+      - name: Regression tests against unchanged production
+        run: uv run pytest tests/src/unit/test_search_unified_routing.py tests/src/unit/test_component_search_locations.py tests/src/unit/test_scene_discovery.py -q --tb=short
