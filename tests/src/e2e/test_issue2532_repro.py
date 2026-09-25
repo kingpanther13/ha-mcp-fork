@@ -4,10 +4,12 @@ import json
 import socket
 import time
 from pathlib import Path
+from typing import Any
 
 import docker
 import pytest
 import requests
+from docker.models.containers import Container
 
 from .utilities.streamable_http import parse_mcp_response
 
@@ -15,19 +17,19 @@ IMAGES = ["7.6.0", "8.5.0"]
 EVIDENCE = Path("issue2532-evidence")
 
 
-def save(name, value):
+def save(name: str, value: str) -> None:
     EVIDENCE.mkdir(exist_ok=True)
     (EVIDENCE / name).write_text(value)
     print(value)
 
 
-def free_port():
+def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
 
 
-def wait_for_start(container):
+def wait_for_start(container: Container) -> tuple[bool, str]:
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         container.reload()
@@ -39,7 +41,9 @@ def wait_for_start(container):
     return False, logs
 
 
-def rpc(url, method, params, headers, number):
+def rpc(
+    url: str, method: str, params: dict[str, Any], headers: dict[str, str], number: int
+) -> dict[str, Any]:
     response = requests.post(
         url,
         headers=headers,
@@ -61,7 +65,7 @@ def rpc(url, method, params, headers, number):
     return payload["result"]
 
 
-def check_mcp(port):
+def check_mcp(port: int) -> dict[str, Any]:
     url = f"http://127.0.0.1:{port}/mcp"
     headers = {"Accept": "application/json, text/event-stream"}
     init = rpc(
@@ -93,13 +97,13 @@ def check_mcp(port):
         "tools/call",
         {
             "name": "ha_get_entity",
-            "arguments": {"entity_id": "sun.sun"},
+            "arguments": {"entity_id": "light.bed_light"},
         },
         headers,
         3,
     )
     assert not result.get("isError"), result
-    assert "sun.sun" in json.dumps(result), result
+    assert "light.bed_light" in json.dumps(result), result
     return {
         "initialize": init,
         "tool_count": len(catalog["tools"]),
@@ -108,7 +112,7 @@ def check_mcp(port):
 
 
 @pytest.mark.parametrize("version", IMAGES)
-def test_runtime_layout(version):
+def test_runtime_layout(version: str) -> None:
     client = docker.from_env()
     image = f"ghcr.io/homeassistant-ai/ha-mcp:{version}"
     code = (
@@ -125,6 +129,8 @@ def test_runtime_layout(version):
             {
                 "layout": layout,
                 "digests": client.images.get(image).attrs["RepoDigests"],
+                "architecture": client.images.get(image).attrs["Architecture"],
+                "os": client.images.get(image).attrs["Os"],
             },
             indent=2,
         ),
@@ -145,7 +151,9 @@ def test_runtime_layout(version):
         "bare-sse-none",
     ],
 )
-def test_launcher(version, mode, ha_container_with_fresh_config):
+def test_launcher(
+    version: str, mode: str, ha_container_with_fresh_config: dict[str, Any]
+) -> None:
     ha = ha_container_with_fresh_config
     port = free_port()
     image = f"ghcr.io/homeassistant-ai/ha-mcp:{version}"
@@ -155,7 +163,6 @@ def test_launcher(version, mode, ha_container_with_fresh_config):
         "MCP_HOST": "127.0.0.1",
         "MCP_PORT": str(port),
         "MCP_SECRET_PATH": "/mcp",
-        "HA_MCP_DISABLE_SETTINGS_UI": "true",
         "MCP_HEALTHZ": "true",
         "HA_MCP_CONFIG_DIR": "/tmp/issue2532",
     }
@@ -209,7 +216,9 @@ asyncio.run(probe())"""
             assert result.exit_code == 0, result.output.decode()
             outcome["ha_websocket"] = json.loads(result.output)
         save(f"{version}-{mode}.json", json.dumps(outcome, indent=2))
-        if mode == "official-http" or mode.endswith("-none"):
+        if mode != "legacy-command" and (
+            version == "7.6.0" or mode not in ("bare-http", "bare-sse")
+        ):
             assert ready, logs
         if version == "8.5.0" and mode in ("bare-http", "bare-sse"):
             assert not ready
