@@ -15,7 +15,7 @@ jobs:
         schema: [original]
         # prompt: explicit array instruction in the user prompt, no error feedback
         # ha: wrapped calls get today's HA 400 text back; explicit: wrapped calls get an error naming the {"item"} shape
-        variant: [explicit]
+        variant: [dashboard]
         rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       - run: npm i -g opencode-ai@1.18.32 && opencode --version
       - name: Write opencode config
         run: |
-          ERRMODE=${{ matrix.variant }}; [ "$ERRMODE" = prompt ] && ERRMODE=none
+          ERRMODE=none
           cat > opencode.json <<EOF
           {"\$schema": "https://opencode.ai/config.json",
            "mcp": {"stubha": {"type": "local", "command": ["python", "stub_mcp.py"], "enabled": true,
@@ -41,19 +41,12 @@ jobs:
           VARIANT: ${{ matrix.variant }}
         run: |
           mkdir -p logs
-          A="Use the stubha ha_config_set_automation tool to create an automation: alias 'setpoint apply', triggered by state change of input_number.helper_1, action climate.set_temperature on climate.office with temperature from the helper."
-          S="Use the stubha ha_config_set_script tool to create script_id apply_setpoint: alias 'apply setpoint', whose sequence first increments input_number.helper_1 and then calls climate.set_temperature on climate.office with temperature from the helper."
-          if [ "$VARIANT" = prompt ]; then
-            X=" Important: triggers, conditions, actions and sequence must be JSON arrays, e.g. \"actions\": [{...}, {...}] - never an object such as {\"item\": ...}. Make that one call, then stop."
-          else
-            X=" If the tool returns an error, correct the config and call it again, up to 3 attempts in total. Stop as soon as it succeeds."
-          fi
+          P="Use the stubha ha_config_set_dashboard tool to create dashboard url_path 'test-dash': one sections-type view titled Home with a section titled Climate containing a tile card for climate.office and a tile card for input_number.helper_1, plus a second masonry view titled Lights with an entities card listing light.kitchen and light.hall. Make that one call, then stop."
           for i in $(seq 1 10); do
-            if [ $((i % 2)) -eq 1 ]; then P="$A$X"; T=automation; else P="$S$X"; T=script; fi
             rm -f wire.log
             timeout 300 opencode run -m "$MODEL" "$P" > logs/run$i.out 2>&1 || true
             [ -f wire.log ] && cp wire.log logs/run$i.wire.log
-            echo "{\"run\": $i, \"tool\": \"$T\", \"result\": $(python classify.py wire.log)}" | tee -a results.jsonl
+            echo "{\"run\": $i, \"wrapped_paths\": $(python classify_dash.py wire.log)}" | tee -a results.jsonl
           done
       - uses: actions/upload-artifact@v4
         if: always()

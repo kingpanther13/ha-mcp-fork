@@ -42,6 +42,20 @@ def config_schema(desc, list_keys):
 
 TOOLS = [
     {
+        "name": "ha_config_set_dashboard",
+        "description": "Create or update a Home Assistant Lovelace dashboard. config holds views (list), each with cards or sections (lists).",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "url_path": {"type": "string", "description": "Dashboard URL path, hyphenated."},
+                "config": {"anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}], "default": None,
+                           "description": "Dashboard configuration with views and cards."},
+            },
+            "required": ["url_path"],
+        },
+    },
+    {
         "name": "ha_config_set_automation",
         "description": "Create or update a Home Assistant automation. config needs alias, triggers (list) and actions (list).",
         "inputSchema": {
