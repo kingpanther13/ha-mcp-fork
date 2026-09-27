@@ -25,9 +25,11 @@ def error_for(name, keys):
         return {"success": False, "error": {"code": "VALIDATION_FAILED", "message": f"{prefix}API error: 400 - Message malformed: {FIRST_ERR[keys[0]]}",
                 "suggestion": "Check automation configuration format"}}
     names = ", ".join(f"'{k}'" for k in keys)
-    return {"success": False, "error": {"code": "VALIDATION_FAILED",
-            "message": f"config {names} arrived as an object {{\"item\": ...}} instead of a JSON array; nothing was sent to Home Assistant.",
-            "suggestion": f"Send {names} as a JSON array, e.g. \"{keys[0]}\": [{{...}}, {{...}}]."}}
+    return {"success": False, "error": {"code": "VALIDATION_INVALID_PARAMETER",
+            "message": f'config {names} was received as {{"item": ...}} instead of a JSON array; nothing was sent to Home Assistant',
+            "suggestions": [f'Send {names} as a JSON array, e.g. "{keys[0]}": [{{...}}, {{...}}]',
+                            'If it still arrives as {"item": ...}, pass the whole config as one JSON-encoded string',
+                            "If neither works, check the model or MCP client in use"]}}
 ARR = {"type": "array", "items": {"type": "object"}}
 
 
@@ -81,7 +83,13 @@ for raw in sys.stdin:
     if method == "tools/call":
         with open(LOG, "a", encoding="utf-8") as f:
             f.write(raw + "\n")
-        keys = wrapped_keys(msg["params"].get("arguments", {}).get("config"))
+        cfg = msg["params"].get("arguments", {}).get("config")
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except ValueError:
+                pass
+        keys = wrapped_keys(cfg)
         if keys and ERRMODE != "none":
             body = error_for(msg["params"]["name"], keys)
             send({"jsonrpc": "2.0", "id": mid, "result": {"isError": True, "content": [{"type": "text", "text": json.dumps(body)}]}})

@@ -15,7 +15,8 @@ jobs:
         schema: [original]
         # prompt: explicit array instruction in the user prompt, no error feedback
         # ha: wrapped calls get today's HA 400 text back; explicit: wrapped calls get an error naming the {"item"} shape
-        variant: [prompt, ha, explicit]
+        variant: [explicit]
+        rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -57,7 +58,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: retry-${{ matrix.variant }}
+          name: final-${{ matrix.variant }}-${{ matrix.rep }}
           path: |
             results.jsonl
             logs/

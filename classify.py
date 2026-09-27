@@ -14,9 +14,13 @@ def classify(path):
     verdicts, shapes = [], {}
     for l in lines:
         cfg = json.loads(l)["params"]["arguments"].get("config")
+        prefix = ""
         if isinstance(cfg, str):
-            verdicts.append("stringified")
-            continue
+            try:
+                cfg, prefix = json.loads(cfg), "string:"
+            except ValueError:
+                verdicts.append("string:invalid_json")
+                continue
         shapes = {}
         if not isinstance(cfg, dict):
             verdicts.append("other")
@@ -31,7 +35,7 @@ def classify(path):
                 shapes[k] = "item-wrapped"
             else:
                 shapes[k] = type(v).__name__
-        verdicts.append("wrapped" if "item-wrapped" in shapes.values() else "clean")
+        verdicts.append(prefix + ("wrapped" if "item-wrapped" in shapes.values() else "clean"))
     return verdicts, shapes
 
 
