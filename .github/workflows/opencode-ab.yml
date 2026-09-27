@@ -15,7 +15,7 @@ jobs:
         schema: [original]
         # prompt: explicit array instruction in the user prompt, no error feedback
         # ha: wrapped calls get today's HA 400 text back; explicit: wrapped calls get an error naming the {"item"} shape
-        variant: [dashboard]
+        variant: [automation, script, dashboard]
         rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       - run: npm i -g opencode-ai@1.18.32 && opencode --version
       - name: Write opencode config
         run: |
-          ERRMODE=none
+          ERRMODE=explicit
           cat > opencode.json <<EOF
           {"\$schema": "https://opencode.ai/config.json",
            "mcp": {"stubha": {"type": "local", "command": ["python", "stub_mcp.py"], "enabled": true,
@@ -41,12 +41,17 @@ jobs:
           VARIANT: ${{ matrix.variant }}
         run: |
           mkdir -p logs
-          P="Use the stubha ha_config_set_dashboard tool to create dashboard url_path 'test-dash': one sections-type view titled Home with a section titled Climate containing a tile card for climate.office and a tile card for input_number.helper_1, plus a second masonry view titled Lights with an entities card listing light.kitchen and light.hall. Make that one call, then stop."
+          R=" If the tool returns an error, correct the config and call it again, up to 3 attempts in total. Stop as soon as it succeeds."
+          case "$VARIANT" in
+            automation) P="Use the stubha ha_config_set_automation tool to create an automation: alias 'setpoint apply', triggered by state change of input_number.helper_1, only when sun.sun is above_horizon, action climate.set_temperature on climate.office with temperature from the helper.$R";;
+            script) P="Use the stubha ha_config_set_script tool to create script_id apply_setpoint: alias 'apply setpoint', whose sequence first increments input_number.helper_1 and then calls climate.set_temperature on climate.office with temperature from the helper.$R";;
+            dashboard) P="Use the stubha ha_config_set_dashboard tool to create dashboard url_path 'test-dash': one sections-type view titled Home with a section titled Climate containing a tile card for climate.office and a tile card for input_number.helper_1, plus a second masonry view titled Lights with an entities card listing light.kitchen and light.hall.$R";;
+          esac
           for i in $(seq 1 10); do
             rm -f wire.log
             timeout 300 opencode run -m "$MODEL" "$P" > logs/run$i.out 2>&1 || true
             [ -f wire.log ] && cp wire.log logs/run$i.wire.log
-            echo "{\"run\": $i, \"wrapped_paths\": $(python classify_dash.py wire.log)}" | tee -a results.jsonl
+            echo "{\"run\": $i, \"calls\": $(python classify_final.py wire.log)}" | tee -a results.jsonl
           done
       - uses: actions/upload-artifact@v4
         if: always()

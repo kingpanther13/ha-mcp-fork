@@ -13,23 +13,42 @@ FIRST_ERR = {"triggers": "required key not provided at 'triggers[0].trigger'", "
              "sequence": "Unable to determine action at 'sequence[0]'"}
 
 
-def wrapped_keys(cfg):
+def _bad(v):
+    return v == "" or (isinstance(v, dict) and list(v) == ["item"])
+
+
+def malformed(name, cfg):
+    """Mirror of the PR's checks: returns {path: shape} for flagged list fields."""
     if not isinstance(cfg, dict):
-        return []
-    return [k for k in LIST_KEYS if isinstance(cfg.get(k), dict) and list(cfg[k]) == ["item"]]
+        return {}
+    if name == "ha_config_set_dashboard":
+        fields = {"views": cfg.get("views")}
+        views = cfg.get("views")
+        for i, v in enumerate(views if isinstance(views, list) else []):
+            if isinstance(v, dict):
+                for k in ("cards", "sections", "badges"):
+                    fields[f"views[{i}].{k}"] = v.get(k)
+                secs = v.get("sections")
+                for j, sec in enumerate(secs if isinstance(secs, list) else []):
+                    if isinstance(sec, dict):
+                        fields[f"views[{i}].sections[{j}].cards"] = sec.get("cards")
+    elif name == "ha_config_set_script":
+        fields = {"sequence": cfg.get("sequence")}
+    else:
+        fields = {k: cfg.get(k) for k in ("triggers", "trigger", "conditions", "condition", "actions", "action")}
+    return {k: ('{"item": ...}' if isinstance(v, dict) else '""') for k, v in fields.items() if _bad(v)}
 
 
-def error_for(name, keys):
-    if ERRMODE == "ha":
-        prefix = "Invalid automation configuration: " if name == "ha_config_set_automation" else ""
-        return {"success": False, "error": {"code": "VALIDATION_FAILED", "message": f"{prefix}API error: 400 - Message malformed: {FIRST_ERR[keys[0]]}",
-                "suggestion": "Check automation configuration format"}}
-    names = ", ".join(f"'{k}'" for k in keys)
+def error_for(bad):
+    names = ", ".join(f"'{k}'" for k in bad)
+    shapes = "; ".join(f"'{k}' as {v}" for k, v in bad.items())
     return {"success": False, "error": {"code": "VALIDATION_INVALID_PARAMETER",
-            "message": f'config {names} was received as {{"item": ...}} instead of a JSON array; nothing was sent to Home Assistant',
-            "suggestions": [f'Send {names} as a JSON array, e.g. "{keys[0]}": [{{...}}, {{...}}]',
-                            'If it still arrives as {"item": ...}, pass the whole config as one JSON-encoded string',
+            "message": f"Received config {shapes} instead of a JSON array; nothing was sent to Home Assistant",
+            "suggestions": [f'Send {names} as a JSON array, e.g. "{next(iter(bad))}": [{{...}}, {{...}}], or omit an empty one',
+                            "If it still arrives malformed, pass the whole config as one JSON-encoded string",
                             "If neither works, check the model or MCP client in use"]}}
+
+
 ARR = {"type": "array", "items": {"type": "object"}}
 
 
@@ -103,9 +122,9 @@ for raw in sys.stdin:
                 cfg = json.loads(cfg)
             except ValueError:
                 pass
-        keys = wrapped_keys(cfg)
-        if keys and ERRMODE != "none":
-            body = error_for(msg["params"]["name"], keys)
+        bad = malformed(msg["params"]["name"], cfg)
+        if bad and ERRMODE != "none":
+            body = error_for(bad)
             send({"jsonrpc": "2.0", "id": mid, "result": {"isError": True, "content": [{"type": "text", "text": json.dumps(body)}]}})
         else:
             send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": '{"success": true}'}]}})
