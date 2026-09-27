@@ -8,15 +8,16 @@ def classify(path):
     try:
         lines = [l for l in open(path, encoding="utf-8") if l.strip()]
     except FileNotFoundError:
-        return "no_call", {}
+        return ["no_call"], {}
     if not lines:
-        return "no_call", {}
+        return ["no_call"], {}
     verdicts, shapes = [], {}
     for l in lines:
         cfg = json.loads(l)["params"]["arguments"].get("config")
         if isinstance(cfg, str):
             verdicts.append("stringified")
             continue
+        shapes = {}
         if not isinstance(cfg, dict):
             verdicts.append("other")
             continue
@@ -31,12 +32,9 @@ def classify(path):
             else:
                 shapes[k] = type(v).__name__
         verdicts.append("wrapped" if "item-wrapped" in shapes.values() else "clean")
-    for v in ("wrapped", "stringified", "other", "clean"):
-        if v in verdicts:
-            return v, shapes
-    return "other", shapes
+    return verdicts, shapes
 
 
 if __name__ == "__main__":
-    verdict, shapes = classify(sys.argv[1])
-    print(json.dumps({"verdict": verdict, "shapes": shapes}))
+    calls, shapes = classify(sys.argv[1])
+    print(json.dumps({"calls": calls, "first": calls[0], "final": calls[-1], "last_shapes": shapes}))

@@ -7,18 +7,15 @@ on:
 jobs:
   ab:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 5
       matrix:
-        model:
-          - opencode/big-pickle
-          - opencode/nemotron-3-ultra-free
-          - opencode/ling-3.0-flash-fin-free
-          - opencode/muse-spark-1.3-contributor-free
-          - opencode/mimo-v2.6-flash-free
-        schema: [original, hinted]
+        model: [opencode/big-pickle]
+        schema: [original]
+        # prompt: explicit array instruction in the user prompt, no error feedback
+        # ha: wrapped calls get today's HA 400 text back; explicit: wrapped calls get an error naming the {"item"} shape
+        variant: [prompt, ha, explicit]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,40 +27,37 @@ jobs:
       - run: npm i -g opencode-ai@1.18.32 && opencode --version
       - name: Write opencode config
         run: |
+          ERRMODE=${{ matrix.variant }}; [ "$ERRMODE" = prompt ] && ERRMODE=none
           cat > opencode.json <<EOF
           {"\$schema": "https://opencode.ai/config.json",
            "mcp": {"stubha": {"type": "local", "command": ["python", "stub_mcp.py"], "enabled": true,
-                              "environment": {"SCHEMA": "${{ matrix.schema }}", "WIRE_LOG": "${{ github.workspace }}/wire.log"}}}}
+                              "environment": {"SCHEMA": "${{ matrix.schema }}", "ERRMODE": "$ERRMODE", "WIRE_LOG": "${{ github.workspace }}/wire.log"}}}}
           EOF
+          cat opencode.json
       - name: Runs
         env:
           MODEL: ${{ matrix.model }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           mkdir -p logs
-          A="Use the stubha ha_config_set_automation tool to create an automation: alias 'setpoint apply', triggered by state change of input_number.helper_1, action climate.set_temperature on climate.office with temperature from the helper. Only make that one call, then stop."
-          S="Use the stubha ha_config_set_script tool to create script_id apply_setpoint: alias 'apply setpoint', whose sequence first increments input_number.helper_1 and then calls climate.set_temperature on climate.office with temperature from the helper. Only make that one call, then stop."
+          A="Use the stubha ha_config_set_automation tool to create an automation: alias 'setpoint apply', triggered by state change of input_number.helper_1, action climate.set_temperature on climate.office with temperature from the helper."
+          S="Use the stubha ha_config_set_script tool to create script_id apply_setpoint: alias 'apply setpoint', whose sequence first increments input_number.helper_1 and then calls climate.set_temperature on climate.office with temperature from the helper."
+          if [ "$VARIANT" = prompt ]; then
+            X=" Important: triggers, conditions, actions and sequence must be JSON arrays, e.g. \"actions\": [{...}, {...}] - never an object such as {\"item\": ...}. Make that one call, then stop."
+          else
+            X=" If the tool returns an error, correct the config and call it again, up to 3 attempts in total. Stop as soon as it succeeds."
+          fi
           for i in $(seq 1 10); do
-            if [ $((i % 2)) -eq 1 ]; then P="$A"; T=automation; else P="$S"; T=script; fi
+            if [ $((i % 2)) -eq 1 ]; then P="$A$X"; T=automation; else P="$S$X"; T=script; fi
             rm -f wire.log
-            timeout 240 opencode run -m "$MODEL" "$P" > logs/run$i.out 2>&1 || true
+            timeout 300 opencode run -m "$MODEL" "$P" > logs/run$i.out 2>&1 || true
             [ -f wire.log ] && cp wire.log logs/run$i.wire.log
             echo "{\"run\": $i, \"tool\": \"$T\", \"result\": $(python classify.py wire.log)}" | tee -a results.jsonl
           done
-      - name: Summary
-        if: always()
-        run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          import collections, json, os
-          rows = [json.loads(l) for l in open("results.jsonl")]
-          c = collections.Counter(r["result"]["verdict"] for r in rows)
-          print(f"### ${{ matrix.model }} / ${{ matrix.schema }}\n")
-          print(json.dumps(dict(c)))
-          EOF
-          cat results.jsonl
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ab-${{ strategy.job-index }}-${{ matrix.schema }}
+          name: retry-${{ matrix.variant }}
           path: |
             results.jsonl
             logs/
