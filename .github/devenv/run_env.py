@@ -45,9 +45,11 @@ def write_status(config: Path, **status: object) -> None:
 
 def install_component(config: Path) -> None:
     dest = config / "custom_components" / "ha_mcp_tools"
-    shutil.rmtree(dest, ignore_errors=True)
+    # HA runs as root in the container, so files it wrote here (__pycache__)
+    # are root-owned; the runner's user has passwordless sudo.
+    subprocess.run(["sudo", "rm", "-rf", str(dest)], check=True)
     shutil.copytree(SRC / "custom_components" / "ha_mcp_tools", dest)
-    e2e._setup_config_permissions(config)
+    subprocess.run(["sudo", "chmod", "-R", "a+rwX", str(config)], check=True)
 
 
 def main() -> None:
@@ -66,20 +68,20 @@ def main() -> None:
         try:
             git("fetch", "-q", "origin", TRACK_REF)
             head = git("rev-parse", "FETCH_HEAD")
-        except subprocess.CalledProcessError as err:
-            print("fetch failed", err, flush=True)
-            continue
-        if head == sha:
-            continue
-        changed = git("diff", "--name-only", sha, head).splitlines()
-        git("checkout", "-q", "-f", head)
-        sha = head
-        if any(p.startswith("custom_components/ha_mcp_tools/") for p in changed):
-            write_status(config, sha=sha, ready=False, restarting=True)
-            install_component(config)
-            container.get_wrapped_container().restart(timeout=60)
-            ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
-        write_status(config, sha=sha, ready=ready, booted_at=time.time())
+            if head == sha:
+                continue
+            changed = git("diff", "--name-only", sha, head).splitlines()
+            git("checkout", "-q", "-f", head)
+            sha = head
+            if any(p.startswith("custom_components/ha_mcp_tools/") for p in changed):
+                write_status(config, sha=sha, ready=False, restarting=True)
+                install_component(config)
+                container.get_wrapped_container().restart(timeout=30)
+                ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
+            write_status(config, sha=sha, ready=ready, booted_at=time.time())
+        except Exception as err:
+            # Publish the failure live; the job log is unreadable until it ends.
+            write_status(config, sha=sha, ready=False, error=f"{type(err).__name__}: {err}")
 
 
 if __name__ == "__main__":
