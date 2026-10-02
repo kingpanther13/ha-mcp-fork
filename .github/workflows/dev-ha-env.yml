@@ -1,0 +1,91 @@
+name: Dev HA environment
+
+# A long-running HA test instance behind a temporary Cloudflare tunnel. It
+# follows TRACK_REF and this branch: each new commit reloads the component and
+# reruns .github/devenv/scenarios/*.py, posting results as a "devenv scenarios"
+# check run on the tracked commit. The tunnel URL is the `devenv-url` artifact.
+on:
+  push:
+    branches: ["devenv/**"]
+  workflow_dispatch:
+    inputs:
+      track_ref:
+        description: Branch whose server, component and test config to run
+        required: true
+      ha_image:
+        description: HA container image
+        default: ghcr.io/home-assistant/home-assistant:2026.10.0b0
+      minutes:
+        description: How long to keep the instance up
+        default: "340"
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: dev-ha-env-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  TRACK_REF: ${{ inputs.track_ref || 'perf/2479-helper-schema' }}
+  HA_TEST_IMAGE: ${{ inputs.ha_image || 'ghcr.io/home-assistant/home-assistant:2026.10.0b0' }}
+  MINUTES: ${{ inputs.minutes || '340' }}
+
+jobs:
+  env:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: devenv
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TRACK_REF }}
+          path: src
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Install test dependencies
+        working-directory: src
+        run: uv sync --all-extras --dev
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+      - name: Boot HA and open the tunnel
+        env:
+          SRC_DIR: ${{ github.workspace }}/src
+          DEVENV_DIR: ${{ github.workspace }}/devenv
+          DEVENV_REF: ${{ github.ref_name }}
+          PORT_FILE: ${{ github.workspace }}/port
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          (cd src && nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 &)
+          for i in $(seq 1 120); do [ -s port ] && break; sleep 5; done
+          PORT=$(cat port)
+          nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > tunnel.log 2>&1 &
+          for i in $(seq 1 60); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
+            [ -n "$URL" ] && break; sleep 2
+          done
+          echo "$URL" > devenv-url.txt
+          echo "port=$PORT url=$URL"
+          tail -20 env.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devenv-url
+          path: devenv-url.txt
+          retention-days: 1
+      - name: Keep running
+        run: |
+          end=$(( $(date +%s) + MINUTES * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            sleep 60
+            grep -E "CHECK|Traceback|Error" env.log | tail -3 || true
+          done
+      - name: Logs
+        if: always()
+        run: tail -200 env.log; tail -50 tunnel.log
