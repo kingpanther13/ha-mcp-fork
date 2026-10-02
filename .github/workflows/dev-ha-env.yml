@@ -1,9 +1,9 @@
 name: Dev HA environment
 
-# A long-running HA test instance behind a temporary Cloudflare tunnel. It
-# follows TRACK_REF and this branch: each new commit reloads the component and
-# reruns .github/devenv/scenarios/*.py, posting results as a "devenv scenarios"
-# check run on the tracked commit. The tunnel URL is the `devenv-url` artifact.
+# A long-running HA test instance behind a temporary Cloudflare tunnel, for
+# live testing. It follows TRACK_REF: pushing component changes there
+# reinstalls the component and restarts HA. The tunnel URL is the `devenv-url`
+# artifact. Cancel the run when the task is done.
 on:
   push:
     branches: ["devenv/**"]
@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 concurrency:
   group: dev-ha-env-${{ github.ref_name }}
@@ -57,14 +56,15 @@ jobs:
       - name: Boot HA and open the tunnel
         env:
           SRC_DIR: ${{ github.workspace }}/src
-          DEVENV_DIR: ${{ github.workspace }}/devenv
-          DEVENV_REF: ${{ github.ref_name }}
           PORT_FILE: ${{ github.workspace }}/port
-          GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          (cd src && nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 &)
-          for i in $(seq 1 120); do [ -s port ] && break; sleep 5; done
+          (cd src && nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 & echo $! > ../runner.pid)
+          for i in $(seq 1 120); do
+            [ -s port ] && break
+            kill -0 "$(cat runner.pid)" 2>/dev/null || break
+            sleep 5
+          done
           if [ ! -s port ]; then echo "HA never came up"; tail -100 env.log; exit 1; fi
           PORT=$(cat port)
           nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > tunnel.log 2>&1 &
@@ -85,7 +85,7 @@ jobs:
           end=$(( $(date +%s) + MINUTES * 60 ))
           while [ "$(date +%s)" -lt "$end" ]; do
             sleep 60
-            grep -E "CHECK|Traceback|Error" env.log | tail -3 || true
+            grep -E "STATUS|Traceback|Error" env.log | tail -3 || true
           done
       - name: Logs
         if: always()

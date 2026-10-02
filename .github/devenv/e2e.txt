@@ -1,3 +1,0 @@
-# pytest args (one per line, relative to tests/) run against the live devenv HA.
-src/e2e/workflows/config/test_helper_crud.py
-src/e2e/workflows/config/test_helper_field_persistence.py
