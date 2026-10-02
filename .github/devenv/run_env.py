@@ -77,8 +77,10 @@ def main() -> None:
                 write_status(config, sha=sha, ready=False, restarting=True)
                 install_component(config)
                 container.get_wrapped_container().restart(timeout=30)
+                port = container.get_exposed_port(8123)
+                base_url = f"http://localhost:{port}"
                 ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
-            write_status(config, sha=sha, ready=ready, booted_at=time.time())
+            write_status(config, sha=sha, ready=ready, port=port, booted_at=time.time())
         except Exception as err:
             # Publish the failure live; the job log is unreadable until it ends.
             write_status(config, sha=sha, ready=False, error=f"{type(err).__name__}: {err}")

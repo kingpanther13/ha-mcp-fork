@@ -30,6 +30,8 @@ env:
   TRACK_REF: ${{ inputs.track_ref || 'perf/2479-helper-schema' }}
   HA_TEST_IMAGE: ${{ inputs.ha_image || 'ghcr.io/home-assistant/home-assistant:2026.10.0b0' }}
   MINUTES: ${{ inputs.minutes || '340' }}
+  # A fixed host port survives container restarts, so the tunnel target holds.
+  HA_TEST_PORT: "8123"
 
 jobs:
   env:
@@ -92,4 +94,6 @@ jobs:
           done
       - name: Logs
         if: always()
-        run: tail -200 env.log; tail -50 tunnel.log
+        run: |
+          docker ps --format '{{.Image}} {{.Status}} {{.Ports}}' || true
+          tail -200 env.log; tail -50 tunnel.log
