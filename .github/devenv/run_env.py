@@ -3,8 +3,9 @@
 Boots HA exactly as the e2e suite does (same config staging and container
 builder). Every POLL_S it fetches TRACK_REF and this devenv branch; on a new
 commit it reinstalls custom_components/ha_mcp_tools (restarting HA when the
-component changed), runs every .github/devenv/scenarios/*.py against the
-instance, and posts the combined output as a check run on the tracked commit.
+component changed), runs every .github/devenv/scenarios/*.py and the e2e
+selection in .github/devenv/e2e.txt against the instance, and posts the
+combined output as a check run on the tracked commit.
 """
 
 from __future__ import annotations
@@ -56,8 +57,26 @@ def install_component(config: Path) -> None:
     e2e._setup_config_permissions(config)
 
 
-def run_scenarios(base_url: str) -> tuple[bool, str]:
-    env = {**os.environ, "HA_URL": base_url, "HA_TOKEN": TEST_TOKEN}
+def run_e2e(env: dict[str, str]) -> tuple[bool, str] | None:
+    """Run the e2e selection (pytest args, one line each) on the live instance."""
+    selection = DEVENV / ".github" / "devenv" / "e2e.txt"
+    lines = selection.read_text().splitlines() if selection.exists() else []
+    args = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    if not args:
+        return None
+    proc = subprocess.run(
+        ["uv", "run", "--project", str(SRC), "pytest", "-p", "devenv_plugin",
+         "-q", "-rfE", "--no-header", "-p", "no:cacheprovider", *args],
+        cwd=SRC / "tests", capture_output=True, text=True, timeout=3000,
+        env={**env, "PYTHONPATH": str(DEVENV / ".github" / "devenv")},
+    )  # fmt: skip
+    status = "PASS" if proc.returncode == 0 else f"FAIL ({proc.returncode})"
+    output = f"{proc.stdout[-30000:]}{proc.stderr[-6000:]}"
+    return proc.returncode == 0, f"## e2e {' '.join(args)}: {status}\n```\n{output}\n```"
+
+
+def run_scenarios(base_url: str, live: dict[str, str]) -> tuple[bool, str]:
+    env = {**os.environ, "HA_URL": base_url, "HA_TOKEN": TEST_TOKEN, **live}
     ok, parts = True, []
     for script in sorted((DEVENV / ".github" / "devenv" / "scenarios").glob("*.py")):
         proc = subprocess.run(
@@ -68,6 +87,9 @@ def run_scenarios(base_url: str) -> tuple[bool, str]:
         status = "PASS" if proc.returncode == 0 else f"FAIL ({proc.returncode})"
         parts.append(f"## {script.name}: {status}\n```\n{proc.stdout[-20000:]}"
                      f"{proc.stderr[-8000:]}\n```")  # fmt: skip
+    if (e2e_result := run_e2e(env)) is not None:
+        ok &= e2e_result[0]
+        parts.append(e2e_result[1])
     return ok, "\n\n".join(parts) or "no scenarios"
 
 
@@ -99,9 +121,14 @@ def main() -> None:
     if port_file := os.environ.get("PORT_FILE"):
         Path(port_file).write_text(str(port))
     e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
+    live = {
+        "DEVENV_CONFIG": str(config),
+        "DEVENV_CONTAINER": container.get_wrapped_container().id,
+        "DEVENV_PORT": str(port),
+    }
     sha = git(SRC, "rev-parse", "HEAD")
     devenv_sha = git(DEVENV, "rev-parse", "HEAD")
-    post_check(sha, devenv_sha, *run_scenarios(base_url))
+    post_check(sha, devenv_sha, *run_scenarios(base_url, live))
 
     while True:
         time.sleep(POLL_S)
@@ -117,7 +144,7 @@ def main() -> None:
             install_component(config)
             container.get_wrapped_container().restart(timeout=60)
             e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
-        post_check(sha, devenv_sha, *run_scenarios(base_url))
+        post_check(sha, devenv_sha, *run_scenarios(base_url, live))
 
 
 if __name__ == "__main__":

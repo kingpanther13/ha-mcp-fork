@@ -65,6 +65,7 @@ jobs:
         run: |
           (cd src && nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 &)
           for i in $(seq 1 120); do [ -s port ] && break; sleep 5; done
+          if [ ! -s port ]; then echo "HA never came up"; tail -100 env.log; exit 1; fi
           PORT=$(cat port)
           nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > tunnel.log 2>&1 &
           for i in $(seq 1 60); do
