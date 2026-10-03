@@ -1,0 +1,41 @@
+name: Dev pytest on tracked branch
+
+# Fork-only helper: runs lint and a pytest selection from TRACK_REF on a
+# GitHub runner, so iteration never runs the suite on the resource-limited
+# dev box. Never ships in an upstream PR.
+on:
+  workflow_dispatch:
+    inputs:
+      track_ref:
+        description: Branch to test
+        required: true
+      pytest_args:
+        description: pytest selection and flags
+        default: "tests/src/unit/"
+      lint:
+        description: Run ruff + mypy first
+        default: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.track_ref }}
+          fetch-depth: 0
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --all-extras --dev
+      - name: ruff + mypy
+        if: inputs.lint == 'true'
+        run: |
+          uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ packaging/ scripts/
+          uv run ruff format --check src/ tests/ custom_components/
+          uv run mypy src/ custom_components/ homeassistant-addon/ scripts/
+      - name: pytest
+        run: uv run pytest ${{ inputs.pytest_args }} -n auto --tb=short -v

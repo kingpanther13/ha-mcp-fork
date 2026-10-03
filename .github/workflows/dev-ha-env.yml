@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TRACK_REF: ${{ inputs.track_ref || 'perf/2479-helper-schema' }}
+  TRACK_REF: ${{ inputs.track_ref || 'fix/issue-2619-area-sensor-refs' }}
   HA_TEST_IMAGE: ${{ inputs.ha_image || 'ghcr.io/home-assistant/home-assistant:2026.10.0b0' }}
   MINUTES: ${{ inputs.minutes || '340' }}
   # A fixed host port survives container restarts, so the tunnel target holds.
