@@ -32,6 +32,10 @@ env:
   MINUTES: ${{ inputs.minutes || '340' }}
   # A fixed host port survives container restarts, so the tunnel target holds.
   HA_TEST_PORT: "8123"
+  # devenv/nocomp*: no ha_mcp_tools component at all, as the no-component e2e lane.
+  E2E_NO_TOOLS_ENTRY: ${{ contains(github.ref_name, 'nocomp') && '1' || '' }}
+  # The tracked branch's server runs beside HA; its tunnel is in devenv-url too.
+  MCP_PORT: "8086"
 
 jobs:
   env:
@@ -47,6 +51,7 @@ jobs:
           ref: ${{ env.TRACK_REF }}
           path: src
           fetch-depth: 0
+          submodules: recursive
       - uses: astral-sh/setup-uv@v6
       - name: Install test dependencies
         working-directory: src
@@ -61,6 +66,8 @@ jobs:
           PORT_FILE: ${{ github.workspace }}/port
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          SECRET="mcp-$(openssl rand -hex 16)"
+          export MCP_SECRET_PATH="/$SECRET"
           cd src
           nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 &
           echo $! > ../runner.pid
@@ -78,6 +85,12 @@ jobs:
             [ -n "$URL" ] && break; sleep 2
           done
           echo "$URL" > devenv-url.txt
+          nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$MCP_PORT" > tunnel-mcp.log 2>&1 &
+          for i in $(seq 1 60); do
+            MURL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel-mcp.log | head -1)
+            [ -n "$MURL" ] && break; sleep 2
+          done
+          echo "$MURL/$SECRET" >> devenv-url.txt
           echo "port=$PORT url=$URL"
           tail -20 env.log
       - uses: actions/upload-artifact@v4
@@ -96,4 +109,4 @@ jobs:
         if: always()
         run: |
           docker ps --format '{{.Image}} {{.Status}} {{.Ports}}' || true
-          tail -200 env.log; tail -50 tunnel.log
+          tail -200 env.log; tail -50 tunnel.log; tail -100 server.log || true
