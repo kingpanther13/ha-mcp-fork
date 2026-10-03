@@ -6,6 +6,9 @@ name: Dev HAOS embedded environment
 # that sleeps. The tunnel URL and the embedded webhook path are published as the
 # `devenv-haos` artifact. Cancel the run when done.
 on:
+  # A push to devenv-haos/<name> runs the ref named in .github/devenv/haos-track-ref.
+  push:
+    branches: ["devenv-haos/**"]
   workflow_dispatch:
     inputs:
       track_ref:
@@ -19,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-haos-env-${{ inputs.track_ref }}
+  group: dev-haos-env-${{ github.ref_name }}-${{ inputs.track_ref }}
   cancel-in-progress: true
 
 env:
@@ -34,9 +37,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: devenv
+      - name: Resolve the tracked ref
+        id: ref
+        run: |
+          ref="${{ inputs.track_ref }}"
+          [ -n "$ref" ] || ref=$(cat devenv/.github/devenv/haos-track-ref)
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.track_ref }}
+          ref: ${{ steps.ref.outputs.ref }}
           path: src
           submodules: true
           fetch-depth: 0
@@ -94,7 +103,7 @@ jobs:
           HAOS_TEST_MODE: embedded
           GITHUB_TOKEN: ${{ github.token }}
           DEVENV_INFO: ${{ github.workspace }}/devenv-info.json
-          DEVENV_MINUTES: ${{ inputs.minutes }}
+          DEVENV_MINUTES: ${{ inputs.minutes || '300' }}
         run: |
           cp devenv/.github/devenv/test_devenv_haos_hold.py src/tests/src/e2e/
           cd src/tests
