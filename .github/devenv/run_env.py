@@ -26,7 +26,11 @@ POLL_S = 20
 sys.path.insert(0, str(SRC / "tests"))
 os.chdir(SRC)
 
-from src.e2e import conftest as e2e  # noqa: E402
+from src.e2e._conftest_readiness import _wait_for_ha_api_ready  # noqa: E402
+from src.e2e._conftest_testcontainer import (  # noqa: E402
+    _build_ha_testcontainer,
+    _prepare_testcontainer_config,
+)
 from test_constants import TEST_TOKEN  # noqa: E402
 
 HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}"}
@@ -67,14 +71,14 @@ def install_component(config: Path) -> None:
 
 
 def main() -> None:
-    config, _, _, _ = e2e._prepare_testcontainer_config(embedded=False)
-    container = e2e._build_ha_testcontainer(config, False, None)
+    config, _, _, _ = _prepare_testcontainer_config(embedded=False)
+    container = _build_ha_testcontainer(config, False, None)
     container.start()
     port = container.get_exposed_port(8123)
     base_url = f"http://localhost:{port}"
     PORT_FILE.write_text(str(port))
     sha = git("rev-parse", "HEAD")
-    ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
+    ready = _wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
     write_status(config, sha=sha, ready=ready, booted_at=time.time())
     server = start_server(base_url)
 
@@ -94,7 +98,7 @@ def main() -> None:
                 container.get_wrapped_container().restart(timeout=30)
                 port = container.get_exposed_port(8123)
                 base_url = f"http://localhost:{port}"
-                ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
+                ready = _wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
             if server:
                 server.terminate()
                 server.wait(30)
