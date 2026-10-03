@@ -1,105 +1,61 @@
-name: Codex example - hello world
-
+name: Issue 2581 validation
 on:
   workflow_dispatch:
-    inputs:
-      model:
-        description: Codex model to verify with the repository's authenticated account.
-        required: true
-        default: gpt-6-astra
-        type: string
-
 permissions:
   contents: read
-
-concurrency:
-  group: codex-auth-${{ github.repository }}
-  cancel-in-progress: false
-  queue: max
-
 jobs:
-  hello-world:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 27
+    timeout-minutes: 25
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
     steps:
-      - name: Checkout
-        timeout-minutes: 2
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
+          submodules: true
           persist-credentials: false
-
-      - name: Run arbitrary instructions
-        timeout-minutes: 18
-        id: codex
-        uses: ./.github/actions/codex-run
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
-          codex-auth: ${{ secrets.CODEX_AUTH }}
-          model: ${{ inputs.model }}
-          reasoning-effort: low
-          sandbox: read-only
-          timeout-minutes: "5"
-          instructions: |
-            Run this shell command exactly once:
-
-            printf 'Hello world'
-
-            Then respond with exactly its stdout and nothing else.
-
-      - name: Verify the caller's expectation
-        timeout-minutes: 1
-        env:
-          OUTPUT_PATH: ${{ steps.codex.outputs.output-path }}
-        run: |
-          set -euo pipefail
-          normalized="$(mktemp "$RUNNER_TEMP/codex-output-normalized.XXXXXX")"
-          expected="$(mktemp "$RUNNER_TEMP/codex-output-expected.XXXXXX")"
-          tr -d '\r' < "$OUTPUT_PATH" > "$normalized"
-          printf 'Hello world' > "$expected"
-          if ! cmp -s "$expected" "$normalized"; then
-            echo "::error::Codex output did not exactly match 'Hello world'."
-            exit 1
-          fi
-          sed 's/^/Codex | /' "$OUTPUT_PATH"
-          cat "$OUTPUT_PATH" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publish diagnostics on failure
-        # Deliberate caller policy for these public, fixed/unprivileged report prompts.
-        if: ${{ failure() && steps.codex.outputs.log-path != '' }}
-        timeout-minutes: 1
-        env:
-          LOG_PATH: ${{ steps.codex.outputs.log-path }}
-        run: |
-          set -euo pipefail
-          if [[ -s "$LOG_PATH" ]]; then
-            echo "::group::Codex failure diagnostics"
-            # The runner also recognizes legacy ##[...] commands mid-line.
-            # Generate the resume token after Codex exits; it is not in the log.
-            pause_token="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-            trap 'printf "::%s::\n::endgroup::\n" "$pause_token"' EXIT
-            printf '::stop-commands::%s\n' "$pause_token"
-            if (( $(wc -c < "$LOG_PATH") > 262144 )); then
-              echo 'Codex log | [truncated to the last 256 KiB]'
-            fi
-            # Bound bytes before decoding; Node emits valid UTF-8 even if the
-            # tail starts within a multibyte character. Then bound line count.
-            tail -c 262144 "$LOG_PATH" | node -e '
-              const fs = require("node:fs");
-              const lines = fs.readFileSync(0, "utf8").split(/\r?\n/);
-              if (lines[lines.length - 1] === "") lines.pop();
-              if (lines.length > 1000) console.log("Codex log | [truncated to the last 1000 lines]");
-              for (const line of lines.slice(-1000)) console.log("Codex log | " + line);
-            '
-          else
-            echo "No Codex diagnostic log was produced before the failure."
-          fi
-
-      - name: Validate secret-writer PAT and persist auth
-        timeout-minutes: 3
-        if: ${{ always() && steps.codex.outputs.auth-path != '' }}
-        uses: ./.github/actions/codex-update-auth
+          version: '0.12.20'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          codex-auth-path: ${{ steps.codex.outputs.auth-path }}
-          original-codex-auth: ${{ steps.codex.outputs.original-auth-path }}
-          gh-token: ${{ secrets.CODEX_AUTH_PAT }}
-          repository: ${{ github.repository }}
-          force-update: "true"
+          node-version: '24'
+      - name: Restore production workflow for repository contract tests
+        run: git checkout HEAD^ -- .github/workflows/test.yml
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --dev
+          cd tests/js && corepack npm ci
+      - name: Prove ignored-disable warning regression on base
+        run: |
+          git worktree add --detach /tmp/issue2581-base 93f015402af3bf9f950ec159ce6c8aefd7968fb4
+          cp tests/src/unit/test_mandatory_tool_warnings.py /tmp/issue2581-base/tests/src/unit/
+          cd /tmp/issue2581-base
+          git submodule update --init
+          uv sync --all-extras --dev
+          set +e
+          uv run pytest tests/src/unit/test_mandatory_tool_warnings.py -k test_visibility_warns_for_each_ignored_disable --tb=short --junitxml=/tmp/issue2581-red.xml
+          result=$?
+          set -e
+          test "$result" = 1
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('/tmp/issue2581-red.xml').getroot()
+          failures = root.findall('.//failure')
+          assert len(failures) == 2, [f.attrib for f in failures]
+          assert not root.findall('.//error')
+          assert all('assert ' in (f.text or '') for f in failures)
+          print('Confirmed: both ignored mandatory-disable warning cases fail on the original code.')
+          PY
+      - name: Lint and types
+        run: |
+          uv run ruff check src/ tests/ homeassistant-addon/ scripts/
+          git diff --name-only 93f015402af3bf9f950ec159ce6c8aefd7968fb4 HEAD -- '*.py' | xargs uv run ruff format --check
+          uv run mypy src/ homeassistant-addon/ scripts/
+          uv run ast-grep scan
+      - name: Unit and app configuration tests
+        run: uv run pytest tests/src/unit/ tests/addon/ -n auto --tb=short
+      - name: Backup and read-only E2E
+        working-directory: tests
+        run: uv run pytest src/e2e/workflows/auto_backup/ src/e2e/workflows/convenience/test_backup.py src/e2e/policy/test_readonly_mode.py src/e2e/policy/test_readonly_endpoint.py -n2 --dist loadscope --tb=short
