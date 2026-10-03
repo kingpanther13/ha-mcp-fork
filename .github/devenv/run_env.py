@@ -30,6 +30,20 @@ from src.e2e import conftest as e2e  # noqa: E402
 from test_constants import TEST_TOKEN  # noqa: E402
 
 HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}"}
+MCP_PORT = os.environ.get("MCP_PORT")
+
+
+def start_server(base_url: str) -> subprocess.Popen | None:
+    """The tracked branch's ha-mcp server against this HA, for MCP_PORT's tunnel."""
+    if not MCP_PORT:
+        return None
+    env = os.environ | {
+        "HOMEASSISTANT_URL": base_url,
+        "HOMEASSISTANT_TOKEN": TEST_TOKEN,
+        "MCP_HOST": "127.0.0.1",
+    }
+    log = open(SRC.parent / "server.log", "ab")  # noqa: SIM115
+    return subprocess.Popen(["uv", "run", "ha-mcp-web"], cwd=SRC, env=env, stdout=log, stderr=log)
 
 
 def git(*args: str) -> str:
@@ -62,6 +76,7 @@ def main() -> None:
     sha = git("rev-parse", "HEAD")
     ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
     write_status(config, sha=sha, ready=ready, booted_at=time.time())
+    server = start_server(base_url)
 
     while True:
         time.sleep(POLL_S)
@@ -80,6 +95,10 @@ def main() -> None:
                 port = container.get_exposed_port(8123)
                 base_url = f"http://localhost:{port}"
                 ready = e2e._wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
+            if server:
+                server.terminate()
+                server.wait(30)
+                server = start_server(base_url)
             write_status(config, sha=sha, ready=ready, port=port, booted_at=time.time())
         except Exception as err:
             # Publish the failure live; the job log is unreadable until it ends.
