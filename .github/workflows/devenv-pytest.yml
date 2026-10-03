@@ -39,8 +39,13 @@ jobs:
           ref: ${{ env.TRACK_REF }}
           fetch-depth: 0
           submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --all-extras --dev
+      - name: JS test deps (jsdom, esbuild)
+        run: cd tests/js && corepack npm ci
       - name: ruff + mypy
         if: env.LINT == 'true'
         run: |
