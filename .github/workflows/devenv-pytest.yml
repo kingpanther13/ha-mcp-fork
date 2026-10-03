@@ -4,6 +4,11 @@ name: Dev pytest on tracked branch
 # GitHub runner, so iteration never runs the suite on the resource-limited
 # dev box. Never ships in an upstream PR.
 on:
+  # A push indexes the workflow so it becomes dispatchable (GitHub only lists
+  # workflows that ran once); the push run uses the env defaults below.
+  push:
+    branches: ["devenv/**"]
+    paths: [".github/workflows/devenv-pytest.yml"]
   workflow_dispatch:
     inputs:
       track_ref:
@@ -19,6 +24,11 @@ on:
 permissions:
   contents: read
 
+env:
+  TRACK_REF: ${{ inputs.track_ref || 'fix/issue-2619-area-sensor-refs' }}
+  PYTEST_ARGS: ${{ inputs.pytest_args || 'tests/src/unit/test_tools_areas.py' }}
+  LINT: ${{ inputs.lint || 'false' }}
+
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -26,16 +36,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.track_ref }}
+          ref: ${{ env.TRACK_REF }}
           fetch-depth: 0
           submodules: recursive
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --all-extras --dev
       - name: ruff + mypy
-        if: inputs.lint == 'true'
+        if: env.LINT == 'true'
         run: |
           uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ packaging/ scripts/
           uv run ruff format --check src/ tests/ custom_components/
           uv run mypy src/ custom_components/ homeassistant-addon/ scripts/
       - name: pytest
-        run: uv run pytest ${{ inputs.pytest_args }} -n auto --tb=short -v
+        run: uv run pytest ${{ env.PYTEST_ARGS }} -n auto --tb=short -v
