@@ -107,8 +107,9 @@ jobs:
         run: |
           cp devenv/.github/devenv/test_devenv_haos_hold.py src/tests/src/e2e/
           # Agents meet strict best-practices mode by default; e2e pins it off.
-          sed -i 's/"enable_strict_mandatory_bps": False/"enable_strict_mandatory_bps": True/'             src/tests/src/e2e/conftest.py
-          grep -q '"enable_strict_mandatory_bps": True' src/tests/src/e2e/conftest.py
+          FLAGS=$(grep -rl '"enable_strict_mandatory_bps": False' src/tests/src/e2e/)
+          sed -i 's/"enable_strict_mandatory_bps": False/"enable_strict_mandatory_bps": True/' $FLAGS
+          grep -q '"enable_strict_mandatory_bps": True' $FLAGS
           cd src/tests
           nohup uv run pytest src/e2e/test_devenv_haos_hold.py -v -s --timeout=0 \
             -p no:randomly > ../../hold.log 2>&1 &
