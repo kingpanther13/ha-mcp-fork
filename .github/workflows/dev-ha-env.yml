@@ -37,6 +37,9 @@ on:
       minutes:
         description: How long to keep the instance up (max 330)
         default: "330"
+      recipient_pubkey:
+        description: "Base64 RSA public key PEM: encrypt the URLs to it instead of DEV_HA_ENV_PASSPHRASE"
+        default: ""
 
 permissions:
   contents: read
@@ -159,6 +162,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PASSPHRASE: ${{ secrets.DEV_HA_ENV_PASSPHRASE }}
+          PUBKEY: ${{ inputs.recipient_pubkey }}
           PLATFORM: ${{ inputs.platform }}
           SERVER: ${{ inputs.server }}
           HA_IMAGE: ${{ inputs.ha_image }}
@@ -219,6 +223,16 @@ jobs:
           MCP_URL=$url
           printf 'HA:  %s\nMCP: %s%s\n' "$HA_URL" "$MCP_URL" "$(target mcp_path)" > urls.txt
           mkdir out
+          if [ -n "$PUBKEY" ]; then
+            # A one-off key encrypts the URLs and the recipient's RSA key wraps
+            # it, so only the holder of the private key can read them.
+            echo "$PUBKEY" | base64 -d > recipient.pem
+            PASSPHRASE=$(openssl rand -hex 32)
+            echo "::add-mask::$PASSPHRASE"
+            printf '%s' "$PASSPHRASE" | openssl pkeyutl -encrypt -pubin -inkey recipient.pem \
+              -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+              -out out/dev-ha-env-key.enc
+          fi
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PASSPHRASE \
             -in urls.txt -out out/dev-ha-env-urls.enc
           rm urls.txt targets.json
@@ -226,7 +240,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
+          path: out/
           retention-days: 1
       - name: Keep running
         run: |
