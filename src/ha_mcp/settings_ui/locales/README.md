@@ -246,3 +246,4 @@ The Webhook Proxy app and its bundled integration remain English-only by
 decision. Their tests intentionally reject an accidental partial catalog.
 Any other new catalog directory fails until it is translated across every
 required surface or explicitly added to the English-only decision.
+
