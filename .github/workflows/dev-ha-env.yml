@@ -6,7 +6,7 @@ name: Dev HA environment
 # from your fork, never from homeassistant-ai/ha-mcp. It follows track_ref and
 # applies each new commit the way a user's update would. The tunnel URLs are
 # only in the encrypted `dev-ha-env-urls` artifact. Cancel the run when done.
-# Usage: tests/README.md#live-dev-environment-github-actions
+# Usage: docs/dev-ha-env.md
 on:
   workflow_dispatch:
     inputs:
@@ -81,7 +81,7 @@ jobs:
         with:
           path: devenv
           persist-credentials: false
-          sparse-checkout: tests/dev_ha_env.py
+          sparse-checkout: .github/dev-ha-env/hold.py
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -179,7 +179,7 @@ jobs:
           SECRET="mcp-$(openssl rand -hex 16)"
           echo "::add-mask::$SECRET"
           export MCP_SECRET_PATH="/$SECRET"
-          cp devenv/tests/dev_ha_env.py src/tests/src/e2e/test_dev_ha_env_hold.py
+          cp devenv/.github/dev-ha-env/hold.py src/tests/src/e2e/test_dev_ha_env_hold.py
           cd src/tests
           nohup uv run pytest src/e2e/test_dev_ha_env_hold.py -v -s --timeout=0 \
             -p no:randomly > ../../env.log 2>&1 &

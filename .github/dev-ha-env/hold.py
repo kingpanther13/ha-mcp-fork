@@ -34,6 +34,7 @@ from pathlib import Path
 
 import requests
 from haos_runtime import (
+    DEV_ADDON_REPO_FILES,
     HA_MCP_SERVER_DOMAIN,
     SSH_ADDON_PASSWORD,
     SSH_ADDON_USER,
@@ -54,7 +55,12 @@ TRACK_REF = os.environ["TRACK_REF"]
 POLL_S = 20
 COMPONENT = Path("custom_components") / HA_MCP_SERVER_DOMAIN
 SERVER_PATHS = ("src/ha_mcp/", "pyproject.toml", "uv.lock")
-APP_PATHS = (*SERVER_PATHS, "homeassistant-addon-dev/", "homeassistant-addon/start.py")
+APP_PATHS = (
+    *SERVER_PATHS,
+    "homeassistant-addon/start.py",
+    "tests/test-env/pyproject.toml",
+)
+APP_PACKAGING = "homeassistant-addon-dev/"
 
 # Agents meet strict best-practices mode by default; the E2E suite pins it off.
 STRICT_BPS = os.environ.get("DEVENV_STRICT_BPS", "true") == "true"
@@ -100,21 +106,22 @@ def haos_shell(command: str, data: bytes | None = None, timeout: float = 300) ->
     return proc.stdout.decode()
 
 
-def supervisor_data(subpath: str, data: bytes) -> None:
-    """Untar ``data`` into Supervisor's data dir (``/mnt/data/supervisor``)."""
-    target = shlex.quote(f"/data/{subpath}")
-    haos_shell(
-        f"docker exec -i hassio_supervisor sh -c 'rm -rf {target} && mkdir -p "
-        f"$(dirname {target}) && tar -x -C $(dirname {target})'",
-        data,
-    )
+def supervisor_put(subdir: str, entries: dict[str, Path], replace: bool = True) -> None:
+    """Write ``entries`` (archive name -> local path) under Supervisor's ``/data/<subdir>``.
 
-
-def tar_dir(path: Path, arcname: str) -> bytes:
+    With ``replace``, each entry is removed first so deleted files go too.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
-        tar.add(path, arcname=arcname)
-    return buf.getvalue()
+        for name, path in entries.items():
+            tar.add(path, arcname=name)
+    target = shlex.quote(f"/data/{subdir}")
+    old = " ".join(shlex.quote(f"/data/{subdir}/{name}") for name in entries)
+    clear = f"rm -rf {old} && " if replace else ""
+    script = f"{clear}mkdir -p {target} && tar -x -C {target}"
+    haos_shell(
+        f"docker exec -i hassio_supervisor sh -c {shlex.quote(script)}", buf.getvalue()
+    )
 
 
 class Instance:
@@ -166,9 +173,9 @@ class Instance:
 
     def update_component(self) -> None:
         if self.haos:
-            supervisor_data(
-                f"homeassistant/{COMPONENT.as_posix()}",
-                tar_dir(SRC / COMPONENT, COMPONENT.name),
+            supervisor_put(
+                f"homeassistant/{COMPONENT.parent.as_posix()}",
+                {COMPONENT.name: SRC / COMPONENT},
             )
             try:
                 requests.post(
@@ -206,10 +213,7 @@ class Instance:
                 wheel = _build_embedded_server_wheel(Path(tmp))
                 rel = f"devenv/{sha[:12]}/{wheel.name}"
                 if self.haos:
-                    supervisor_data(
-                        f"homeassistant/devenv/{sha[:12]}",
-                        tar_dir(wheel.parent, sha[:12]),
-                    )
+                    supervisor_put("homeassistant/devenv", {sha[:12]: wheel.parent})
                 else:
                     dest = Path(self.env["config_path"]) / rel
                     subprocess.run(
@@ -228,16 +232,22 @@ class Instance:
             time.sleep(5)
             self.wait_server()
         else:
-            # Branches from before this workflow lack it; only the app needs it.
-            from haos_runtime import build_dev_addon_source_tar
-
-            with tempfile.TemporaryDirectory() as tmp:
-                tar = build_dev_addon_source_tar(Path(tmp), sha[:7])
-                store = haos_shell(
-                    "docker exec hassio_supervisor sh -c "
-                    "'test -d /data/apps/local && echo apps || echo addons'"
-                ).strip()
-                supervisor_data(f"{store}/local/ha_mcp_dev", tar.read_bytes())
+            # The fixture staged the app's build context at boot; refresh the
+            # parts a commit changes, then bump the version so Supervisor rebuilds.
+            store = haos_shell(
+                "docker exec hassio_supervisor sh -c "
+                "'test -d /data/apps/local && echo apps || echo addons'"
+            ).strip()
+            app = f"{store}/local/ha_mcp_dev"
+            supervisor_put(f"{app}/src", {"ha_mcp": SRC / "src" / "ha_mcp"})
+            files = {name: SRC / name for name in DEV_ADDON_REPO_FILES}
+            files["start.py"] = SRC / "homeassistant-addon" / "start.py"
+            supervisor_put(app, files, replace=False)
+            bump = rf's/^(version: "[^"]*-pr-)[^"]*"/\1{sha[:7]}"/'
+            config = shlex.quote(f"/data/{app}/config.yaml")
+            haos_shell(
+                f"docker exec hassio_supervisor sed -i -E {shlex.quote(bump)} {config}"
+            )
             trigger_dev_addon_update(self.base_url, self.env["token"], timeout=900)
             self.wait_server()
 
@@ -280,6 +290,10 @@ def test_hold_dev_ha_env(ha_container_with_fresh_config) -> None:
         ):
             updates.append(("component", inst.update_component))
         errors = {}
+        if inst.backend == "haos_inaddon" and any(
+            p.startswith(APP_PACKAGING) for p in changed
+        ):
+            errors["app"] = f"{APP_PACKAGING} changed: start the run again to rebuild"
         for name, update in updates:
             try:
                 update()
