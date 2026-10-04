@@ -55,12 +55,7 @@ TRACK_REF = os.environ["TRACK_REF"]
 POLL_S = 20
 COMPONENT = Path("custom_components") / HA_MCP_SERVER_DOMAIN
 SERVER_PATHS = ("src/ha_mcp/", "pyproject.toml", "uv.lock")
-APP_PATHS = (
-    *SERVER_PATHS,
-    "homeassistant-addon/start.py",
-    "tests/test-env/pyproject.toml",
-)
-APP_PACKAGING = "homeassistant-addon-dev/"
+APP_PATHS = (*SERVER_PATHS, "homeassistant-addon-dev/", "homeassistant-addon/start.py")
 
 # Agents meet strict best-practices mode by default; the E2E suite pins it off.
 STRICT_BPS = os.environ.get("DEVENV_STRICT_BPS", "true") == "true"
@@ -106,22 +101,122 @@ def haos_shell(command: str, data: bytes | None = None, timeout: float = 300) ->
     return proc.stdout.decode()
 
 
-def supervisor_put(subdir: str, entries: dict[str, Path], replace: bool = True) -> None:
-    """Write ``entries`` (archive name -> local path) under Supervisor's ``/data/<subdir>``.
+def supervisor_data(subpath: str, data: bytes) -> None:
+    """Untar ``data`` into Supervisor's data dir (``/mnt/data/supervisor``)."""
+    target = shlex.quote(f"/data/{subpath}")
+    haos_shell(
+        f"docker exec -i hassio_supervisor sh -c 'rm -rf {target} && mkdir -p "
+        f"$(dirname {target}) && tar -x -C $(dirname {target})'",
+        data,
+    )
 
-    With ``replace``, each entry is removed first so deleted files go too.
-    """
+
+def tar_dir(path: Path, arcname: str) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
-        for name, path in entries.items():
-            tar.add(path, arcname=name)
-    target = shlex.quote(f"/data/{subdir}")
-    old = " ".join(shlex.quote(f"/data/{subdir}/{name}") for name in entries)
-    clear = f"rm -rf {old} && " if replace else ""
-    script = f"{clear}mkdir -p {target} && tar -x -C {target}"
-    haos_shell(
-        f"docker exec -i hassio_supervisor sh -c {shlex.quote(script)}", buf.getvalue()
+        tar.add(path, arcname=arcname)
+    return buf.getvalue()
+
+
+# Copied from the app-source staging in haos_runtime.refresh_dev_addon_source_in_qcow2,
+# which writes into an offline qcow2 instead of a running VM.
+def build_dev_addon_source_tar(workdir: Path, sha: str) -> Path:
+    """Build ``<workdir>/ha_mcp_dev.tar``: the dev addon's build context, version-bumped.
+
+    The bumped ``version:`` is ``<base>-pr-<sha>`` so Supervisor sees a new
+    version for every distinct commit and rebuilds the addon image.
+    """
+    import shutil as _shutil
+
+    repo_root = SRC
+    dev_addon_src = repo_root / "homeassistant-addon-dev"
+    if not dev_addon_src.exists():
+        raise RuntimeError(
+            f"homeassistant-addon-dev not found at {dev_addon_src} — "
+            f"checkout is incomplete; inaddon tier cannot refresh source."
+        )
+
+    staging = workdir / "ha_mcp_dev"
+    _shutil.copytree(dev_addon_src, staging)
+
+    # Same file-shaping as build_image.stage_dev_addon_source so the
+    # build context matches what the cached Docker layers expect.
+    _shutil.copy(
+        repo_root / "homeassistant-addon" / "start.py",
+        staging / "start.py",
     )
+    for name in DEV_ADDON_REPO_FILES:
+        (staging / name).parent.mkdir(parents=True, exist_ok=True)
+        _shutil.copy(repo_root / name, staging / name)
+    addon_src_dir = staging / "src"
+    if addon_src_dir.exists():
+        _shutil.rmtree(addon_src_dir)
+    addon_src_dir.mkdir()
+    _shutil.copytree(repo_root / "src" / "ha_mcp", addon_src_dir / "ha_mcp")
+
+    # Dockerfile shape fixup (same as bake).
+    dockerfile = staging / "Dockerfile"
+    dockerfile.write_text(
+        dockerfile.read_text().replace(
+            "COPY homeassistant-addon/start.py /",
+            "COPY start.py /",
+        )
+    )
+
+    # Strip image: from config.yaml — Supervisor pulls from GHCR when
+    # image: is set, but the per-PR version we bump to below doesn't
+    # exist there. Force local Dockerfile build by removing the field.
+    # Same fix the bake's stage_dev_addon_source applies.
+    config_path_pre = staging / "config.yaml"
+    config_path_pre.write_text(
+        "".join(
+            ln
+            for ln in config_path_pre.read_text().splitlines(keepends=True)
+            if not ln.startswith("image:")
+        )
+    )
+
+    config_path = staging / "config.yaml"
+    config_text = config_path.read_text()
+    # config.yaml is human-edited; preserve line shape rather than
+    # round-tripping through a YAML parser (which would lose comments).
+    new_lines: list[str] = []
+    bumped = False
+    for line in config_text.splitlines(keepends=True):
+        if line.startswith("version:") and not bumped:
+            # ``version: "devNNN"`` → ``version: "devNNN-pr-<sha>"``
+            prefix, _, rest = line.partition(":")
+            base = rest.strip().strip('"').strip("'")
+            new_lines.append(f'{prefix}: "{base}-pr-{sha}"\n')
+            bumped = True
+        else:
+            new_lines.append(line)
+    if not bumped:
+        raise RuntimeError(
+            "No version: line in homeassistant-addon-dev/config.yaml — "
+            "cannot trigger Supervisor update without a version bump."
+        )
+    config_path.write_text("".join(new_lines))
+
+    seed_tar = workdir / "ha_mcp_dev.tar"
+    subprocess.run(
+        [
+            "tar",
+            "--numeric-owner",
+            "--owner=0",
+            "--group=0",
+            "-C",
+            str(workdir),
+            "-cf",
+            str(seed_tar),
+            "ha_mcp_dev",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return seed_tar
 
 
 class Instance:
@@ -173,9 +268,9 @@ class Instance:
 
     def update_component(self) -> None:
         if self.haos:
-            supervisor_put(
-                f"homeassistant/{COMPONENT.parent.as_posix()}",
-                {COMPONENT.name: SRC / COMPONENT},
+            supervisor_data(
+                f"homeassistant/{COMPONENT.as_posix()}",
+                tar_dir(SRC / COMPONENT, COMPONENT.name),
             )
             try:
                 requests.post(
@@ -213,7 +308,10 @@ class Instance:
                 wheel = _build_embedded_server_wheel(Path(tmp))
                 rel = f"devenv/{sha[:12]}/{wheel.name}"
                 if self.haos:
-                    supervisor_put("homeassistant/devenv", {sha[:12]: wheel.parent})
+                    supervisor_data(
+                        f"homeassistant/devenv/{sha[:12]}",
+                        tar_dir(wheel.parent, sha[:12]),
+                    )
                 else:
                     dest = Path(self.env["config_path"]) / rel
                     subprocess.run(
@@ -232,22 +330,13 @@ class Instance:
             time.sleep(5)
             self.wait_server()
         else:
-            # The fixture staged the app's build context at boot; refresh the
-            # parts a commit changes, then bump the version so Supervisor rebuilds.
-            store = haos_shell(
-                "docker exec hassio_supervisor sh -c "
-                "'test -d /data/apps/local && echo apps || echo addons'"
-            ).strip()
-            app = f"{store}/local/ha_mcp_dev"
-            supervisor_put(f"{app}/src", {"ha_mcp": SRC / "src" / "ha_mcp"})
-            files = {name: SRC / name for name in DEV_ADDON_REPO_FILES}
-            files["start.py"] = SRC / "homeassistant-addon" / "start.py"
-            supervisor_put(app, files, replace=False)
-            bump = rf's/^(version: "[^"]*-pr-)[^"]*"/\1{sha[:7]}"/'
-            config = shlex.quote(f"/data/{app}/config.yaml")
-            haos_shell(
-                f"docker exec hassio_supervisor sed -i -E {shlex.quote(bump)} {config}"
-            )
+            with tempfile.TemporaryDirectory() as tmp:
+                tar = build_dev_addon_source_tar(Path(tmp), sha[:7])
+                store = haos_shell(
+                    "docker exec hassio_supervisor sh -c "
+                    "'test -d /data/apps/local && echo apps || echo addons'"
+                ).strip()
+                supervisor_data(f"{store}/local/ha_mcp_dev", tar.read_bytes())
             trigger_dev_addon_update(self.base_url, self.env["token"], timeout=900)
             self.wait_server()
 
@@ -290,10 +379,6 @@ def test_hold_dev_ha_env(ha_container_with_fresh_config) -> None:
         ):
             updates.append(("component", inst.update_component))
         errors = {}
-        if inst.backend == "haos_inaddon" and any(
-            p.startswith(APP_PACKAGING) for p in changed
-        ):
-            errors["app"] = f"{APP_PACKAGING} changed: start the run again to rebuild"
         for name, update in updates:
             try:
                 update()
