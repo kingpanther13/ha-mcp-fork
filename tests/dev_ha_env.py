@@ -1,10 +1,11 @@
-"""Long-running HA test instance that follows a branch.
+"""Long-running HA test instance that follows a branch, for dev-ha-env.yml.
 
-Boots HA exactly as the e2e suite does (same config staging and container
-builder) and writes its host port to PORT_FILE for the tunnel. Every POLL_S it
-fetches TRACK_REF; when custom_components/ha_mcp_tools changed, it reinstalls
-the component and restarts HA. Status goes to /config/www/devenv.json, served
-at <url>/local/devenv.json.
+Boots HA exactly as the E2E suite does (same config staging and container
+builder), starts the tracked branch's ha-mcp server beside it, and writes HA's
+host port to PORT_FILE for the tunnel. Every POLL_S it fetches TRACK_REF: a new
+commit restarts the server, and a change under custom_components/ha_mcp_tools
+also reinstalls the component and restarts HA. Status is served at
+<ha-url>/local/devenv.json.
 """
 
 from __future__ import annotations
@@ -20,12 +21,15 @@ from pathlib import Path
 SRC = Path(os.environ["SRC_DIR"]).resolve()
 TRACK_REF = os.environ["TRACK_REF"]
 PORT_FILE = Path(os.environ["PORT_FILE"])
+MCP_PORT = os.environ["MCP_PORT"]
 POLL_S = 20
 
-# conftest uses package-relative imports, so import it the way pytest does.
+# The E2E helpers use package-relative imports, so import them as pytest does,
+# from the tracked branch's checkout.
 sys.path.insert(0, str(SRC / "tests"))
 os.chdir(SRC)
 
+from src.e2e._conftest_embedded import _is_no_tools_entry_selected  # noqa: E402
 from src.e2e._conftest_readiness import _wait_for_ha_api_ready  # noqa: E402
 from src.e2e._conftest_testcontainer import (  # noqa: E402
     _build_ha_testcontainer,
@@ -34,20 +38,18 @@ from src.e2e._conftest_testcontainer import (  # noqa: E402
 from test_constants import TEST_TOKEN  # noqa: E402
 
 HEADERS = {"Authorization": f"Bearer {TEST_TOKEN}"}
-MCP_PORT = os.environ.get("MCP_PORT")
 
 
-def start_server(base_url: str) -> subprocess.Popen | None:
-    """The tracked branch's ha-mcp server against this HA, for MCP_PORT's tunnel."""
-    if not MCP_PORT:
-        return None
+def start_server(base_url: str) -> subprocess.Popen:
     env = os.environ | {
         "HOMEASSISTANT_URL": base_url,
         "HOMEASSISTANT_TOKEN": TEST_TOKEN,
         "MCP_HOST": "127.0.0.1",
     }
     log = open(SRC.parent / "server.log", "ab")  # noqa: SIM115
-    return subprocess.Popen(["uv", "run", "ha-mcp-web"], cwd=SRC, env=env, stdout=log, stderr=log)
+    return subprocess.Popen(
+        ["uv", "run", "ha-mcp-web"], cwd=SRC, env=env, stdout=log, stderr=log
+    )
 
 
 def git(*args: str) -> str:
@@ -92,21 +94,25 @@ def main() -> None:
             changed = git("diff", "--name-only", sha, head).splitlines()
             git("checkout", "-q", "-f", head)
             sha = head
-            if any(p.startswith("custom_components/ha_mcp_tools/") for p in changed):
+            component_changed = any(
+                p.startswith("custom_components/ha_mcp_tools/") for p in changed
+            )
+            if component_changed and not _is_no_tools_entry_selected():
                 write_status(config, sha=sha, ready=False, restarting=True)
                 install_component(config)
                 container.get_wrapped_container().restart(timeout=30)
                 port = container.get_exposed_port(8123)
                 base_url = f"http://localhost:{port}"
                 ready = _wait_for_ha_api_ready(base_url, HEADERS, timeout=600)
-            if server:
-                server.terminate()
-                server.wait(30)
-                server = start_server(base_url)
+            server.terminate()
+            server.wait(30)
+            server = start_server(base_url)
             write_status(config, sha=sha, ready=ready, port=port, booted_at=time.time())
-        except Exception as err:
-            # Publish the failure live; the job log is unreadable until it ends.
-            write_status(config, sha=sha, ready=False, error=f"{type(err).__name__}: {err}")
+        except Exception as err:  # noqa: BLE001
+            # Keep the instance up and publish the failure to devenv.json.
+            write_status(
+                config, sha=sha, ready=False, error=f"{type(err).__name__}: {err}"
+            )
 
 
 if __name__ == "__main__":

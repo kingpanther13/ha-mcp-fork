@@ -1,59 +1,73 @@
 name: Dev HA environment
 
-# A long-running HA test instance behind a temporary Cloudflare tunnel, for
-# live testing. It follows TRACK_REF: pushing component changes there
-# reinstalls the component and restarts HA. The tunnel URL is the `devenv-url`
-# artifact. Cancel the run when the task is done.
+# A live HA test instance behind temporary Cloudflare tunnels, for testing a
+# branch against a real HA without using your own. Run it from your fork, never
+# from homeassistant-ai/ha-mcp. It follows track_ref: a push there restarts the
+# server, and a component change also reinstalls the component and restarts HA.
+# The tunnel URLs are only in the encrypted `dev-ha-env-urls` artifact. Cancel
+# the run when done. Usage: tests/README.md#live-dev-environment-github-actions
 on:
+  # Fork convenience: a push to devenv/** starts it with the defaults below.
   push:
     branches: ["devenv/**"]
     paths-ignore: [".github/workflows/devenv-pytest.yml"]
   workflow_dispatch:
     inputs:
       track_ref:
-        description: Branch whose server, component and test config to run
+        description: Branch of this repository to run (server, component and test config)
         required: true
       ha_image:
-        description: HA container image
-        default: ghcr.io/home-assistant/home-assistant:2026.10.0b0
+        description: HA container image (empty = the branch's pinned E2E image)
+        default: ""
+      no_component:
+        description: Boot HA without the ha_mcp_tools component
+        type: boolean
+        default: false
       minutes:
-        description: How long to keep the instance up
+        description: How long to keep the instance up (max 340)
         default: "340"
 
 permissions:
   contents: read
 
 concurrency:
-  group: dev-ha-env-${{ github.ref_name }}
+  group: dev-ha-env-${{ inputs.track_ref || github.ref_name }}-${{ inputs.no_component }}
   cancel-in-progress: true
 
 env:
   TRACK_REF: ${{ inputs.track_ref || 'fix/issue-2619-area-sensor-refs' }}
-  HA_TEST_IMAGE: ${{ inputs.ha_image || 'ghcr.io/home-assistant/home-assistant:2026.10.0b0' }}
-  MINUTES: ${{ inputs.minutes || '340' }}
+  E2E_NO_TOOLS_ENTRY: ${{ (inputs.no_component || contains(github.ref_name, 'nocomp')) && '1' || '' }}
   # A fixed host port survives container restarts, so the tunnel target holds.
   HA_TEST_PORT: "8123"
-  # devenv/nocomp*: no ha_mcp_tools component at all, as the no-component e2e lane.
-  E2E_NO_TOOLS_ENTRY: ${{ contains(github.ref_name, 'nocomp') && '1' || '' }}
-  # The tracked branch's server runs beside HA; its tunnel is in devenv-url too.
   MCP_PORT: "8086"
 
 jobs:
   env:
+    # Upstream runners are shared CI capacity; contributors run this on forks.
+    if: github.repository != 'homeassistant-ai/ha-mcp'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - uses: actions/checkout@v4
+      - name: Require the URL passphrase
+        env:
+          PASSPHRASE: ${{ secrets.DEV_HA_ENV_PASSPHRASE }}
+        run: |
+          if [ -z "$PASSPHRASE" ]; then
+            echo "::error::Set the DEV_HA_ENV_PASSPHRASE repository secret on your fork first."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: devenv
-          fetch-depth: 0
-      - uses: actions/checkout@v4
+          sparse-checkout: tests/dev_ha_env.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.TRACK_REF }}
           path: src
           fetch-depth: 0
           submodules: recursive
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Install test dependencies
         working-directory: src
         run: uv sync --all-extras --dev
@@ -61,16 +75,24 @@ jobs:
         run: |
           curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
-      - name: Boot HA and open the tunnel
+      - name: Boot HA and open the tunnels
         env:
           SRC_DIR: ${{ github.workspace }}/src
           PORT_FILE: ${{ github.workspace }}/port
           GITHUB_TOKEN: ${{ github.token }}
+          PASSPHRASE: ${{ secrets.DEV_HA_ENV_PASSPHRASE }}
+          HA_IMAGE: ${{ inputs.ha_image || (github.event_name == 'push' && 'ghcr.io/home-assistant/home-assistant:2026.10.0b0' || '') }}
         run: |
+          # An empty HA_TEST_IMAGE would override the branch's pinned image.
+          if [ -n "$HA_IMAGE" ]; then export HA_TEST_IMAGE="$HA_IMAGE"; fi
+          # Anyone can read a public fork's logs and artifacts, and anyone with a
+          # tunnel URL can drive the instance with the public test credentials:
+          # the URLs and secret path are masked in logs and published encrypted.
           SECRET="mcp-$(openssl rand -hex 16)"
+          echo "::add-mask::$SECRET"
           export MCP_SECRET_PATH="/$SECRET"
           cd src
-          nohup uv run python ../devenv/.github/devenv/run_env.py > ../env.log 2>&1 &
+          nohup uv run python ../devenv/tests/dev_ha_env.py > ../env.log 2>&1 &
           echo $! > ../runner.pid
           cd ..
           for i in $(seq 1 120); do
@@ -79,28 +101,38 @@ jobs:
             sleep 5
           done
           if [ ! -s port ]; then echo "HA never came up"; tail -100 env.log; exit 1; fi
-          PORT=$(cat port)
-          nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > tunnel.log 2>&1 &
-          for i in $(seq 1 60); do
-            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
-            [ -n "$URL" ] && break; sleep 2
-          done
-          echo "$URL" > devenv-url.txt
-          nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$MCP_PORT" > tunnel-mcp.log 2>&1 &
-          for i in $(seq 1 60); do
-            MURL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel-mcp.log | head -1)
-            [ -n "$MURL" ] && break; sleep 2
-          done
-          echo "$MURL/$SECRET" >> devenv-url.txt
-          echo "port=$PORT url=$URL"
+          tunnel() {
+            nohup ./cloudflared tunnel --no-autoupdate --url "http://localhost:$1" > "$2" 2>&1 &
+            url=""
+            for i in $(seq 1 60); do
+              url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$2" | head -1)
+              [ -n "$url" ] && break
+              sleep 2
+            done
+            [ -n "$url" ] || { echo "Tunnel for port $1 never came up"; exit 1; }
+            echo "::add-mask::$url"
+            echo "::add-mask::${url#https://}"
+          }
+          tunnel "$(cat port)" tunnel-ha.log
+          HA_URL=$url
+          tunnel "$MCP_PORT" tunnel-mcp.log
+          MCP_URL=$url
+          printf 'HA:  %s\nMCP: %s/%s\n' "$HA_URL" "$MCP_URL" "$SECRET" > urls.txt
+          mkdir out
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PASSPHRASE \
+            -in urls.txt -out out/dev-ha-env-urls.enc
+          rm urls.txt
           tail -20 env.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: devenv-url
-          path: devenv-url.txt
+          name: dev-ha-env-urls
+          path: out/dev-ha-env-urls.enc
           retention-days: 1
       - name: Keep running
+        env:
+          MINUTES: ${{ inputs.minutes || '340' }}
         run: |
+          [ "$MINUTES" -le 340 ] 2>/dev/null || MINUTES=340
           end=$(( $(date +%s) + MINUTES * 60 ))
           while [ "$(date +%s)" -lt "$end" ]; do
             sleep 60
@@ -109,5 +141,6 @@ jobs:
       - name: Logs
         if: always()
         run: |
-          docker ps --format '{{.Image}} {{.Status}} {{.Ports}}' || true
-          tail -200 env.log; tail -50 tunnel.log; tail -100 server.log || true
+          docker ps --format '{{.Image}} {{.Status}}' || true
+          tail -200 env.log || true
+          tail -100 server.log || true
