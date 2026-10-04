@@ -1,10 +1,32 @@
 """Unit tests for camera tools module."""
 
+import json
+import struct
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ha_mcp.tools.tools_camera import CameraTools
+
+
+def _metadata(result):
+    """The JSON text block a client without structuredContent support sees."""
+    text, _image = result.content
+    return json.loads(text.text)
+
+
+def _png(width, height):
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", width, height)
+
+
+def _gif(width, height):
+    return b"GIF89a" + struct.pack("<HH", width, height)
+
+
+def _jpeg(width, height):
+    app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9
+    sof0 = b"\xff\xc0" + struct.pack(">HBHH", 17, 8, height, width) + b"\x03"
+    return b"\xff\xd8" + app0 + sof0
 
 
 class TestHaGetCameraImage:
@@ -61,8 +83,9 @@ class TestHaGetCameraImage:
         mock_client.httpx_client.get.assert_called_once_with(
             "/camera_proxy/camera.front_door", params=None
         )
-        assert result.data == b"\xff\xd8\xff\xe0"
-        assert result._format == "jpeg"
+        text, image = result.content
+        assert image.mimeType == "image/jpeg"
+        assert json.loads(text.text) == result.structured_content
 
     @pytest.mark.asyncio
     async def test_image_retrieval_with_size_params(self, mock_client):
@@ -141,7 +164,8 @@ class TestHaGetCameraImage:
 
         tools = CameraTools(mock_client)
         result = await tools.ha_get_camera_image(entity_id="camera.front_door")
-        assert result._format == "png"
+        assert result.content[1].mimeType == "image/png"
+        assert _metadata(result)["mime_type"] == "image/png"
 
     @pytest.mark.asyncio
     async def test_gif_content_type(self, mock_client):
@@ -154,7 +178,8 @@ class TestHaGetCameraImage:
 
         tools = CameraTools(mock_client)
         result = await tools.ha_get_camera_image(entity_id="camera.front_door")
-        assert result._format == "gif"
+        assert result.content[1].mimeType == "image/gif"
+        assert _metadata(result)["mime_type"] == "image/gif"
 
     @pytest.mark.asyncio
     async def test_default_to_jpeg_for_unknown_content_type(self, mock_client):
@@ -167,7 +192,8 @@ class TestHaGetCameraImage:
 
         tools = CameraTools(mock_client)
         result = await tools.ha_get_camera_image(entity_id="camera.front_door")
-        assert result._format == "jpeg"
+        assert result.content[1].mimeType == "image/jpeg"
+        assert _metadata(result)["mime_type"] == "image/jpeg"
 
     @pytest.mark.asyncio
     async def test_width_only_param(self, mock_client):
@@ -200,3 +226,63 @@ class TestHaGetCameraImage:
         mock_client.httpx_client.get.assert_called_once_with(
             "/camera_proxy/camera.front_door", params={"height": "600"}
         )
+
+    @pytest.mark.parametrize(
+        ("data", "content_type"),
+        [
+            (_png(1920, 1080), "image/png"),
+            (_gif(1920, 1080), "image/gif"),
+            (_jpeg(1920, 1080), "image/jpeg"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_metadata_reports_actual_pixel_size(
+        self, mock_client, data, content_type
+    ):
+        """The model can see whether HA honoured a resize without decoding the image."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = data
+        mock_response.headers = {"content-type": content_type}
+        mock_client.httpx_client.get = AsyncMock(return_value=mock_response)
+
+        tools = CameraTools(mock_client)
+        meta = _metadata(
+            await tools.ha_get_camera_image(entity_id="camera.front_door", width=640)
+        )
+
+        assert (meta["width"], meta["height"]) == (1920, 1080)
+        assert meta["requested_width"] == 640
+        assert meta["size_bytes"] == len(data)
+
+    @pytest.mark.asyncio
+    async def test_metadata_dimensions_null_for_unparseable_image(self, mock_client):
+        """A truncated or unknown image still returns, with unknown dimensions."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"\xff\xd8\xff\xe0"
+        mock_response.headers = {"content-type": "image/jpeg"}
+        mock_client.httpx_client.get = AsyncMock(return_value=mock_response)
+
+        tools = CameraTools(mock_client)
+        meta = _metadata(await tools.ha_get_camera_image(entity_id="camera.front_door"))
+
+        assert meta["width"] is None and meta["height"] is None
+        assert "requested_width" not in meta
+
+    @pytest.mark.asyncio
+    async def test_metadata_capture_time_comes_from_ha_date_header(self, mock_client):
+        """Snapshots from two cameras can be ordered by HA's own clock."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = _jpeg(4, 3)
+        mock_response.headers = {
+            "content-type": "image/jpeg",
+            "date": "Sun, 04 Oct 2026 18:12:35 GMT",
+        }
+        mock_client.httpx_client.get = AsyncMock(return_value=mock_response)
+
+        tools = CameraTools(mock_client)
+        meta = _metadata(await tools.ha_get_camera_image(entity_id="camera.front_door"))
+
+        assert meta["captured_at"] == "2026-10-04T18:12:35+00:00"
