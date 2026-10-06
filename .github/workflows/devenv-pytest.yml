@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --all-extras --dev
+      - run: uv sync --all-extras --dev --python 3.14
       - run: uv pip install --no-deps home-assistant-frontend==20260930.1
       - run: |
           uv run python - <<'PY'
