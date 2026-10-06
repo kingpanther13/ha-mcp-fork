@@ -98,7 +98,7 @@ function build(src, bindings) {
   var values = names.map(function (n) {
     var b = bindings[n];
     if (b === 'any') return ANY;
-    try { return req(b); } catch (e) { throw new Error('require-failed ' + n); }
+    try { return req(b); } catch (e) { throw new Error('require-failed ' + n + ' module ' + b + ': ' + e); }
   });
   // Editor forms may read this.hass; an inert stand-in keeps them pure.
   return Function.apply(null, names.concat([src])).apply(ANY, values);
