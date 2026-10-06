@@ -83,7 +83,8 @@ function req(id) {
   if (CACHE[id]) return CACHE[id].exports;
   load(id);
   var module = (CACHE[id] = { exports: {} });
-  REG[id](module, module.exports, req);
+  try { REG[id](module, module.exports, req); }
+  catch (e) { delete CACHE[id]; throw new Error('module ' + id + ': ' + e + ' ' + e.stack); }
   return module.exports;
 }
 req.d = function (e, getters, values) {
@@ -359,8 +360,6 @@ class CardDefinitions:
                     keys = self._evaluate("struct", body, definition, key=card_type)
                 except ValueError as exc:
                     _LOGGER.warning("PR2671 validator %s: %s", card_type, exc)
-                    if card_type == "tile":
-                        _LOGGER.warning("PR2671 module: %s", self._engine("source", {"id": "977"}))
             self._struct_keys[card_type] = keys
         return self._struct_keys[card_type] is not None
 
