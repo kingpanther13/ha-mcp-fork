@@ -84,7 +84,7 @@ function req(id) {
   load(id);
   var module = (CACHE[id] = { exports: {} });
   try { REG[id](module, module.exports, req); }
-  catch (e) { delete CACHE[id]; throw new Error('module ' + id + ': ' + e + ' ' + e.stack); }
+  catch (e) { delete CACHE[id]; throw new Error('module ' + id + ': ' + e + (e instanceof TypeError ? ' source: ' + REG[id].toString() : '')); }
   return module.exports;
 }
 req.d = function (e, getters, values) {
