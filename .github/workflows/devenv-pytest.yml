@@ -1,4 +1,4 @@
-name: PR2671 frontend diagnostics
+name: PR2671 clean HA dependency inventory
 on:
   push:
     branches: [devenv/pr2671-diagnostic]
@@ -6,25 +6,13 @@ on:
 permissions:
   contents: read
 jobs:
-  diagnose:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync --all-extras --dev --python 3.14
-      - run: uv pip install --no-deps home-assistant-frontend==20260930.1
-      - run: |
-          .venv/bin/python - <<'PY'
-          import logging
-          logging.basicConfig(level=logging.DEBUG)
-          from tests.src.unit.test_card_definitions import cd
-          import hass_frontend
-          cd._ENGINE_JS = cd._ENGINE_JS.replace('delete CACHE[id]; throw e;', "delete CACHE[id]; throw new Error('module ' + id + ': ' + e + (e instanceof TypeError ? ' source: ' + REG[id].toString() : ''));")
-          d=cd.CardDefinitions(hass_frontend.where())
-          print('ROOT',hass_frontend.where())
-          print('TILE FIELDS',d.describe('tile'))
-          warnings=d.validate({'views':[{'cards':[{'type':'tile','entity':'light.test','colour':'red'}, {'type':'button','entitty':'x'}]}]})
-          print('WARNINGS',warnings)
-          assert any('colour' in w for w in warnings)
-          PY
+      - name: Inspect unmodified HA 2026.10 image
+        run: |
+          docker run --rm --entrypoint python \
+            -v "$PWD/.github/pr2671-dependency-inspect.py:/probe.py:ro" \
+            ghcr.io/home-assistant/home-assistant:2026.10.0b2 /probe.py
