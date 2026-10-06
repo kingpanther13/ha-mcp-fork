@@ -121,8 +121,9 @@ def test_entrypoint_dependencies_load_without_browser_startup(tmp_path) -> None:
     frontend = tmp_path / "frontend_latest"
     frontend.mkdir()
     (frontend / "core.js").write_text(
-        'var e,t,r={7(e,t,r){r.d(t,{},{field:"entity"})}};'
-        'throw new Error("browser startup must not run");',
+        'var e,t,r={7(e,t,r){r.d(t,{},{field:"entity"})}},cache={};'
+        'function start(){throw new Error("browser startup must not run")}'
+        "var url=import.meta.url;start();",
         encoding="utf-8",
     )
     definitions = cd.CardDefinitions(tmp_path)

@@ -33,6 +33,8 @@ CAPABILITIES = ("dashboard_cards",)
 
 # A module factory takes (module, exports, require), trailing ones omitted when unused.
 _MOD_RE = re.compile(r"[{,](\d+)\([\w$]+(?:,[\w$]+){0,2}\)\{")
+# Entrypoints end their registry with the module cache and require function.
+_ENTRYPOINT_END_RE = re.compile(r"\},[\w$]+=\{\};function [\w$]+\(")
 # The element registration, ``(0,x.EM)("hui-tile-card")``; never a createElement.
 _TAG_RE = re.compile(r'\)\("(hui-[a-z0-9-]+-card(?:-editor)?)"\)')
 _EDITOR_REF_RE = re.compile(r'"(hui-[a-z0-9-]+-card-editor)"')
@@ -69,14 +71,9 @@ function load(id) {
   if (!REG[id]) {
     var src = __chunk(id);
     if (src) {
-      var holder = {}, mods = null, captured = {};
-      // Capture the registry before an entrypoint can run its browser startup.
-      Object.defineProperty(holder, '__webpack_modules__', { set: function (v) {
-        mods = v; throw captured;
-      } });
-      try { new Function('exports_', src)(holder); }
-      catch (e) { if (e !== captured) throw e; }
-      mods = mods || {};
+      var holder = {};
+      new Function('exports_', src)(holder);
+      var mods = holder.__webpack_modules__ || {};
       for (var k in mods) if (!REG[k]) REG[k] = mods[k];
     }
     // An absent module cannot provide browser-only dependencies.
@@ -270,10 +267,19 @@ class CardDefinitions:
             return text.replace("export const ", "exports_.")
         # core/app entrypoints keep dependencies in a local registry instead
         # of exporting a chunk. Capture that object without executing startup.
-        first = _MOD_RE.search(text)
-        if first is None or text[first.start()] != "{":
+        factories = list(_MOD_RE.finditer(text))
+        if not factories or text[factories[0].start()] != "{":
             return None
-        return "exports_.__webpack_modules__=" + text[first.start() :]
+        end = _ENTRYPOINT_END_RE.search(text, factories[-1].end())
+        if end is None:
+            return None
+        # Exclude runtime code entirely: its import.meta is module-only syntax,
+        # even when an early return would prevent browser startup execution.
+        return (
+            "exports_.__webpack_modules__="
+            + text[factories[0].start() : end.start() + 1]
+            + ";"
+        )
 
     def _evaluate(self, op: str, body: str, expr: str, key: str = "") -> Any:
         """Run ``expr`` from ``body``, binding the module's imports and locals."""
