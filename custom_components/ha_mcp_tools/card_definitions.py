@@ -357,8 +357,8 @@ class CardDefinitions:
             if definition:
                 try:
                     keys = self._evaluate("struct", body, definition, key=card_type)
-                except ValueError:
-                    _LOGGER.debug("No validator for card type %s", card_type)
+                except ValueError as exc:
+                    _LOGGER.warning("PR2671 validator %s: %s", card_type, exc)
             self._struct_keys[card_type] = keys
         return self._struct_keys[card_type] is not None
 
