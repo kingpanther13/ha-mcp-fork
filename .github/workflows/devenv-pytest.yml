@@ -15,7 +15,7 @@ jobs:
       - run: uv sync --all-extras --dev --python 3.14
       - run: uv pip install --no-deps home-assistant-frontend==20260930.1
       - run: |
-          uv run python - <<'PY'
+          .venv/bin/python - <<'PY'
           import logging
           logging.basicConfig(level=logging.DEBUG)
           from tests.src.unit.test_card_definitions import cd
