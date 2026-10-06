@@ -69,12 +69,17 @@ function load(id) {
   if (!REG[id]) {
     var src = __chunk(id);
     if (src) {
-      var holder = {};
-      new Function('exports_', src)(holder);
-      var mods = holder.__webpack_modules__ || {};
+      var holder = {}, mods = null, captured = {};
+      // Capture the registry before an entrypoint can run its browser startup.
+      Object.defineProperty(holder, '__webpack_modules__', { set: function (v) {
+        mods = v; throw captured;
+      } });
+      try { new Function('exports_', src)(holder); }
+      catch (e) { if (e !== captured) throw e; }
+      mods = mods || {};
       for (var k in mods) if (!REG[k]) REG[k] = mods[k];
     }
-    // Browser polyfills (core-js) have no place here.
+    // An absent module cannot provide browser-only dependencies.
     if (!REG[id]) REG[id] = function () {};
   }
 }
@@ -84,7 +89,7 @@ function req(id) {
   load(id);
   var module = (CACHE[id] = { exports: {} });
   try { REG[id](module, module.exports, req); }
-  catch (e) { delete CACHE[id]; throw new Error('module ' + id + ': ' + e + (e instanceof TypeError ? ' source: ' + REG[id].toString() : '')); }
+  catch (e) { delete CACHE[id]; throw e; }
   return module.exports;
 }
 req.d = function (e, getters, values) {
@@ -94,6 +99,7 @@ req.d = function (e, getters, values) {
 req.r = function () {};
 req.n = function (m) { return function () { return m; }; };
 req.o = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+req.g = globalThis;
 function build(src, bindings) {
   var names = Object.keys(bindings);
   var values = names.map(function (n) {
@@ -225,8 +231,6 @@ class CardDefinitions:
         files = sorted(self._dir.glob("*.js"), key=lambda p: p.stat().st_size)
         for path in files:
             text = path.read_text(encoding="utf-8")
-            if "__webpack_modules__=" not in text:
-                continue
             starts = [(m.start(), m.group(1)) for m in _MOD_RE.finditer(text)]
             for _, module_id in starts:
                 self._module_file.setdefault(module_id, path)
@@ -261,7 +265,15 @@ class CardDefinitions:
         path = self._module_file.get(module_id)
         if path is None:
             return None
-        return path.read_text(encoding="utf-8").replace("export const ", "exports_.")
+        text = path.read_text(encoding="utf-8")
+        if "__webpack_modules__=" in text:
+            return text.replace("export const ", "exports_.")
+        # core/app entrypoints keep dependencies in a local registry instead
+        # of exporting a chunk. Capture that object without executing startup.
+        first = _MOD_RE.search(text)
+        if first is None or text[first.start()] != "{":
+            return None
+        return "exports_.__webpack_modules__=" + text[first.start() :]
 
     def _evaluate(self, op: str, body: str, expr: str, key: str = "") -> Any:
         """Run ``expr`` from ``body``, binding the module's imports and locals."""
@@ -359,7 +371,9 @@ class CardDefinitions:
                 try:
                     keys = self._evaluate("struct", body, definition, key=card_type)
                 except ValueError as exc:
-                    _LOGGER.warning("PR2671 validator %s: %s", card_type, exc)
+                    _LOGGER.debug(
+                        "Card validator %s is unavailable: %s", card_type, exc
+                    )
             self._struct_keys[card_type] = keys
         return self._struct_keys[card_type] is not None
 

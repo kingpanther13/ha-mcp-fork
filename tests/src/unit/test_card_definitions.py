@@ -116,6 +116,34 @@ def test_editor_registration_is_found_and_imports_resolve() -> None:
     }
 
 
+def test_entrypoint_dependencies_load_without_browser_startup(tmp_path) -> None:
+    """HA 2026.10 card structs import core-js helpers held in core/app bundles."""
+    frontend = tmp_path / "frontend_latest"
+    frontend.mkdir()
+    (frontend / "core.js").write_text(
+        'var e,t,r={7(e,t,r){r.d(t,{},{field:"entity"})}};'
+        'throw new Error("browser startup must not run");',
+        encoding="utf-8",
+    )
+    definitions = cd.CardDefinitions(tmp_path)
+    result = definitions._evaluate("schema", "var x=r(7);", "[{name:x.field}]")
+    assert result == [{"name": "entity"}]
+
+
+def test_failed_module_is_not_reused_as_partial_exports(tmp_path) -> None:
+    frontend = tmp_path / "frontend_latest"
+    frontend.mkdir()
+    (frontend / "chunk.js").write_text(
+        'export const __webpack_modules__={7(e,t){t.field="partial";'
+        'throw new Error("dependency unavailable")}};',
+        encoding="utf-8",
+    )
+    definitions = cd.CardDefinitions(tmp_path)
+    for _ in range(2):
+        with pytest.raises(ValueError, match="require-failed"):
+            definitions._evaluate("struct", "var x=r(7);", "x.field")
+
+
 def test_local_definition_stops_at_the_top_level_comma() -> None:
     body = 'var x=(0,l.Ik)({a:(0,l.vP)(["b,c",`d,${1}`]),e:f}),y=2;class V{}'
 
