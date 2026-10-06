@@ -404,7 +404,6 @@ def async_register_commands(hass: HomeAssistant) -> None:
     from .._pr2671_probe import specs
     for schema, do_fn, prep in specs(hass, vol):
         websocket_api.async_register_command(hass, _build_handler(schema, do_fn, prep))
-    card_definitions.async_warm_up(hass)
     _LOGGER.debug(
         "Registered ha_mcp_tools WS commands: schema_version=%s capabilities=%s",
         SCHEMA_VERSION,

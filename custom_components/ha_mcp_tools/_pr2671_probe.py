@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 from . import card_definitions as cd, custom_cards as cc
+from . import card_runtime as runtime
 
 _resolutions = []
 _original_resource_path = cc.resource_path
@@ -12,6 +13,12 @@ _original_index = cd.CardDefinitions._index
 _original_build = cd._build
 _saved_definitions = None
 _loop_thread = None
+_original_provider = runtime._provider_state
+_original_dom_url = cc.LINKEDOM_URL
+_original_integrity = cc.LINKEDOM_INTEGRITY
+
+def _conflict():
+    raise ValueError("injected conflicting installed provider")
 
 def _resource_path(*args):
     _resolutions.append(threading.get_ident() == _loop_thread)
@@ -29,6 +36,19 @@ async def _prep(hass, msg):
         cd.CardDefinitions._index = _original_index
         cd._definitions = _saved_definitions
         cd._build_task = None
+        runtime._provider_state = _original_provider
+        cc.LINKEDOM_URL = _original_dom_url
+        cc.LINKEDOM_INTEGRITY = _original_integrity
+        cc._dom_failed_at = None
+    elif operation == "quickjs_conflict":
+        _saved_definitions = cd._definitions
+        cd._definitions = None
+        cd._build_task = None
+        runtime._provider_state = _conflict
+    elif operation == "offline":
+        cc.LINKEDOM_URL = "http://127.0.0.1:9/unavailable"
+    elif operation == "bad_integrity":
+        cc.LINKEDOM_INTEGRITY = "sha512-invalid"
     elif operation == "warnings":
         return {"result": {"warnings": await cd.async_card_warnings(hass, msg["config"])}}
     elif operation == "cold_cache":
