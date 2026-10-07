@@ -19,6 +19,16 @@ _original_integrity = cc.LINKEDOM_INTEGRITY
 _saved_skip_pip = None
 _pip_calls = []
 _original_requirements = None
+cc._RUNTIME_JS = cc._RUNTIME_JS.replace("if (op === 'check') {", """
+    if (op === 'target_check') {
+      var checked = [];
+      [{source: 'editor', element: slot2.editor}, {source: 'card', element: new C()}].forEach(function(t) {
+        try { t.element.hass=__hass; t.element.setConfig(p.config); checked.push({source:t.source,error:null}); }
+        catch(e) { checked.push({source:t.source,error:__verdict(e)}); }
+      });
+      return {value:checked};
+    }
+    if (op === 'check') {""")
 
 def _conflict():
     raise ValueError("injected conflicting installed provider")
@@ -101,6 +111,13 @@ async def _prep(hass, msg):
                             row["dependencies"] = {alias: definitions._engine("source", {"id": ident}).get("value", "") for alias, ident in cd._ALIAS_RE.findall(source)[:12]}
                 result[tag] = row
             return result
+        return {"result": await hass.async_add_executor_job(inspect)}
+    elif operation == "custom_targets":
+        custom = await cc.async_get_custom_cards(hass, timeout=5)
+        def inspect():
+            tag = msg["config"]["type"].removeprefix("custom:")
+            bundle = custom._owner(tag)
+            return bundle.engine("target_check", {"tag": tag, "config": msg["config"]})
         return {"result": await hass.async_add_executor_job(inspect)}
     elif operation == "cold_cache":
         if cc._refresh_task is not None:
