@@ -1,0 +1,536 @@
+name: Native Core contracts non-E2E preflight
+'on':
+  push:
+    branches:
+    - test/native-energy-history
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  PYTHON_VERSION: '3.13'
+  UV_CACHE_DIR: /tmp/.uv-cache
+  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.9.4
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+jobs:
+  fast-checks:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Docs Size Check
+      run: "max_chars=16000\nmax_lines=200\nchars=$(LC_ALL=C.UTF-8 wc -m < AGENTS.md)\nlines=$(wc -l < AGENTS.md)\nif [ \"\
+        $chars\" -gt \"$max_chars\" ] || [ \"$lines\" -gt \"$max_lines\" ]; then\n  echo \"::error file=AGENTS.md::AGENTS.md\
+        \ is ${chars} Unicode characters and ${lines} lines; keep the canonical startup guidance at or below ${max_chars}\
+        \ characters and ${max_lines} lines, and move scoped detail to linked documents.\"\n  exit 1\nfi\n"
+    - name: HACS validation
+      if: success() || failure()
+      uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
+      with:
+        category: integration
+    - name: Remove vendored test fixtures
+      if: success() || failure()
+      run: rm -rf tests/initial_test_state
+    - name: Hassfest
+      if: success() || failure()
+      uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3
+    - name: Restore vendored test fixtures
+      if: success() || failure()
+      run: "git checkout HEAD -- tests/initial_test_state\nif ! git diff --quiet HEAD -- tests/initial_test_state; then\n\
+        \  echo \"::error::tests/initial_test_state was not fully restored; the lint steps below would silently skip its files\"\
+        \n  exit 1\nfi\n"
+    - name: Install uv
+      if: success() || failure()
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      with:
+        version: 0.12.20
+    - name: Set up Python
+      if: success() || failure()
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Verify uv.lock is in sync with pyproject.toml
+      if: success() || failure()
+      run: uv lock --check
+    - name: Check dependency alignment with HA core constraints
+      if: success() || failure()
+      run: "minimum=$(python3 -c 'import json; print(json.load(open(\"hacs.json\"))[\"homeassistant\"])')\n[[ \"$minimum\"\
+        \ =~ ^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+$ ]]\nfailed=0\nfor ha_version in \"${HA_IMAGE_GHCR##*:}\" \"$minimum\"; do\n\
+        \  status=0\n  uv run --no-project --with packaging python \\\n    scripts/check_ha_constraint_alignment.py \\\n \
+        \   --ha-version \"$ha_version\" || status=$?\n  if [ \"$status\" -eq 78 ]; then\n    echo \"::warning::could not\
+        \ reach HA ${ha_version} constraints - dependency alignment for this version was not verified\"\n  elif [ \"$status\"\
+        \ -ne 0 ]; then\n    failed=1\n  fi\ndone\nexit \"$failed\"\n"
+    - name: Install dependencies
+      if: success() || failure()
+      run: uv sync --dev
+    - name: Run ruff check
+      if: success() || failure()
+      run: uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/
+        scripts/
+    - name: Run ruff format check on changed Python files
+      if: success() || failure()
+      run: git diff --name-only --diff-filter=ACMR a1f27486989cba63ee7a04ffedabef5f17b2b875 HEAD -- '*.py' | xargs -r uv run
+        ruff format --check
+    - name: Run ast-grep
+      if: success() || failure()
+      run: uv run ast-grep scan
+    - name: Run mypy
+      if: success() || failure()
+      run: 'status=0
+
+        uv run mypy src/ custom_components/ homeassistant-addon/ scripts/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy-dev/ || status=1
+
+        exit "$status"
+
+        '
+    - name: Check the ratchet baselines and files against the base
+      if: success() || failure()
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: 'uv run python scripts/module_size_ratchet.py --base a1f27486989cba63ee7a04ffedabef5f17b2b875
+
+        uv run python scripts/duplicate_code_ratchet.py --base a1f27486989cba63ee7a04ffedabef5f17b2b875'
+    - name: Prepare formatting fixes for review
+      if: success() || failure()
+      run: 'git diff --name-only --diff-filter=ACMR a1f27486989cba63ee7a04ffedabef5f17b2b875 HEAD -- ''*.py'' | xargs -r uv
+        run ruff check --fix || true
+
+        git diff --name-only --diff-filter=ACMR a1f27486989cba63ee7a04ffedabef5f17b2b875 HEAD -- ''*.py'' | xargs -r uv run
+        ruff format
+
+        git diff --binary > /tmp/formatting.patch
+
+        git diff --exit-code'
+    - name: Upload formatting patch
+      if: success() || failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: formatting-patch
+        path: /tmp/formatting.patch
+  site-checks:
+    name: Site (astro check + eslint a11y)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: site
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Setup Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+    - name: Install dependencies
+      run: corepack npm ci
+    - name: Astro type & diagnostics check
+      run: npm run check
+    - name: ESLint (eslint-plugin-astro + jsx-a11y)
+      run: npm run lint
+    - name: Build site
+      run: npm run build
+    - name: Accessibility audit (axe-core)
+      run: npm run audit:a11y
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:0.12.23-python3.13-trixie-slim
+    timeout-minutes: 10
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-v1
+    - name: Install git and jq for workflow contract tests
+      run: "# Keep cached .debs after install so the cache stays warm for\n# future runs (default Debian behaviour deletes\
+        \ them).\nrm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n\
+        \  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\napt-get install -y -qq git jq >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+    - name: Install Python dependencies
+      run: uv sync --all-extras --dev
+    - name: Install JS test dependencies (jsdom, esbuild)
+      run: cd tests/js && corepack npm ci
+    - name: Run unit tests
+      run: uv run pytest tests/src/unit/ -n auto --tb=short -v
+    - name: Run BAT runner tests
+      run: uv run pytest tests/uat/ --ignore=tests/uat/stories/test_stories.py -n auto --tb=short -v
+    - name: Check unit tests left no local state
+      run: "if [ -e ~/.ha-mcp ]; then\n  find ~/.ha-mcp\n  echo \"::error::Unit tests wrote to ~/.ha-mcp\"\n  exit 1\nfi\n\
+        # procps (pgrep) is not in the slim image; read /proc directly.\nif grep -ls '[s]tdio_settings_sidecar' /proc/[0-9]*/cmdline;\
+        \ then\n  echo \"::error::Unit tests left a settings sidecar running\"\n  exit 1\nfi\n"
+    - name: Run add-on structure tests
+      run: uv run pytest tests/addon/ -n auto --tb=short -v --ignore=tests/addon/test_addon_startup.py
+  docker-validation:
+    name: Docker & Add-on Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        cache-binary: true
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      with:
+        version: 0.12.20
+    - name: Set up Python
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Install test dependencies
+      run: uv sync --dev
+    - name: Run add-on tests
+      run: uv run pytest tests/addon/ --ignore=tests/addon/test_skills_config.py --tb=short -v
+    - name: Validate docker-compose configuration
+      run: uv run pytest tests/test_docker/test_docker_compose.py -v
+    - name: Build and test standalone Docker image
+      run: uv run pytest tests/test_docker/test_docker_build.py -v
+  installer-test-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Run macOS installer script (first run)
+      run: sh scripts/install.sh
+    - name: Run macOS installer script (second run - idempotency test)
+      run: '# Should skip uv install and show "uv is already installed"
+
+        sh scripts/install.sh
+
+        '
+    - name: Verify uv is installed
+      run: 'command -v uvx || (echo "uvx not found" && exit 1)
+
+        uvx --version
+
+        '
+    - name: Verify Claude Desktop config was created
+      run: "CONFIG_FILE=\"$HOME/Library/Application Support/Claude/claude_desktop_config.json\"\nif [ ! -f \"$CONFIG_FILE\"\
+        \ ]; then\n  echo \"Config file not created\"\n  exit 1\nfi\ncat \"$CONFIG_FILE\"\n# Verify it contains Home Assistant\
+        \ config\ngrep -q '\"Home Assistant\"' \"$CONFIG_FILE\" || (echo \"Home Assistant config not found\" && exit 1)\n\
+        grep -q 'ha-mcp@latest' \"$CONFIG_FILE\" || (echo \"ha-mcp not configured\" && exit 1)\n"
+  installer-test-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Run Linux installer script (first run)
+      run: sh scripts/install.sh
+    - name: Run Linux installer script (second run - idempotency test)
+      run: '# Should skip uv install and show "uv is already installed"
+
+        sh scripts/install.sh
+
+        '
+    - name: Verify uv is installed
+      run: 'export PATH="$HOME/.local/bin:$PATH"
+
+        command -v uvx || (echo "uvx not found" && exit 1)
+
+        uvx --version
+
+        '
+    - name: Verify Claude Desktop config was created
+      run: "CONFIG_FILE=\"${XDG_CONFIG_HOME:-$HOME/.config}/Claude/claude_desktop_config.json\"\nif [ ! -f \"$CONFIG_FILE\"\
+        \ ]; then\n  echo \"Config file not created\"\n  exit 1\nfi\ncat \"$CONFIG_FILE\"\n# Verify it contains Home Assistant\
+        \ config\ngrep -q '\"Home Assistant\"' \"$CONFIG_FILE\" || (echo \"Home Assistant config not found\" && exit 1)\n\
+        grep -q 'ha-mcp@latest' \"$CONFIG_FILE\" || (echo \"ha-mcp not configured\" && exit 1)\n"
+    - name: Merge preserves other MCP servers and writes valid JSON
+      run: 'CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/Claude/claude_desktop_config.json"
+
+        # Seed an unrelated MCP server, then re-run; the merge must keep it.
+
+        python3 -c "import json; c=json.load(open(''$CONFIG_FILE'')); c[''mcpServers''][''Keepme'']={''command'':''x''}; json.dump(c,
+        open(''$CONFIG_FILE'',''w''))"
+
+        sh scripts/install.sh
+
+        python3 -c "import json; c=json.load(open(''$CONFIG_FILE'')); assert ''Keepme'' in c[''mcpServers''], ''merge dropped
+        an existing MCP server''; assert ''Home Assistant'' in c[''mcpServers'']; print(''OK: merge preserved other servers
+        and JSON is valid'')"
+
+        '
+  installer-test-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Run Windows installer script (first run)
+      shell: pwsh
+      run: '& ./scripts/install-windows.ps1
+
+        '
+    - name: Run Windows installer script (second run - idempotency test)
+      shell: pwsh
+      run: '# Should skip uv install and show "uv is already installed"
+
+        & ./scripts/install-windows.ps1
+
+        '
+    - name: Verify uv is installed
+      shell: pwsh
+      run: "# Refresh PATH (winget installs to user PATH which doesn't persist between steps)\n$env:Path = [System.Environment]::GetEnvironmentVariable(\"\
+        Path\",\"Machine\") + \";\" + [System.Environment]::GetEnvironmentVariable(\"Path\",\"User\")\n$uvx = Get-Command\
+        \ uvx -ErrorAction SilentlyContinue\nif (-not $uvx) {\n  Write-Error \"uvx not found\"\n  exit 1\n}\nuvx --version\n"
+    - name: Verify Claude Desktop config was created
+      shell: pwsh
+      run: "$ConfigFile = \"$env:APPDATA\\Claude\\claude_desktop_config.json\"\nif (-not (Test-Path $ConfigFile)) {\n  Write-Error\
+        \ \"Config file not created\"\n  exit 1\n}\nGet-Content $ConfigFile\n# Verify it contains Home Assistant config\n\
+        $content = Get-Content $ConfigFile -Raw\nif ($content -notmatch '\"Home Assistant\"') {\n  Write-Error \"Home Assistant\
+        \ config not found\"\n  exit 1\n}\nif ($content -notmatch 'ha-mcp@latest') {\n  Write-Error \"ha-mcp not configured\"\
+        \n  exit 1\n}\n"
+  installer-check-demo-env:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check demo environment is up
+      run: '# Verify the demo Home Assistant server is responding
+
+        curl -sf "https://ha-mcp-demo-server.qc-h.net/" -o /dev/null
+
+        echo "Demo server is up and responding"
+
+        '
+  installer-test-claude-code-args:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: --claude-code must not write a Claude Desktop config
+      run: "# Stub a 'claude' binary so the --claude-code branch runs without a real install.\nmkdir -p \"$HOME/bin\"\nprintf\
+        \ '#!/bin/sh\\nexit 0\\n' > \"$HOME/bin/claude\"\nchmod +x \"$HOME/bin/claude\"\nexport PATH=\"$HOME/bin:$PATH\"\n\
+        sh scripts/install.sh --claude-code\nCONFIG_FILE=\"${XDG_CONFIG_HOME:-$HOME/.config}/Claude/claude_desktop_config.json\"\
+        \nif [ -f \"$CONFIG_FILE\" ]; then\n  echo \"BUG: --claude-code wrote a Claude Desktop config\"; cat \"$CONFIG_FILE\"\
+        ; exit 1\nfi\necho \"OK: --claude-code did not create a Desktop config\"\n"
+    - name: --help advertises --claude-code and exits 0
+      run: 'out=$(sh scripts/install.sh --help)
+
+        echo "$out" | grep -q -- ''--claude-code'' || (echo "help missing --claude-code" && exit 1)
+
+        '
+  installer-test-wsl-guard:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: WSL is detected and the Desktop path is refused (no config written)
+      run: 'set +e
+
+        WSL_DISTRO_NAME=Ubuntu sh scripts/install.sh
+
+        rc=$?
+
+        set -e
+
+        [ "$rc" -eq 1 ] || (echo "Expected exit 1 under WSL, got $rc" && exit 1)
+
+        CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/Claude/claude_desktop_config.json"
+
+        [ ! -f "$CONFIG_FILE" ] || (echo "WSL guard wrote a config anyway" && exit 1)
+
+        echo "OK: WSL Desktop path refused, no config written"
+
+        '
+    - name: WSL + --claude-code is allowed past the guard
+      run: "# Stub claude so the allowed path doesn't do a real install.\nmkdir -p \"$HOME/bin\"\nprintf '#!/bin/sh\\nexit\
+        \ 0\\n' > \"$HOME/bin/claude\"\nchmod +x \"$HOME/bin/claude\"\nexport PATH=\"$HOME/bin:$PATH\"\nout=$(WSL_DISTRO_NAME=Ubuntu\
+        \ sh scripts/install.sh --claude-code 2>&1) || true\nif echo \"$out\" | grep -qi 'Detected WSL'; then\n  echo \"guard\
+        \ wrongly fired for --claude-code under WSL\"; exit 1\nfi\necho \"OK: --claude-code not blocked under WSL\"\n"
+  installer-test-stale-uv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Stale uv without uvx falls through to the upgrade path (issue
+      run: "set -e\n# Reproduce a pre-uvx uv: a `uv` binary on PATH with no `uvx` beside\n# it. The old `uv || uvx` gate accepted\
+        \ this stale uv and then\n# hard-exited at the uvx lookup; the gate now keys on uvx, so this\n# must instead reach\
+        \ the install/upgrade path and end with a uvx.\nSTALE=\"$(mktemp -d)\"\nprintf '#!/bin/sh\\necho \"uv 0.1.39\"\\n'\
+        \ > \"$STALE/uv\"\nchmod +x \"$STALE/uv\"\n# Curated PATH: the stale uv stub plus the system dirs the installer\n\
+        # needs (sh, curl, python3), and crucially no real uvx. A real uvx\n# leaking onto PATH would mask the bug, so fail\
+        \ loudly if present.\nexport PATH=\"$STALE:/usr/bin:/bin\"\ncommand -v uv >/dev/null || { echo \"precondition: uv\
+        \ stub not on PATH\"; exit 1; }\nif command -v uvx >/dev/null; then\n  echo \"precondition failed: uvx unexpectedly\
+        \ on PATH\"; exit 1\nfi\nsh scripts/install.sh\n# The upgrade path must have produced a working uvx.\nexport PATH=\"\
+        $HOME/.local/bin:$PATH\"\ncommand -v uvx >/dev/null || { echo \"uvx missing after upgrade path\"; exit 1; }\necho\
+        \ \"OK: stale uv triggered the upgrade path, uvx now available\"\n"
+  renovate-validate:
+    name: Validate Renovate configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Validate with the same engine used by the scanner
+      id: validate
+      run: "engine=$(sed -n 's/^ *renovate-version: \\([0-9.]*\\)$/\\1/p' .github/workflows/renovate.yml)\nif ! [[ \"$engine\"\
+        \ =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n  echo \"::error::Missing or invalid Renovate engine pin\"\n  exit 1\nfi\n\
+        echo \"engine=$engine\" >> \"$GITHUB_OUTPUT\"\ndocker run --rm \\\n  -v \"$PWD/renovate.json:/config/renovate.json:ro\"\
+        \ \\\n  \"ghcr.io/renovatebot/renovate:$engine\" \\\n  renovate-config-validator --no-global /config/renovate.json\n"
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - name: Exercise release policy and dashboard/PR event decisions
+      env:
+        ENGINE: ${{ steps.validate.outputs.engine }}
+      run: "# The slim Renovate image bundles Node, but not npm. Prepare the\n# expression evaluator on the runner and mount\
+        \ it read-only.\nmkdir -p \"$RUNNER_TEMP/expression-tests\"\ncp tests/renovate/package.json tests/renovate/package-lock.json\
+        \ \\\n  \"$RUNNER_TEMP/expression-tests/\"\nnpm ci --prefix \"$RUNNER_TEMP/expression-tests\" --ignore-scripts \\\n\
+        \  --no-audit --no-fund\ndocker run --rm -v \"$PWD:/source:ro\" \\\n  -v \"$RUNNER_TEMP/expression-tests:/tmp/expression-tests:ro\"\
+        \ \\\n  --entrypoint bash \"ghcr.io/renovatebot/renovate:$ENGINE\" -c '\n    set -euo pipefail\n    # The CLI is a\
+        \ containerbase wrapper, not a symlink to its JS entry.\n    RENOVATE_TEST_ROOT=/usr/local/renovate\n    test -f \"\
+        $RENOVATE_TEST_ROOT/package.json\"\n    test -f \"$RENOVATE_TEST_ROOT/dist/config/defaults.js\"\n    export RENOVATE_TEST_ROOT\n\
+        \    node /source/tests/renovate/policy.mjs\n    node /source/tests/renovate/dashboard-events.mjs\n    node /source/tests/renovate/auto-merge.mjs\n\
+        \  '\n"
+    - name: Verify vendored updates with the scanner's executor
+      env:
+        ENGINE: ${{ steps.validate.outputs.engine }}
+      run: "docker run --rm -v \"$PWD:/source:ro\" \\\n  -e RENOVATE_TEST_ROOT=/usr/local/renovate \\\n  \"ghcr.io/renovatebot/renovate:$ENGINE\"\
+        \ node \\\n  /source/tests/renovate/vendoring.mjs\n"
+    - name: Verify promoted Supervisor and OS lookups produce updates
+      if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
+      env:
+        ENGINE: ${{ steps.validate.outputs.engine }}
+      run: "docker run --rm \\\n  -v \"$PWD:/source:ro\" \\\n  -e RENOVATE_PLATFORM=local \\\n  -e RENOVATE_DRY_RUN=lookup\
+        \ \\\n  -e RENOVATE_ONBOARDING=false \\\n  -e 'RENOVATE_INCLUDE_PATHS=[\"tests/haos_image_build/build_image.py\"]'\
+        \ \\\n  -e 'RENOVATE_IGNORE_DEPS=[\"ghcr.io/home-assistant/home-assistant\"]' \\\n  -e LOG_LEVEL=debug -e LOG_FORMAT=json\
+        \ \\\n  --entrypoint bash \"ghcr.io/renovatebot/renovate:$ENGINE\" -c '\n    set -euo pipefail\n    cp -R /source\
+        \ /tmp/ha-renovate\n    cd /tmp/ha-renovate\n    sed -i -e \"s/^STABLE_SUPERVISOR_VERSION = .*/STABLE_SUPERVISOR_VERSION\
+        \ = \\\"2020.1.0\\\"/\" \\\n      -e \"s/^STABLE_HAOS_VERSION = .*/STABLE_HAOS_VERSION = \\\"1.0\\\"/\" \\\n     \
+        \ tests/haos_image_build/build_image.py\n    if ! renovate > /tmp/lookup.jsonl; then\n      tail -n 100 /tmp/lookup.jsonl\n\
+        \      exit 1\n    fi\n    # Node is bundled with the pinned image; do not assume Python is.\n    node --input-type=module\
+        \ <<\"JS\"\nimport assert from \"node:assert/strict\";\nimport { readFileSync } from \"node:fs\";\n\nconst records\
+        \ = readFileSync(\"/tmp/lookup.jsonl\", \"utf8\").split(\"\\n\")\n  .filter(line => line.startsWith(\"{\")).map(line\
+        \ => JSON.parse(line));\n\nfunction* dependencies(value, depName) {\n  if (value && typeof value === \"object\") {\n\
+        \    if (value.depName === depName && \"updates\" in value) {\n      yield value;\n    }\n    for (const item of Object.values(value))\
+        \ {\n      yield* dependencies(item, depName);\n    }\n  }\n}\n\nfor (const [depName, fixture] of [\n  [\"home-assistant/supervisor\"\
+        , \"2020.1.0\"],\n  [\"home-assistant/operating-system\", \"1.0\"],\n]) {\n  const candidates = records.flatMap(record\
+        \ => [...dependencies(record, depName)])\n    .filter(dep => dep.currentValue === fixture && dep.updates?.length);\n\
+        \  assert.ok(candidates.length,\n    `${depName} stable datasource produced no update candidate: `\n    + JSON.stringify(records.slice(-10),\
+        \ null, 2));\n}\nconsole.log(\"Promoted Supervisor and OS updates are discoverable from the stable datasource.\");\n\
+        JS\n  '\n"
+  codeql-code-quality-gate:
+    name: CodeQL Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 2
+      with:
+        persist-credentials: false
+        ref: f875a071dea5918a97f6e021e9e4492bcae5996e
+        fetch-depth: 0
+    - name: Set up Python
+      timeout-minutes: 2
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.13'
+    - name: Install CodeQL CLI
+      timeout-minutes: 5
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: 'gh extensions install github/gh-codeql
+
+        gh codeql set-version latest
+
+        '
+    - name: Create CodeQL database (python)
+      timeout-minutes: 8
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "gh codeql database create \"$RUNNER_TEMP/ha-mcp-db-python\" \\\n  --language=python \\\n  --build-mode=none \\\
+        \n  --source-root . \\\n  --overwrite\n"
+    - name: Analyze with python quality + security suites
+      timeout-minutes: 12
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "gh codeql database analyze \"$RUNNER_TEMP/ha-mcp-db-python\" \\\n  codeql/python-queries:codeql-suites/python-code-quality.qls\
+        \ \\\n  codeql/python-queries:codeql-suites/python-code-scanning.qls \\\n  --format=sarif-latest \\\n  --output quality-python.sarif\
+        \ \\\n  --download\n"
+    - name: Upload SARIF artifact (python)
+      if: success() || failure()
+      timeout-minutes: 2
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: codeql-quality-sarif-python
+        path: quality-python.sarif
+        if-no-files-found: warn
+    - name: Gate on findings (python)
+      if: success() || failure()
+      timeout-minutes: 2
+      run: python scripts/codeql_quality_gate.py quality-python.sarif
+    - name: Create CodeQL database (javascript)
+      if: success() || failure()
+      timeout-minutes: 8
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "cat src/ha_mcp/settings_ui/settings_js/*.js > src/ha_mcp/settings_ui/settings.js\nrm -r src/ha_mcp/settings_ui/settings_js\n\
+        gh codeql database create \"$RUNNER_TEMP/ha-mcp-db-javascript\" \\\n  --language=javascript \\\n  --build-mode=none\
+        \ \\\n  --source-root . \\\n  --overwrite\n"
+    - name: Analyze with javascript quality + security suites
+      if: success() || failure()
+      timeout-minutes: 12
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "gh codeql database analyze \"$RUNNER_TEMP/ha-mcp-db-javascript\" \\\n  codeql/javascript-queries:codeql-suites/javascript-code-quality.qls\
+        \ \\\n  codeql/javascript-queries:codeql-suites/javascript-code-scanning.qls \\\n  --format=sarif-latest \\\n  --output\
+        \ quality-javascript.sarif \\\n  --download\n"
+    - name: Upload SARIF artifact (javascript)
+      if: success() || failure()
+      timeout-minutes: 2
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: codeql-quality-sarif-javascript
+        path: quality-javascript.sarif
+        if-no-files-found: warn
+    - name: Gate on findings (javascript)
+      if: success() || failure()
+      timeout-minutes: 2
+      run: python scripts/codeql_quality_gate.py quality-javascript.sarif
