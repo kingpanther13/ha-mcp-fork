@@ -78,6 +78,30 @@ async def _prep(hass, msg):
         def inspect():
             return {tag: bool(re.search(r"setConfig\([\w$]+\)\{", definitions._body(f"hui-{tag}-card"))) for tag in sorted(definitions._card_types)}
         return {"result": await hass.async_add_executor_job(inspect)}
+    elif operation == "editor_details":
+        import re
+        definitions = await cd.async_get_definitions(hass)
+        def inspect():
+            result = {}
+            for tag in ("markdown", "gauge", "clock", "logbook", "entity"):
+                editor = definitions._editor(tag)
+                body = definitions._body(editor)
+                match = cd._STRUCT_RE.search(body)
+                expr = cd._local_definition(body, match.group(3)) if match else None
+                row = {"editor": editor, "body": body, "card_body": definitions._body(f"hui-{tag}-card"), "struct": expr}
+                if expr:
+                    try:
+                        row["keys"] = definitions._evaluate("struct", body, expr, key=tag)
+                    except ValueError as exc:
+                        row["error"] = str(exc)
+                        failed = re.search(r"module (\d+)", str(exc))
+                        if failed:
+                            source = definitions._engine("source", {"id": failed.group(1)}).get("value", "")
+                            row["failed_source"] = source
+                            row["dependencies"] = {alias: definitions._engine("source", {"id": ident}).get("value", "") for alias, ident in cd._ALIAS_RE.findall(source)[:12]}
+                result[tag] = row
+            return result
+        return {"result": await hass.async_add_executor_job(inspect)}
     elif operation == "cold_cache":
         if cc._refresh_task is not None:
             await asyncio.shield(cc._refresh_task)
