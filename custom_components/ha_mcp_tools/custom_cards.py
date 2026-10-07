@@ -140,9 +140,16 @@ function card(op, p) {
     if (!C) return { error: 'not registered' };
     if (op === 'prepare') {
       var slot = __pending[p.tag] = {};
-      if (C.getConfigForm) Promise.resolve(C.getConfigForm()).then(function (f) { slot.form = f; }, function () {});
-      if (C.getConfigElement) Promise.resolve(C.getConfigElement()).then(function (e) { slot.editor = e; }, function () {});
-      return { value: !!(C.getConfigForm || C.getConfigElement) };
+      var pending = false;
+      function store(key, value) {
+        if (value && typeof value.then === 'function') {
+          pending = true;
+          Promise.resolve(value).then(function (v) { slot[key] = v; }, function () {});
+        } else { slot[key] = value; }
+      }
+      if (C.getConfigForm) store('form', C.getConfigForm());
+      if (C.getConfigElement) store('editor', C.getConfigElement());
+      return { value: pending };
     }
     var slot2 = __pending[p.tag] || {};
     if (op === 'check') {
@@ -331,7 +338,9 @@ class _Bundle:
         if tag in self._unresponsive:
             return []
         try:
-            answer = self.engine("check", {"tag": tag, "config": config, "source": "card"})
+            answer = self.engine(
+                "check", {"tag": tag, "config": config, "source": "card"}
+            )
         except Exception:
             _LOGGER.debug("Custom card %s did not answer", tag, exc_info=True)
             self._unresponsive.add(tag)
@@ -340,11 +349,19 @@ class _Bundle:
         if self._editor_ready(tag):
             try:
                 self._context_call("set_time_limit", _EDITOR_SECONDS)
-                answer = self.engine("check", {"tag": tag, "config": config, "source": "editor"})
+                answer = self.engine(
+                    "check", {"tag": tag, "config": config, "source": "editor"}
+                )
                 seen = {problem["message"] for problem in problems}
-                problems.extend(problem for problem in answer.get("value") or [] if problem["message"] not in seen)
+                problems.extend(
+                    problem
+                    for problem in answer.get("value") or []
+                    if problem["message"] not in seen
+                )
             except Exception:
-                _LOGGER.debug("Custom card editor %s did not answer", tag, exc_info=True)
+                _LOGGER.debug(
+                    "Custom card editor %s did not answer", tag, exc_info=True
+                )
                 self._editor_unavailable.add(tag)
             finally:
                 self._context_call("set_time_limit", _CALL_SECONDS)
