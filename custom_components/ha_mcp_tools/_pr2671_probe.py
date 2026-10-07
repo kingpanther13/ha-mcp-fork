@@ -133,6 +133,21 @@ async def _prep(hass, msg):
                 cc._MAX_SOURCE_BYTES = limit
                 path.unlink(missing_ok=True)
         return {"result": await hass.async_add_executor_job(examine)}
+    elif operation == "counted_warnings":
+        custom = await cc.async_get_custom_cards(hass, timeout=5)
+        original_check = custom.check
+        checked = []
+        def counted(tag, config):
+            result = original_check(tag, config)
+            checked.append(tag)
+            return result
+        custom.check = counted
+        started = time.monotonic()
+        try:
+            warnings = await cd.async_card_warnings(hass, msg["config"])
+            return {"result": {"warnings": warnings, "seconds": time.monotonic() - started, "checked": len(checked)}}
+        finally:
+            custom.check = original_check
     elif operation == "warnings":
         started = time.monotonic()
         warnings = await cd.async_card_warnings(hass, msg["config"])
