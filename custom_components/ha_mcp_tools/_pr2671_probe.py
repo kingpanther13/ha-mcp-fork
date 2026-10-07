@@ -19,6 +19,15 @@ _original_integrity = cc.LINKEDOM_INTEGRITY
 _saved_skip_pip = None
 _pip_calls = []
 _original_requirements = None
+_bundle_errors = []
+_prepare_bundle = cc._Bundle._prepare
+def _record_prepare(self, *args):
+    try:
+        return _prepare_bundle(self, *args)
+    except Exception as exc:
+        _bundle_errors.append(str(exc))
+        raise
+cc._Bundle._prepare = _record_prepare
 cc._RUNTIME_JS = cc._RUNTIME_JS.replace("if (op === 'check') {", """
     if (op === 'target_check') {
       var checked = [];
@@ -119,6 +128,11 @@ async def _prep(hass, msg):
             bundle = custom._owner(tag)
             return bundle.engine("target_check", {"tag": tag, "config": msg["config"]})
         return {"result": await hass.async_add_executor_job(inspect)}
+    elif operation == "module_source":
+        definitions = await cd.async_get_definitions(hass)
+        def inspect():
+            return {str(ident): definitions._engine("source", {"id": str(ident)}).get("value", "") for ident in msg["config"]["ids"]}
+        return {"result": await hass.async_add_executor_job(inspect)}
     elif operation == "cold_cache":
         if cc._refresh_task is not None:
             await asyncio.shield(cc._refresh_task)
@@ -153,6 +167,7 @@ async def _prep(hass, msg):
         "linkedom_cached": cached,
         "skip_pip": hass.config.skip_pip,
         "pip_calls": list(_pip_calls),
+        "bundle_errors": list(_bundle_errors),
     }}
 
 def specs(hass, vol):
