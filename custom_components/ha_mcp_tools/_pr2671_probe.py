@@ -2,6 +2,7 @@
 import asyncio
 import importlib.metadata as metadata
 import threading
+import traceback
 from pathlib import Path
 
 from . import card_definitions as cd, custom_cards as cc
@@ -25,7 +26,7 @@ def _record_prepare(self, *args):
     try:
         return _prepare_bundle(self, *args)
     except Exception as exc:
-        _bundle_errors.append(str(exc))
+        _bundle_errors.append(traceback.format_exc())
         raise
 cc._Bundle._prepare = _record_prepare
 cc._RUNTIME_JS = cc._RUNTIME_JS.replace("if (op === 'check') {", """

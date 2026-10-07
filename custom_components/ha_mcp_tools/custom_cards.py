@@ -146,13 +146,15 @@ function card(op, p) {
     if (op === 'check') {
       var problems = [];
       var targets = [];
-      if (slot2.editor && slot2.editor.setConfig) targets.push(slot2.editor);
-      try { var el = new C(); el.hass = __hass; targets.push(el); } catch (e) {}
+      try { var el = new C(); el.hass = __hass; targets.push({source: 'card', target: el}); } catch (e) {}
+      if (slot2.editor && slot2.editor.setConfig) targets.push({source: 'editor', target: slot2.editor});
       targets.forEach(function (t) {
-        try { t.hass = __hass; t.setConfig(p.config); }
-        catch (e) { var v = __verdict(e); if (!v.sandbox) problems.push(v.message); }
+        try { t.target.hass = __hass; t.target.setConfig(p.config); }
+        catch (e) { var v = __verdict(e);
+          if (!v.sandbox && !problems.some(function (p) { return p.message === v.message; }))
+            problems.push({source: t.source, message: v.message}); }
       });
-      return { value: problems.filter(function (m, i) { return problems.indexOf(m) === i; }) };
+      return { value: problems };
     }
     if (op === 'form') {
       if (slot2.form && slot2.form.schema) return { value: __plain(slot2.form.schema) };
@@ -295,7 +297,7 @@ class _Bundle:
     def memory(self) -> int:
         return int(self._context_call("memory").get("memory_used_size", 0))
 
-    def check(self, tag: str, config: dict[str, Any]) -> list[str]:
+    def check(self, tag: str, config: dict[str, Any]) -> list[dict[str, str]]:
         """The card's own objections; none (from then on) once it times out."""
         if tag in self._unresponsive:
             return []
@@ -444,7 +446,7 @@ class CustomCards:
                 return bundle
         return None
 
-    def check(self, tag: str, config: dict[str, Any]) -> list[str] | None:
+    def check(self, tag: str, config: dict[str, Any]) -> list[dict[str, str]] | None:
         """Problems the card reports, or ``None`` when no loaded bundle defines it."""
         with self._lock:
             bundle = self._owner(tag)
@@ -473,6 +475,8 @@ class CustomCards:
                 "name": listed.get("name"),
                 "description": listed.get("description"),
                 "fields": bundle.form(tag),
+                "field_coverage": "partial",
+                "note": "Fields come from the custom card's editor form. They may include editor-only values and omit options accepted by the card; this is not a complete stored-config schema.",
             }
 
 
