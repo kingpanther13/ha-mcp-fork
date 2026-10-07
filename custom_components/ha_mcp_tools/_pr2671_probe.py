@@ -91,6 +91,28 @@ async def _prep(hass, msg):
         cc.LINKEDOM_URL = "http://127.0.0.1:9/unavailable"
     elif operation == "bad_integrity":
         cc.LINKEDOM_INTEGRITY = "sha512-invalid"
+    elif operation == "transient_runtime":
+        saved = (cd._definitions, cd._build_task, cd.async_ensure_runtime)
+        failed_at = getattr(cd, "_build_failed_at", None)
+        calls = 0
+        async def transient(hass):
+            nonlocal calls
+            calls += 1
+            return False if calls == 1 else await saved[2](hass)
+        try:
+            cd._definitions = cd._build_task = None
+            cd.async_ensure_runtime = transient
+            first = await cd.async_get_definitions(hass)
+            second = await cd.async_get_definitions(hass)
+            suppressed = calls == 1
+            if hasattr(cd, "_build_failed_at"):
+                cd._build_failed_at = time.monotonic() - 601
+            recovered = await cd.async_get_definitions(hass)
+            return {"result": {"first_unavailable": first is None, "cooldown_suppressed": suppressed, "second_unavailable": second is None, "recovered": recovered is not None, "calls": calls, "fault": "injected one failed runtime initialization result; actual provider unchanged"}}
+        finally:
+            cd._definitions, cd._build_task, cd.async_ensure_runtime = saved
+            if hasattr(cd, "_build_failed_at"):
+                cd._build_failed_at = failed_at
     elif operation == "warnings":
         started = time.monotonic()
         warnings = await cd.async_card_warnings(hass, msg["config"])
