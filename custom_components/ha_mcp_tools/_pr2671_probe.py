@@ -70,6 +70,12 @@ async def _prep(hass, msg):
         cc.LINKEDOM_INTEGRITY = "sha512-invalid"
     elif operation == "warnings":
         return {"result": {"warnings": await cd.async_card_warnings(hass, msg["config"])}}
+    elif operation == "card_index":
+        import re
+        definitions = await cd.async_get_definitions(hass)
+        def inspect():
+            return {tag: bool(re.search(r"setConfig\([\w$]+\)\{", definitions._body(f"hui-{tag}-card"))) for tag in sorted(definitions._card_types)}
+        return {"result": await hass.async_add_executor_job(inspect)}
     elif operation == "cold_cache":
         if cc._refresh_task is not None:
             await asyncio.shield(cc._refresh_task)
