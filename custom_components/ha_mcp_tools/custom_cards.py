@@ -254,12 +254,21 @@ class _Bundle:
         listed = self.engine("cards", None)["value"]
         self.tags: list[str] = listed["tags"]
         self.cards: list[dict[str, Any]] = listed["cards"]
-        for tag in self.tags:
-            self._limit_preparation()
-            self.engine("prepare", {"tag": tag})
-        self._settle()
         self._context_call("set_time_limit", _CALL_SECONDS)
         self._unresponsive: set[str] = set()
+        self._prepared: set[str] = set()
+
+    def _prepare_tag(self, tag: str) -> None:
+        """Load only the requested card's editor, within one call's budget."""
+        if tag in self._prepared:
+            return
+        self._prepare_deadline = time.monotonic() + _CALL_SECONDS
+        self._limit_preparation()
+        if error := self.engine("prepare", {"tag": tag}).get("error"):
+            raise ValueError(error)
+        self._settle()
+        self._context_call("set_time_limit", _CALL_SECONDS)
+        self._prepared.add(tag)
 
     def close(self) -> None:
         """Dispose native objects on their creating thread before releasing capacity."""
@@ -302,6 +311,7 @@ class _Bundle:
         if tag in self._unresponsive:
             return []
         try:
+            self._prepare_tag(tag)
             answer = self.engine("check", {"tag": tag, "config": config})
         except Exception:
             _LOGGER.debug("Custom card %s did not answer", tag, exc_info=True)
@@ -310,11 +320,15 @@ class _Bundle:
         return list(answer.get("value") or [])
 
     def form(self, tag: str) -> list[Any] | None:
+        if tag in self._unresponsive:
+            return None
         try:
+            self._prepare_tag(tag)
             value = self.engine(
                 "form", {"tag": tag, "config": {"type": f"custom:{tag}"}}
             )
         except Exception:  # noqa: BLE001
+            self._unresponsive.add(tag)
             return None
         form = value.get("value")
         return form if isinstance(form, list) else None
