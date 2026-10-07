@@ -46,6 +46,8 @@ async def _prep(hass, msg):
             hass.config.skip_pip = _saved_skip_pip
             requirements.async_process_requirements = _original_requirements
             _saved_skip_pip = None
+            if cd._definitions is None:
+                cd._build_task = None
     elif operation == "empty_index":
         _saved_definitions = cd._definitions
         cd._definitions = None
