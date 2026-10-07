@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import bisect
-import difflib
 import json
 import logging
 import re
@@ -129,7 +128,8 @@ function engine(op, p) {
       var first = new Proxy(localize, {
         get: function (t, k) { return k === 'localize' ? localize : ANY; },
       });
-      var v = typeof fn === 'function' ? fn(first) : fn;
+      // No entity is selected; list-valued selected options start empty.
+      var v = typeof fn === 'function' ? fn(first, undefined, []) : fn;
       return { value: plain(v) };
     }
     if (op === 'struct') {
@@ -148,7 +148,7 @@ function engine(op, p) {
           var child = s.schema[key];
           if (!child || typeof child.type !== 'string') return;
           out[key] = { type: child.type };
-          if (child.type === 'object' || child.type === 'type') {
+          if ((child.type === 'object' || child.type === 'type') && child.schema) {
             out[key].schema = fields(child, depth + 1);
           }
         });
@@ -529,6 +529,9 @@ class CardDefinitions:
             result["fields"] = self._with_help(
                 card_type, _complete_fields(fields or [], types)
             )
+        if result["fields"] is None:
+            result.pop("field_coverage")
+            result.pop("note")
         return result
 
     def _with_help(self, card_type: str, fields: list[Any]) -> list[Any]:
@@ -620,11 +623,7 @@ class CardDefinitions:
         if path in _ACCEPTED_EXTRAS:
             return None
         if failure.get("type") == "never" and len(failure.get("path") or []) == 1:
-            message = f"'{path}' is not listed in the {card_type} editor schema"
-            close = difflib.get_close_matches(
-                path, self._struct_keys.get(card_type) or [], n=1, cutoff=0.8
-            )
-            return f"{message}; did you mean '{close[0]}'?" if close else message
+            return f"'{path}' is not listed in the {card_type} editor schema"
         message = re.sub(r"^At path: \S+ -- ", "", failure.get("message", ""))
         return f"{path}: {message}" if path else message
 
