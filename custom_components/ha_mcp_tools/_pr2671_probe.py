@@ -2,6 +2,7 @@
 import asyncio
 import importlib.metadata as metadata
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -91,7 +92,16 @@ async def _prep(hass, msg):
     elif operation == "bad_integrity":
         cc.LINKEDOM_INTEGRITY = "sha512-invalid"
     elif operation == "warnings":
-        return {"result": {"warnings": await cd.async_card_warnings(hass, msg["config"])}}
+        started = time.monotonic()
+        warnings = await cd.async_card_warnings(hass, msg["config"])
+        return {"result": {"warnings": warnings, "seconds": time.monotonic() - started}}
+    elif operation == "round6_definitions":
+        definitions = await cd.async_get_definitions(hass)
+        def inspect():
+            descriptions = {tag: definitions.describe(tag) for tag in sorted(definitions._card_types)}
+            bodies = {tag: definitions._editor_body(tag) for tag in ("gauge", "alarm-panel")}
+            return {"descriptions": descriptions, "editor_bodies": bodies}
+        return {"result": await hass.async_add_executor_job(inspect)}
     elif operation == "card_index":
         import re
         definitions = await cd.async_get_definitions(hass)
