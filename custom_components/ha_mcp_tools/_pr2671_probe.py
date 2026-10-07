@@ -16,6 +16,9 @@ _loop_thread = None
 _original_provider = runtime._provider_state
 _original_dom_url = cc.LINKEDOM_URL
 _original_integrity = cc.LINKEDOM_INTEGRITY
+_saved_skip_pip = None
+_pip_calls = []
+_original_requirements = None
 
 def _conflict():
     raise ValueError("injected conflicting installed provider")
@@ -25,9 +28,25 @@ def _resource_path(*args):
     return _original_resource_path(*args)
 
 async def _prep(hass, msg):
-    global _saved_definitions
+    global _saved_definitions, _saved_skip_pip, _original_requirements
     operation = msg.get("operation", "state")
-    if operation == "empty_index":
+    if operation == "skip_pip":
+        import homeassistant.requirements as requirements
+        if _saved_skip_pip is None:
+            _saved_skip_pip = hass.config.skip_pip
+            _original_requirements = requirements.async_process_requirements
+            async def recorded(*args, **kwargs):
+                _pip_calls.append(list(args[2]))
+                return await _original_requirements(*args, **kwargs)
+            requirements.async_process_requirements = recorded
+        hass.config.skip_pip = True
+    elif operation == "restore_pip":
+        import homeassistant.requirements as requirements
+        if _saved_skip_pip is not None:
+            hass.config.skip_pip = _saved_skip_pip
+            requirements.async_process_requirements = _original_requirements
+            _saved_skip_pip = None
+    elif operation == "empty_index":
         _saved_definitions = cd._definitions
         cd._definitions = None
         cd._build_task = None
@@ -83,6 +102,8 @@ async def _prep(hass, msg):
         "resolve_on_event_loop": list(_resolutions),
         "quickjs_versions": versions,
         "linkedom_cached": cached,
+        "skip_pip": hass.config.skip_pip,
+        "pip_calls": list(_pip_calls),
     }}
 
 def specs(hass, vol):
