@@ -339,12 +339,15 @@ class _Bundle:
         problems = list(answer.get("value") or [])
         if self._editor_ready(tag):
             try:
+                self._context_call("set_time_limit", _EDITOR_SECONDS)
                 answer = self.engine("check", {"tag": tag, "config": config, "source": "editor"})
                 seen = {problem["message"] for problem in problems}
                 problems.extend(problem for problem in answer.get("value") or [] if problem["message"] not in seen)
             except Exception:
                 _LOGGER.debug("Custom card editor %s did not answer", tag, exc_info=True)
                 self._editor_unavailable.add(tag)
+            finally:
+                self._context_call("set_time_limit", _CALL_SECONDS)
         return problems
 
     def form(self, tag: str) -> list[Any] | None:

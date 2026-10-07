@@ -128,8 +128,15 @@ function engine(op, p) {
       var first = new Proxy(localize, {
         get: function (t, k) { return k === 'localize' ? localize : ANY; },
       });
-      // No entity is selected; list-valued selected options start empty.
-      var v = typeof fn === 'function' ? fn(first, undefined, []) : fn;
+      var v = fn;
+      if (typeof fn === 'function') {
+        try { v = fn(first); }
+        catch (e) {
+          // Some forms require selected options even without an entity.
+          // Preserve normal defaults in forms that work without this context.
+          v = fn(first, undefined, []);
+        }
+      }
       return { value: plain(v) };
     }
     if (op === 'struct') {
@@ -789,6 +796,8 @@ def _cards(
 
 _definitions: CardDefinitions | None = None
 _build_task: asyncio.Task[CardDefinitions | None] | None = None
+_build_failed_at: float | None = None
+_BUILD_RETRY_SECONDS = 600
 
 
 def _build() -> CardDefinitions | None:
@@ -804,17 +813,26 @@ def _build() -> CardDefinitions | None:
 async def async_get_definitions(
     hass: HomeAssistant, timeout: float | None = None
 ) -> CardDefinitions | None:
-    """The frontend's card definitions; built once per Home Assistant run."""
+    """Share the frontend index; retry failed initialization after a cooldown."""
     global _build_task, _definitions
     if _definitions is not None:
         return _definitions
     task = _build_task
+    if (
+        task is not None
+        and task.done()
+        and _build_failed_at is not None
+        and time.monotonic() - _build_failed_at >= _BUILD_RETRY_SECONDS
+    ):
+        task = None
     if task is None:
 
         async def _run() -> CardDefinitions | None:
-            if not await async_ensure_runtime(hass):
-                return None
-            built: CardDefinitions | None = await hass.async_add_executor_job(_build)
+            global _build_failed_at
+            built: CardDefinitions | None = None
+            if await async_ensure_runtime(hass):
+                built = await hass.async_add_executor_job(_build)
+            _build_failed_at = time.monotonic() if built is None else None
             return built
 
         task = _build_task = hass.async_create_background_task(
