@@ -113,6 +113,26 @@ async def _prep(hass, msg):
             cd._definitions, cd._build_task, cd.async_ensure_runtime = saved
             if hasattr(cd, "_build_failed_at"):
                 cd._build_failed_at = failed_at
+    elif operation == "source_growth":
+        custom = await cc.async_get_custom_cards(hass, timeout=5)
+        def examine():
+            path = Path(hass.config.path(".storage", "ha_mcp_tools", "pr2671-growth-probe.js"))
+            limit = cc._MAX_SOURCE_BYTES
+            bundle = None
+            try:
+                path.write_text(";", encoding="utf-8")
+                old_size = path.stat().st_size
+                path.write_text(";" + " " * 512, encoding="utf-8")
+                cc._MAX_SOURCE_BYTES = 64
+                cards = cc.CustomCards(custom._dom)
+                bundle = cards._load(path, old_size)
+                return {"stale_stat_size": old_size, "actual_bytes": path.stat().st_size, "probe_limit": 64, "accepted": bundle is not None, "reason": cards._skipped.get(path)}
+            finally:
+                if bundle is not None:
+                    bundle.close()
+                cc._MAX_SOURCE_BYTES = limit
+                path.unlink(missing_ok=True)
+        return {"result": await hass.async_add_executor_job(examine)}
     elif operation == "warnings":
         started = time.monotonic()
         warnings = await cd.async_card_warnings(hass, msg["config"])
