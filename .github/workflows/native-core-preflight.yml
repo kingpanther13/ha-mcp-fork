@@ -9,7 +9,7 @@ permissions:
 env:
   PYTHON_VERSION: '3.13'
   UV_CACHE_DIR: /tmp/.uv-cache
-  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.9.4
+  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.10.0
   TESTCONTAINERS_RYUK_DISABLED: 'true'
 jobs:
   fast-checks:
