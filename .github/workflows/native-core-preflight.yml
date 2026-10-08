@@ -20,7 +20,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Docs Size Check
       run: "max_chars=16000\nmax_lines=200\nchars=$(LC_ALL=C.UTF-8 wc -m < AGENTS.md)\nlines=$(wc -l < AGENTS.md)\nif [ \"\
@@ -71,7 +71,7 @@ jobs:
         scripts/
     - name: Run ruff format check on changed Python files
       if: success() || failure()
-      run: git diff --name-only --diff-filter=ACMR 00fca3d509e645c5a0d22bfdbaf279a746cb465a HEAD -- '*.py' | xargs -r uv run
+      run: git diff --name-only --diff-filter=ACMR a86135c7c828dcf21e10f8fffe6bc086836f8959 HEAD -- '*.py' | xargs -r uv run
         ruff format --check
     - name: Run ast-grep
       if: success() || failure()
@@ -93,15 +93,15 @@ jobs:
       if: success() || failure()
       env:
         BASE_REF: ${{ github.base_ref }}
-      run: 'uv run python scripts/module_size_ratchet.py --base 00fca3d509e645c5a0d22bfdbaf279a746cb465a
+      run: 'uv run python scripts/module_size_ratchet.py --base a86135c7c828dcf21e10f8fffe6bc086836f8959
 
-        uv run python scripts/duplicate_code_ratchet.py --base 00fca3d509e645c5a0d22bfdbaf279a746cb465a'
+        uv run python scripts/duplicate_code_ratchet.py --base a86135c7c828dcf21e10f8fffe6bc086836f8959'
     - name: Prepare formatting fixes for review
       if: success() || failure()
-      run: 'git diff --name-only --diff-filter=ACMR 00fca3d509e645c5a0d22bfdbaf279a746cb465a HEAD -- ''*.py'' | xargs -r uv
+      run: 'git diff --name-only --diff-filter=ACMR a86135c7c828dcf21e10f8fffe6bc086836f8959 HEAD -- ''*.py'' | xargs -r uv
         run ruff check --fix || true
 
-        git diff --name-only --diff-filter=ACMR 00fca3d509e645c5a0d22bfdbaf279a746cb465a HEAD -- ''*.py'' | xargs -r uv run
+        git diff --name-only --diff-filter=ACMR a86135c7c828dcf21e10f8fffe6bc086836f8959 HEAD -- ''*.py'' | xargs -r uv run
         ruff format
 
         git diff --binary > /tmp/formatting.patch
@@ -124,7 +124,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Setup Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -162,7 +162,7 @@ jobs:
       with:
         persist-credentials: false
         submodules: true
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Set up Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -193,7 +193,7 @@ jobs:
       with:
         persist-credentials: false
         submodules: true
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
@@ -219,7 +219,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Run macOS installer script (first run)
       run: sh scripts/install.sh
@@ -246,7 +246,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Run Linux installer script (first run)
       run: sh scripts/install.sh
@@ -290,7 +290,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Run Windows installer script (first run)
       shell: pwsh
@@ -333,7 +333,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: --claude-code must not write a Claude Desktop config
       run: "# Stub a 'claude' binary so the --claude-code branch runs without a real install.\nmkdir -p \"$HOME/bin\"\nprintf\
@@ -353,7 +353,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: WSL is detected and the Desktop path is refused (no config written)
       run: 'set +e
@@ -384,7 +384,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Stale uv without uvx falls through to the upgrade path (issue
       run: "set -e\n# Reproduce a pre-uvx uv: a `uv` binary on PATH with no `uvx` beside\n# it. The old `uv || uvx` gate accepted\
@@ -405,7 +405,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Validate with the same engine used by the scanner
       id: validate
@@ -465,7 +465,7 @@ jobs:
       timeout-minutes: 2
       with:
         persist-credentials: false
-        ref: eb69cba4bdab29739fada10535e04c91b8af50d0
+        ref: 46b9e2cced2b0c43bfbe72def14baec3b5096fbf
         fetch-depth: 0
     - name: Set up Python
       timeout-minutes: 2
