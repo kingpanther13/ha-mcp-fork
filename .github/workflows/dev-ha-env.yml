@@ -31,6 +31,10 @@ on:
         description: Without the ha_mcp_tools File & YAML Tools entry (like the no-tools E2E lanes)
         type: boolean
         default: false
+      standalone_oauth:
+        description: Run the standalone server with per-user OAuth credentials
+        type: boolean
+        default: false
       strict_bps:
         description: Strict best-practices mode, the default agents meet (standalone and embedded)
         type: boolean
@@ -53,6 +57,7 @@ env:
   TRACK_REF: ${{ inputs.track_ref }}
   E2E_NO_TOOLS_ENTRY: ${{ inputs.no_component && '1' || '' }}
   DEVENV_STRICT_BPS: ${{ inputs.strict_bps }}
+  DEVENV_STANDALONE_OAUTH: ${{ inputs.standalone_oauth }}
   HAMCP_ENV_FILE: tests/.env.test
   # A fixed host port survives container restarts, so the tunnel target holds.
   HA_TEST_PORT: "8123"
@@ -253,6 +258,9 @@ jobs:
           HA_URL=$url
           tunnel "$(target mcp)" tunnel-mcp.log
           MCP_URL=$url
+          if [ "$DEVENV_STANDALONE_OAUTH" = true ]; then
+            printf '%s' "$MCP_URL" > oauth-base-url
+          fi
           printf 'HA:  %s\nMCP: %s%s\n' "$HA_URL" "$MCP_URL" "$(target mcp_path)" > urls.txt
           mkdir out
           openssl pkeyutl -encrypt -pubin -inkey "$RUNNER_TEMP/url-key.pem" \

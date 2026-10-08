@@ -68,6 +68,8 @@ MAX_TRIES = 3
 
 # Agents meet strict best-practices mode by default; the E2E suite pins it off.
 STRICT_BPS = os.environ.get("DEVENV_STRICT_BPS", "true") == "true"
+STANDALONE_OAUTH = os.environ.get("DEVENV_STANDALONE_OAUTH") == "true"
+OAUTH_BASE_URL = SRC.parent / "oauth-base-url"
 _conftest_embedded._EMBEDDED_FEATURE_FLAGS["enable_strict_mandatory_bps"] = STRICT_BPS
 
 
@@ -236,6 +238,7 @@ class Instance:
         self.base_url = env["base_url"]
         self.headers = {"Authorization": f"Bearer {env['token']}"}
         self.server: subprocess.Popen | None = None
+        self.oauth_base_url = ""
 
     @property
     def standalone(self) -> bool:
@@ -270,10 +273,24 @@ class Instance:
             "MCP_HOST": "127.0.0.1",
             "ENABLE_STRICT_MANDATORY_BPS": str(STRICT_BPS).lower(),
         }
+        command = "ha-mcp-web"
+        if STANDALONE_OAUTH:
+            command = "ha-mcp-oauth"
+            self.oauth_base_url = (
+                OAUTH_BASE_URL.read_text().strip()
+                if OAUTH_BASE_URL.exists()
+                else self.targets()["mcp"]
+            )
+            env.update(
+                HOMEASSISTANT_TOKEN="oauth-mode-token",
+                MCP_BASE_URL=self.oauth_base_url,
+                HA_MCP_DISABLE_UPDATE_CHECK="true",
+                HA_MCP_DISABLE_SETTINGS_UI="true",
+            )
         # The child keeps its own copy of the log handle.
         with open(SRC.parent / "server.log", "ab") as out:
             self.server = subprocess.Popen(
-                ["uv", "run", "ha-mcp-web"], cwd=SRC, env=env, stdout=out, stderr=out
+                ["uv", "run", command], cwd=SRC, env=env, stdout=out, stderr=out
             )
 
     def update_component(self) -> None:
@@ -356,6 +373,20 @@ class Instance:
     def wait_server(self) -> None:
         if self.standalone:
             target = self.targets()
+            if STANDALONE_OAUTH:
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    try:
+                        response = requests.get(
+                            target["mcp"] + "/.well-known/oauth-authorization-server",
+                            timeout=5,
+                        )
+                        if response.status_code == 200:
+                            return
+                    except requests.RequestException:
+                        pass
+                    time.sleep(1)
+                raise RuntimeError("standalone OAuth discovery did not answer")
             if not _wait_for_embedded_webhook_ready(
                 target["mcp"] + target["mcp_path"], timeout=120
             ):
@@ -432,6 +463,9 @@ def test_hold_dev_ha_env(ha_container_with_fresh_config: dict[str, Any]) -> None
     end = time.monotonic() + 60 * int(os.environ.get("DEVENV_MINUTES", "340"))
     while time.monotonic() < end:
         time.sleep(POLL_S)
+        if STANDALONE_OAUTH and OAUTH_BASE_URL.exists():
+            if OAUTH_BASE_URL.read_text().strip() != inst.oauth_base_url:
+                pending["server"] = 0
         try:
             git("fetch", "-q", "origin", TRACK_REF)
             head = git("rev-parse", "FETCH_HEAD")
