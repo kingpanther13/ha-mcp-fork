@@ -920,7 +920,7 @@ async def async_register_llm_api(
     # probe tests (tests/src/e2e/workflows/embedded/test_llm_api_in_ha.py)
     # assert on this
     # message to prove the registration ran inside a real HA — keep the
-    # "Registered the HA-MCP toolset as LLM API" prefix stable.
+    # "Registered the HA-MCP toolset [devenv probe] as LLM API" prefix stable.
     _LOGGER.info(
         "Registered the HA-MCP toolset as LLM API (%s mode) — select it in a "
         "conversation agent's settings to chat with it (text or voice)",
