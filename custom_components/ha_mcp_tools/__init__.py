@@ -2688,6 +2688,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # just the server entry, so a legacy-repo install needs detecting either way.
     async_schedule_install_source_check(hass)
 
+    from .cloudhook_probe import async_register_probe  # THROWAWAY #2696 probe
+
+    async_register_probe(hass)
+
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_SERVER:
         from .embedded_entry import async_setup_server_entry
 
