@@ -1883,9 +1883,9 @@ class IntegrationTools:
 
         WHEN NOT TO USE:
         - Helpers (template, group, utility_meter, ...): use
-          ha_config_set_helper. The exception is `otp`, which is a helper in
-          the HA UI but is created HERE via domain="otp" — its flow needs a
-          live TOTP code, so ha_config_set_helper deliberately omits it.
+          ha_config_set_helper. `otp` is the user's to set up in the HA UI:
+          its secret is a credential they enroll in an authenticator app, so
+          neither tool creates it.
         - Config subentries: use
           ha_config_set_helper(helper_type='config_subentry').
         - Removing an entry: use ha_remove_helpers_integrations.
@@ -2266,7 +2266,8 @@ class IntegrationTools:
         WARNING: Removing a helper or integration that is referenced by
         automations, scripts, or other integrations may cause those to fail.
         Use ha_search() / ha_get_integration() to verify before removal.
-        Recovery requires a usable backup and supported restore path.
+        A removed helper can be recreated from its auto-backup; a removed
+        integration config entry (otp included) cannot, so re-add it instead.
         """
         # === Confirm gate (uniform for every path) ===
         if not confirm:
@@ -2429,15 +2430,11 @@ class IntegrationTools:
         except ToolError:
             raise
         except HomeAssistantAPIError as e:
-            # HA returns 404 for missing config entries (see
-            # RestClient.delete_config_entry — the REST DELETE on a
-            # nonexistent entry surfaces as HomeAssistantAPIError with
-            # status_code=404). Surface as RESOURCE_NOT_FOUND so callers
-            # can distinguish absent target from real failures; the typo
-            # case (agent passed the wrong entry_id) is the failure mode
-            # that "absent → success" would silently mask. Non-404 API
-            # errors are real failures and bubble through
-            # exception_to_structured_error below.
+            # The REST DELETE on a nonexistent entry raises
+            # HomeAssistantAPIError with status_code=404. Surface it as
+            # RESOURCE_NOT_FOUND: "absent → success" would mask a typo'd
+            # entry_id. Non-404 API errors are real failures and bubble
+            # through exception_to_structured_error below.
             if e.status_code == 404:
                 raise_tool_error(
                     create_error_response(
