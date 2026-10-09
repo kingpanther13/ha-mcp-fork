@@ -42,7 +42,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.util.aiohttp import MockRequest
 
 from .readonly_webhook import (
     readonly_url,
@@ -1033,10 +1032,7 @@ async def _relay_upstream_response(
     if mcp_session:
         resp_headers["Mcp-Session-Id"] = mcp_session
 
-    # A Nabu Casa cloudhook (Settings → Home Assistant Cloud → Webhooks) is
-    # relayed in-process as ``MockRequest`` (#2696): the relay returns only
-    # ``response.body``, so the SSE reply must be buffered, not streamed.
-    if "text/event-stream" in content_type and not isinstance(request, MockRequest):
+    if "text/event-stream" in content_type:
         # SSE streaming response - prevent HA compression middleware
         # from breaking it (supervisor#6470)
         resp_headers["Content-Type"] = "text/event-stream"
@@ -1114,10 +1110,7 @@ async def _handle_webhook(
 
             return build_unauthorized_response(request, oauth_provider)
 
-    # ``MockRequest`` (cloudhook relay, #2696) has no ``read()``.
-    body = await (
-        request.content.read() if isinstance(request, MockRequest) else request.read()
-    )
+    body = await request.read()
 
     forward_headers = _forward_headers(request)
     session = data["session"]
