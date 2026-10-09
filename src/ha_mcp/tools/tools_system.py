@@ -174,7 +174,7 @@ class SystemTools:
             bool, Field(description="Must be True to confirm the restart.")
         ] = False,
     ) -> dict[str, Any]:
-        """Execute a Home Assistant restart.
+        """Execute a Home Assistant restart. [devenv probe]
 
         WARNING: restarts the entire Home Assistant instance; all automations
         are unavailable during the restart, which typically takes 1-5 minutes.
