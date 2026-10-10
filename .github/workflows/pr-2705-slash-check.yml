@@ -1,0 +1,14 @@
+name: PR 2705 slash description checks
+on:
+  push:
+    branches: [test/pr-2705-slash-description]
+permissions:
+  contents: read
+jobs:
+  regression:
+    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: node --test tests/js/slash-agent*.test.mjs
