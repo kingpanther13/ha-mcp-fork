@@ -15,10 +15,10 @@ from ..config_write_helpers import apply_entity_category
 from ..helpers import raise_tool_error, ws_failure_code
 from ..ws_waiters import wait_for_entity_registered
 from .core_payload import (
-    REGISTRY_ICON_ON_CREATE,
     check_core_gaps,
     with_create_defaults,
 )
+from .icon_route import collection_icon
 from .registry import _ws_error_msg
 from .schemas import (
     _attach_helper_skill,
@@ -127,7 +127,11 @@ async def _execute_create_simple_helper(
             )
         )
 
-    registry_icon = icon if helper_type in REGISTRY_ICON_ON_CREATE else None
+    native_icon = await collection_icon(client, helper_type, "create", icon)
+    # A new zone's stored icon cannot subsequently be cleared (#2643).
+    if helper_type == "zone":
+        native_icon = None
+    registry_icon = icon if native_icon is None else None
     message = _build_create_message(
         helper_type, name, None if registry_icon else icon, fields
     )
@@ -227,7 +231,7 @@ async def _created_entity_id(
     the registry knows it. The helper already exists, so a failed read is
     reported rather than raised: a caller retrying would create it twice.
     """
-    if helper_type in REGISTRY_ICON_ON_CREATE:
+    if helper_data.get("id"):
         try:
             entity_id = await registry_entity_id(
                 client, helper_type, helper_data.get("id")

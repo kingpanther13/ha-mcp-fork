@@ -17,13 +17,6 @@ from ...errors import ErrorCode, create_error_response
 from ..helpers import raise_tool_error
 from .schemas import _simple_helper_error_context
 
-# Core's person and tag schemas have no icon field, so their icon is only ever the
-# entity registry's. A zone has one, but its update merges into the stored item
-# and rejects an empty icon, so an icon stored there can never be removed: a new
-# zone's icon goes to the registry too (#2643).
-NO_ICON_FIELD = frozenset({"person", "tag"})
-REGISTRY_ICON_ON_CREATE = NO_ICON_FIELD | {"zone"}
-
 # The tool's own range parameters, under the names each type's Core schema uses.
 _RANGE_KEYS: dict[str, tuple[str, str]] = {"counter": ("minimum", "maximum")}
 _DEFAULT_RANGE_KEYS = ("min", "max")
@@ -86,7 +79,7 @@ def merged_update(
         body["name"] = name
     if helper_type == "zone":
         icon = _zone_item_icon(stored, icon, entity_id)
-    if icon is not None and helper_type not in NO_ICON_FIELD:
+    if icon is not None:
         if icon:
             body["icon"] = icon
         else:

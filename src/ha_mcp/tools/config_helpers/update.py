@@ -24,6 +24,7 @@ from ..config_write_helpers import apply_entity_category
 from ..helpers import raise_tool_error, ws_failure_code
 from ..ws_waiters import wait_for_entity_registered
 from .core_payload import check_core_gaps, merged_update
+from .icon_route import collection_icon
 from .listing import listed_items
 from .registry import _ws_error_msg
 from .schemas import (
@@ -73,7 +74,8 @@ async def _execute_legacy_update(
 ) -> dict[str, Any]:
     """Update through Core's ``<type>/update`` WS command (no component)."""
     stored = await _stored_item(client, helper_type, entity_id, unique_id)
-    body = merged_update(helper_type, stored, name, icon, fields, entity_id)
+    native_icon = await collection_icon(client, helper_type, "update", icon)
+    body = merged_update(helper_type, stored, name, native_icon, fields, entity_id)
     check_core_gaps(helper_type, body, changed=fields)
     result = await client.send_websocket_message(
         {**body, "type": f"{helper_type}/update", f"{helper_type}_id": unique_id}
@@ -346,7 +348,8 @@ async def _update_via_component(
     item = await read_helper_item(client, helper_type, **target)
     if item is None:
         return None
-    body = merged_update(helper_type, item["item"], name, icon, fields, entity_id)
+    native_icon = await collection_icon(client, helper_type, "update", icon)
+    body = merged_update(helper_type, item["item"], name, native_icon, fields, entity_id)
     check_core_gaps(helper_type, body, changed=fields)
     registry = {
         key: value

@@ -1,0 +1,22 @@
+name: PR2707 schema experiment
+on:
+  push:
+    branches: [investigate/pr2707-schema-proof]
+permissions:
+  contents: read
+jobs:
+  proof:
+    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: '0.12.20'
+      - run: uv sync --python 3.13 --group dev
+      - name: Exercise schema routing and stored-field preservation
+        run: uv run pytest tests/src/unit/test_helper_icon_discovery_proof.py tests/src/unit/test_helper_core_payload.py -q -o addopts=''
