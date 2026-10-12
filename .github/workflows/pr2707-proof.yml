@@ -19,4 +19,4 @@ jobs:
           version: '0.12.20'
       - run: uv sync --python 3.13 --group dev
       - name: Exercise schema routing and stored-field preservation
-        run: uv run pytest tests/src/unit/test_helper_icon_discovery_proof.py tests/src/unit/test_helper_core_payload.py -q -o addopts=''
+        run: uv run pytest tests/src/unit/test_helper_icon_discovery_proof.py tests/src/unit/test_helper_core_payload.py tests/src/unit/test_helper_config_fold.py tests/src/unit/test_component_helper_collections.py -q -o addopts=''

@@ -15,10 +15,10 @@ async def collection_icon(
     Clearing retains the existing stored-item merge behavior: remove the key
     for replacing collections and retain the zone safeguard for merging ones.
     """
-    if icon is None:
-        return None
-    if icon == "":
-        return ""
+    # The existing zone policy must see the requested icon to preserve/update
+    # an already stored icon and refuse a clear that Core cannot apply (#2643).
+    if icon is None or icon == "" or helper_type == "zone":
+        return icon
     schemas = await fetch_helper_schemas(client)
     fields = schemas.get(helper_type, {}).get(action) if schemas else None
     if isinstance(fields, list) and any(f.get("name") == "icon" for f in fields):
