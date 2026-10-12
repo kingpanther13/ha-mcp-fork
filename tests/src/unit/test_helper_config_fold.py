@@ -678,14 +678,22 @@ async def test_component_tag_update_reports_the_component_entity() -> None:
 async def test_write_falls_back_to_websocket_when_component_unavailable() -> None:
     client = MagicMock()
     client.send_websocket_message = AsyncMock(
-        return_value={"success": True, "result": {"id": "b", "name": "B"}}
+        side_effect=[
+            {"success": True, "result": {"id": "b", "name": "B"}},
+            {"success": True, "result": [{
+                "platform": "input_boolean", "unique_id": "b",
+                "entity_id": "input_boolean.b_2",
+            }]},
+        ]
     )
     with patch.object(hc_create, "write_helper_item", AsyncMock(return_value=None)):
         result = await hc_create._execute_create_simple_helper(
             client, "input_boolean", "B", None, None, None, None, False, False, {},
         )  # fmt: skip
-    client.send_websocket_message.assert_awaited_once()
-    assert result["entity_id"] == "input_boolean.b"
+    assert client.send_websocket_message.call_args_list[0].args[0] == {
+        "type": "input_boolean/create", "name": "B",
+    }
+    assert result["entity_id"] == "input_boolean.b_2"
 
 
 class TestCatalogTransform:
