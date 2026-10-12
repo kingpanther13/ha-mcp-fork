@@ -66,8 +66,8 @@ def merged_update(
 ) -> dict[str, Any]:
     """The stored item plus the changes: Core's update writes the whole item.
 
-    A cleared icon ('') is left out, since Core rejects an empty icon; a person's
-    or tag's icon is never sent, since their schemas have no icon field. A tag's
+    A cleared icon ('') is left out, since Core rejects an empty icon. The caller
+    routes registry metadata separately from discovered collection fields. A tag's
     name lives in the entity registry, and Core's tag update writes the name
     it is sent there: the listed one is not echoed, or a tag that was never
     named would get its default "Tag <id>" pinned as a registry override.

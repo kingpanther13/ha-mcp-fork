@@ -21,10 +21,20 @@ async def test_new_collection_and_action_fields_drive_routing():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("native", [None, {}, {"future_collection": {}}])
-async def test_missing_discovery_does_not_assert_core_lacks_icon(native):
-    """Absent discovery forwards to Core; it cannot identify registry-only types."""
+async def test_missing_discovery_uses_registry_without_guessing_collection_fields(native):
+    """Absent discovery can still use the standard entity metadata operation."""
     with patch(
         "ha_mcp.tools.config_helpers.icon_route.fetch_helper_schemas",
         new=AsyncMock(return_value=native),
     ):
-        assert await collection_icon(object(), "future_collection", "create", "mdi:star") == "mdi:star"
+        assert await collection_icon(object(), "future_collection", "create", "mdi:star") is None
+
+
+@pytest.mark.asyncio
+async def test_clear_retains_stored_icon_removal_without_discovery():
+    """Clearing only the registry would reveal an older stored helper icon."""
+    with patch(
+        "ha_mcp.tools.config_helpers.icon_route.fetch_helper_schemas",
+        new=AsyncMock(return_value=None),
+    ):
+        assert await collection_icon(object(), "future_collection", "update", "") == ""

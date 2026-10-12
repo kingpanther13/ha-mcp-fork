@@ -590,7 +590,7 @@ class HelperConfigTools:
         icon: Annotated[
             str | None,
             Field(
-                description="Material Design Icon (e.g., 'mdi:bell'); '' or ' ' clears it, except a zone's stored icon (the icon in the zone's own config, as the Home Assistant UI stores it; ha_get_zone shows it), which cannot be removed",
+                description="Material Design Icon (e.g., 'mdi:bell'); '' or ' ' clears it, except a zone's stored icon (the icon in the zone's own config, as the Home Assistant UI stores it; ha_get_zone shows it), which cannot be removed. Storage helpers use the live Core field when discovered; otherwise the icon is entity-registry metadata, without guessing the collection schema.",
                 default=None,
             ),
         ] = None,
