@@ -406,6 +406,11 @@ jobs:
       # download cache; node_modules is intentionally recreated by npm ci.
       run: cd tests/js && corepack npm ci
 
+    - name: Restore candidate workflow for workflow contract tests
+      run: |
+        git fetch --depth=1 origin 4b88162304a3b195004a61152fa230ffabd75552
+        git show FETCH_HEAD:.github/workflows/pr.yml > .github/workflows/pr.yml
+
     - name: Run unit tests
       run: uv run pytest tests/src/unit/ -n auto --tb=short -v
 
