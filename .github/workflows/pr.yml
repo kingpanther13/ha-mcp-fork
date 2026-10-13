@@ -31,6 +31,47 @@ env:
   TESTCONTAINERS_RYUK_DISABLED: "true"
 
 jobs:
+  release-preview:
+    name: Build isolated 9.0.0 release preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: '3.13'
+      - name: Stamp and build without publishing
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr2655-release-preview"
+          mkdir -p "$out"
+          git rev-parse HEAD > "$out/source-commit.txt"
+          git config user.name 'PR2655 disposable release preview'
+          git config user.email 'preview@example.invalid'
+          git switch -c master
+          uvx --from python-semantic-release==10.7.0 semantic-release version --major --no-push --no-vcs-release --skip-build
+          test "$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" = 9.0.0
+          uv build --wheel --out-dir "$out"
+          tar -czf "$out/component-9.0.0.tar.gz" custom_components/ha_mcp_tools
+          git archive --format=tar.gz -o "$out/source-9.0.0.tar.gz" HEAD
+          python3 scripts/build_mirror_release_notes.py --out "$out/notes-9.0.0.md"
+          printf 'Disposable server-only change for release-note validation.\n' > src/ha_mcp/_pr2655_release_probe.txt
+          git add src/ha_mcp/_pr2655_release_probe.txt
+          git commit -m 'fix: server-only release-note probe'
+          uvx --from python-semantic-release==10.7.0 semantic-release version --patch --no-push --no-vcs-release --skip-build
+          python3 scripts/build_mirror_release_notes.py --out "$out/notes-server-only-9.0.1.md"
+          git log -2 --format='%h %s' > "$out/server-only-commits.txt"
+          cat "$out/notes-server-only-9.0.1.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: pr2655-release-preview
+          path: ${{ runner.temp }}/pr2655-release-preview/
+          retention-days: 3
+
   component-version-gate:
     name: Component Version Gate
     runs-on: ubuntu-latest
