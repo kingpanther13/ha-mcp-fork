@@ -8,7 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           python-version: '3.13'
-      - run: uv run --no-project --with pytest --with pytest-asyncio --with pytest-timeout pytest -c /dev/null tests/src/unit/test_build_mirror_release_notes.py -q --confcutdir=tests/src/unit
+      - run: uv run --all-extras --dev pytest tests/src/unit/test_build_mirror_release_notes.py -q --tb=short
