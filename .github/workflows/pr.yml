@@ -51,6 +51,7 @@ jobs:
           git rev-parse HEAD > "$out/source-commit.txt"
           git config user.name 'PR2655 disposable release preview'
           git config user.email 'preview@example.invalid'
+          git fetch https://github.com/homeassistant-ai/ha-mcp.git refs/tags/v8.6.0:refs/tags/v8.6.0
           git switch -c master
           uvx --from python-semantic-release==10.7.0 semantic-release version --major --no-push --no-vcs-release --skip-build
           test "$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" = 9.0.0
@@ -408,6 +409,7 @@ jobs:
 
     - name: Restore candidate workflow for workflow contract tests
       run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
         git fetch --depth=1 origin 4b88162304a3b195004a61152fa230ffabd75552
         git show FETCH_HEAD:.github/workflows/pr.yml > .github/workflows/pr.yml
 
