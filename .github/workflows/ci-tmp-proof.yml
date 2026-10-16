@@ -1,0 +1,20 @@
+name: TMP proof decline 2749
+permissions:
+  contents: read
+on:
+  workflow_dispatch:
+jobs:
+  proof:
+    name: Proof
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.0-python3.13-trixie-slim
+    timeout-minutes: 10
+    steps:
+    - run: apt-get update -qq && apt-get install -y -qq git >/dev/null
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+        submodules: true
+    - run: uv sync --all-extras --dev
+    - run: uv run pytest tests/src/unit/test_zz_proof_decline.py -v -s --tb=short -p no:cacheprovider
