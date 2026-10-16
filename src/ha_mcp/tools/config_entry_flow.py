@@ -711,6 +711,8 @@ async def update_config_entry_options(
         return await _update_config_entry_options(
             client, entry_id, config_dict, expected_domain, noun, progress
         )
+    except ToolError:
+        raise
     except (Exception, asyncio.CancelledError) as err:
         if progress is None:
             raise
