@@ -2174,6 +2174,20 @@ class TestInstallLogFiltersIfAvailable:
 # ---------------------------------------------------------------------------
 
 
+class TestRevokeCredentials:
+    async def test_revoke_leaves_the_removed_entry_alone(self, tmp_path, monkeypatch):
+        # HA removes the entry before the remove callback runs; updating it
+        # then raises UnknownEntry.
+        release = AsyncMock()
+        monkeypatch.setattr(es, "async_release_credentials", release)
+        mgr, hass, entry = _manager(tmp_path)
+
+        await mgr.async_revoke_credentials()
+
+        release.assert_awaited_once_with(hass, entry.data)
+        hass.config_entries.async_update_entry.assert_not_called()
+
+
 class TestLifecycle:
     async def test_start_requires_secret_path(self, tmp_path):
         mgr, _hass, _entry = _manager(tmp_path, data={})  # no DATA_SECRET_PATH
