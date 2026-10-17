@@ -393,8 +393,8 @@ DATA_REINSTALL_REQUESTED = "reinstall_requested"
 # change instead rotates the signing key, evicting outstanding tokens at the
 # restart that activates the new credentials (see
 # embedded_entry._ensure_legacy_oauth_secrets). Until that restart the bound
-# views keep serving the OLD identity, so the startup log withholds rotated
-# credentials (embedded_setup._surface_connect_urls).
+# views keep serving the OLD identity, so the Configure screen and the startup
+# log say the new credentials take effect after a restart.
 DATA_OAUTH_CLIENT_ID = "oauth_client_id"
 DATA_OAUTH_CLIENT_SECRET = "oauth_client_secret"
 DATA_OAUTH_SIGNING_KEY = "oauth_signing_key"
@@ -428,7 +428,7 @@ DATA_LAST_OPTIONS = "last_options"
 DATA_LLM_API_UNSUB = "llm_api_unsub"
 
 # Webhook auth modes (mirrors the webhook-proxy add-on's default posture).
-WEBHOOK_AUTH_NONE = "none"  # secret webhook URL is the shared secret (default)
+WEBHOOK_AUTH_NONE = "none"  # secret webhook URL is the shared secret
 WEBHOOK_AUTH_HA = "ha_auth"  # HA-native bearer (HA core is the OAuth AS)
 # Self-hosted OAuth 2.1 authorization server with a static client_id/secret,
 # ported from the webhook-proxy add-on's "legacy" mode. Originally needed
