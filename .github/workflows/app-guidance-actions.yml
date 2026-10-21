@@ -1,0 +1,32 @@
+name: App guidance Actions security validation
+on:
+  push:
+    branches: [ci/app-guidance-actions]
+permissions:
+  contents: read
+jobs:
+  actions-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install CodeQL CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extensions install github/gh-codeql
+          gh codeql set-version latest
+      - name: Analyze Actions security
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh codeql database create "$RUNNER_TEMP/ha-mcp-db-actions" --language=actions --source-root . --overwrite
+          gh codeql database analyze "$RUNNER_TEMP/ha-mcp-db-actions" codeql/actions-queries:codeql-suites/actions-code-scanning.qls --format=sarif-latest --output actions.sarif --download
+          python scripts/codeql_quality_gate.py actions.sarif
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: success() || failure()
+        with:
+          name: actions-security-sarif
+          path: actions.sarif
