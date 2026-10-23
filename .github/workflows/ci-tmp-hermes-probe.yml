@@ -13,11 +13,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
-      - name: Install Hermes Agent (main)
+      - name: Install Hermes Agent (v0.22.5, locked)
         run: |
-          uv tool install --python 3.14 "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@main"
-          git ls-remote https://github.com/NousResearch/hermes-agent refs/heads/main
-          hermes --version || true
+          git clone -q --depth 1 --branch v0.22.5 https://github.com/NousResearch/hermes-agent "$RUNNER_TEMP/hermes"
+          cd "$RUNNER_TEMP/hermes" && uv sync --frozen --python 3.14 -q
+          mkdir -p ~/.local/bin && printf '#!/bin/sh\nexec %s/.venv/bin/hermes "$@"\n' "$RUNNER_TEMP/hermes" > ~/.local/bin/hermes && chmod +x ~/.local/bin/hermes
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/hermes --version || true
       - name: Configure MCP servers like the setup wizard
         env:
           MCP_URL: ${{ secrets.DEVENV_MCP_URL }}
