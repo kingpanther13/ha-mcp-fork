@@ -1,0 +1,47 @@
+name: TMP hermes probe
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        default: "60"
+      interval:
+        default: "20"
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      - name: Install Hermes Agent (main)
+        run: |
+          uv tool install --python 3.14 "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@main"
+          git ls-remote https://github.com/NousResearch/hermes-agent refs/heads/main
+          hermes --version || true
+      - name: Configure MCP servers like the setup wizard
+        env:
+          MCP_URL: ${{ secrets.DEVENV_MCP_URL }}
+        run: |
+          mkdir -p ~/.hermes
+          cat > ~/.hermes/config.yaml <<CFG
+          mcp_servers:
+            ha_plain:
+              url: "${MCP_URL}"
+            ha_oauth:
+              url: "${MCP_URL}"
+              auth: oauth
+          CFG
+          hermes mcp list || true
+      - name: Probe loop
+        env:
+          MINUTES: ${{ inputs.minutes }}
+          INTERVAL: ${{ inputs.interval }}
+        run: |
+          end=$(( $(date +%s) + MINUTES * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            for s in ha_plain ha_oauth; do
+              out=$(timeout 60 hermes mcp test "$s" </dev/null 2>&1); rc=$?
+              echo "PROBE $(date -u +%H:%M:%S) $s rc=$rc :: $(echo "$out" | grep -E 'Connected|Tools discovered|failed|Auth:|Error|error' | tr '\n' ' ' | cut -c1-400)"
+            done
+            sleep "$INTERVAL"
+          done
