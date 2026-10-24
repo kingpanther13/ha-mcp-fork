@@ -58,6 +58,7 @@ class FakeAPI {
     this.calls = [];
     this.roles = { maintainer: "maintain", contributor: "write" };
     this.runs = {};
+    this.variables = {};
   }
   request(path) {
     assert.equal(path, this.root);
@@ -103,6 +104,12 @@ class FakeAPI {
     }
     if (path.startsWith("actions/runs/"))
       return this.runs[path.split("/").at(-1)];
+    if (path.startsWith("actions/variables/")) {
+      const name = path.split("/").at(-1);
+      if (!(name in this.variables))
+        throw Object.assign(Error("missing"), { status: 404 });
+      return { name, value: this.variables[name] };
+    }
     throw Error(`Unexpected read ${path}`);
   }
   optional(path) {
@@ -235,6 +242,11 @@ class FakeAPI {
     if (path === "pulls/10") {
       Object.assign(this.pr, data);
       return this.pr;
+    }
+    if (path === "actions/variables" || path.startsWith("actions/variables/")) {
+      assert.equal(method, path === "actions/variables" ? "POST" : "PATCH");
+      this.variables[data.name] = data.value;
+      return {};
     }
     if (path.includes("/replies")) {
       const reply = {

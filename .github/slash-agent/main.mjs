@@ -7,7 +7,15 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { decide, principal, resultSchema, reviewFeedback } from "./core.mjs";
-import { API, collect, eventTarget, sessionRoot, snapshotGuard } from "./github.mjs";
+import {
+  API,
+  collect,
+  eventTarget,
+  sessionRoot,
+  snapshotGuard,
+  trackWakeBranch,
+  WAKEABLE,
+} from "./github.mjs";
 import { packageWork } from "./worker.mjs";
 import { publish } from "./publish.mjs";
 
@@ -129,8 +137,13 @@ export function main(
       throw Error("Unexpected publication App");
     const workerSucceeded = env.WORKER_RESULT === "success";
     const artifact = workerSucceeded ? json("result.json") : null;
+    const api = createApi(env.GITHUB_REPOSITORY);
+    // List the branch before publishing so a publication that fails midway
+    // still receives the CI wakeups that let it resume.
+    if (["code", "ready"].includes(plan.decision.mode))
+      trackWakeBranch(api, plan.snapshot.branch, true);
     const state = publishFn(
-      createApi(env.GITHUB_REPOSITORY),
+      api,
       plan,
       artifact,
       env.HA_MCP_APP_SLUG,
@@ -138,6 +151,7 @@ export function main(
     );
     if (state.skipped)
       throw Error(`Stale work skipped: ${(state.changed ?? ["unknown guard"]).join(", ")}; send a fresh slash command if needed`);
+    trackWakeBranch(api, state.branch, !!state.pr && WAKEABLE.has(state.status));
     console.log(`Slash session: ${state.status}`);
   } else throw Error("Unknown slash controller operation");
 }

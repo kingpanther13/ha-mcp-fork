@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { API, eventTarget } from "../../.github/slash-agent/github.mjs";
+import { API, eventTarget, trackWakeBranch } from "../../.github/slash-agent/github.mjs";
 import { main } from "../../.github/slash-agent/main.mjs";
 import { packageWork } from "../../.github/slash-agent/worker.mjs";
 import { A, B, APP, user, response, artifact, FakeAPI, start } from "./slash-agent-fixtures.mjs";
@@ -228,14 +228,18 @@ test("workflow entrypoint wires admit, prompt, package and publish artifacts", (
       assert.equal(work.threadId, artifact().threadId);
       assert.equal(app, APP);
       assert.equal(options.workerSucceeded, true);
-      return { status: "waiting" };
+      // Listed before publication, so a failure midway still gets CI wakeups.
+      assert.equal(api.variables.SLASH_AGENT_WAKE_BRANCHES, '["agents/issue-9"]');
+      return { status: "waiting", branch: "agents/issue-9", pr: 10 };
     } });
     assert.equal(published, true);
+    assert.equal(api.variables.SLASH_AGENT_WAKE_BRANCHES, '["agents/issue-9"]');
     main("publish", { ...env, WORKER_RESULT: "failure" }, { createApi, publishFn: (_api, _plan, work, _app, options) => {
       assert.equal(work, null);
       assert.equal(options.workerSucceeded, false);
-      return { status: "blocked" };
+      return { status: "blocked", branch: "agents/issue-9", pr: 10 };
     } });
+    assert.equal(api.variables.SLASH_AGENT_WAKE_BRANCHES, "[]");
     assert.throws(() => main("publish", { ...env, TOKEN_APP_SLUG: "other" }, { createApi }), /Unexpected publication App/);
     assert.throws(() => main("publish", env, { createApi, publishFn: () => ({ skipped: true, changed: ["issue"] }) }), /Stale work skipped: issue/);
     assert.throws(() => main("admit", { ...env, GITHUB_OUTPUT: "" }, { createApi }), /GITHUB_OUTPUT is required/);
@@ -250,6 +254,16 @@ test("workflow entrypoint wires admit, prompt, package and publish artifacts", (
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("wake branches drop merged sessions so CI on a finished PR stops taking runners", () => {
+  const api = new FakeAPI();
+  api.variables.SLASH_AGENT_WAKE_BRANCHES = '["merged-session"]';
+  api.pr = { number: 10, head: { ref: "live-session", repo: { full_name: api.repository } } };
+  trackWakeBranch(api, "live-session", true);
+  assert.equal(api.variables.SLASH_AGENT_WAKE_BRANCHES, '["live-session"]');
+  trackWakeBranch(api, "live-session", false);
+  assert.equal(api.variables.SLASH_AGENT_WAKE_BRANCHES, "[]");
 });
 
 test("packaging captures modifications, deletions and new files without running repository hooks", () => {

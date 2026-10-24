@@ -35,13 +35,25 @@ permissions:
 
 jobs:
   route:
+    # A skipped job takes no runner. Comments route only when they can carry a
+    # command (bot comments never do); CI and status wakeups route only for a
+    # branch the publisher lists in SLASH_AGENT_WAKE_BRANCHES, and every event
+    # routes while that variable is unset. Dependency-bot branches never wake.
     if: >-
       github.repository == 'homeassistant-ai/ha-mcp' &&
       vars.HA_MCP_AGENT_APP_SLUG != '' &&
       vars.HA_MCP_AGENT_CLIENT_ID != '' &&
-      (github.event_name != 'issue_comment' ||
-      github.event.comment.user.type == 'User' ||
-      contains(fromJSON('["coderabbitai[bot]","chatgpt-codex-connector[bot]"]'), github.event.comment.user.login))
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+      github.event.comment.user.type == 'User' &&
+      (contains(github.event.comment.body, '/astra') ||
+      contains(github.event.comment.body, '/sol') ||
+      contains(github.event.comment.body, '/terra'))) ||
+      ((github.event_name == 'workflow_run' || github.event_name == 'status') &&
+      !startsWith(github.event.workflow_run.head_branch || github.event.branches[0].name, 'dependabot/') &&
+      !startsWith(github.event.workflow_run.head_branch || github.event.branches[0].name, 'renovate/') &&
+      (vars.SLASH_AGENT_WAKE_BRANCHES == '' ||
+      contains(fromJSON(vars.SLASH_AGENT_WAKE_BRANCHES || '[]'), github.event.workflow_run.head_branch || github.event.branches[0].name))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

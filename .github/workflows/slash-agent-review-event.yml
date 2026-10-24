@@ -21,6 +21,12 @@ concurrency:
 jobs:
   notify:
     name: Slash review event
+    # Same branch gate as the controller's CI wakeups (slash-agent.yml).
+    if: >-
+      !startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
+      !startsWith(github.event.pull_request.head.ref, 'renovate/') &&
+      (vars.SLASH_AGENT_WAKE_BRANCHES == '' ||
+      contains(fromJSON(vars.SLASH_AGENT_WAKE_BRANCHES || '[]'), github.event.pull_request.head.ref))
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:

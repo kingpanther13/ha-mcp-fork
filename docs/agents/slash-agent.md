@@ -58,8 +58,8 @@ maintainer's command queue.
    It never executes generated source with the App credential.
 
 The dedicated `ha-mcp-agent` App needs Contents write, Pull requests write,
-Issues write, and Actions, Checks and Commit statuses read (Metadata read is
-implicit). It needs no Workflows, Administration or ruleset bypass permission.
+Issues write, Variables write, and Actions, Checks and Commit statuses read
+(Metadata read is implicit). It needs no Workflows, Administration or ruleset bypass permission.
 Configure the `HA_MCP_AGENT_CLIENT_ID` and `HA_MCP_AGENT_APP_SLUG` variables and
 the `HA_MCP_AGENT_APP_PRIVATE_KEY` secret for this workflow. The intake workflow
 continues using the narrower `ha-mcp` App and its existing `HA_MCP_APP_*`
@@ -108,6 +108,15 @@ Substantive maintainer reviews/inline feedback and the existing CodeRabbit/Codex
 resume an authorized session. A secretless review-event workflow wakes the trusted
 controller; its completion is only a signal, not trusted instructions or an
 artifact to execute. CI workflow completions and status changes are also signals.
+
+Each signal would otherwise take a runner, so the entry and review-event jobs
+are skipped (no runner) unless the event's branch is listed in the
+`SLASH_AGENT_WAKE_BRANCHES` repository variable. Publication maintains that
+JSON list: it adds the session branch before publishing a coding or readiness
+round, removes it when the session closes, pauses, blocks or completes without
+a PR, and drops branches that no longer head an open PR. `dependabot/` and
+`renovate/` branches never wake. While the variable is unset, every event
+routes. Comments route only when they contain a command name.
 Unrelated PRs without an App checkpoint exit before editor, review, role and
 check collection. The controller fetches current checks and feedback itself for
 owned sessions, and limits the resulting worker prompt to 512 KiB. Old issue-bot guesses

@@ -56,6 +56,36 @@ def test_slash_agent_behavior() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def _gate(workflow: str, job: str) -> str:
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())["jobs"]
+    return " ".join(jobs[job]["if"].split())
+
+
+def test_comments_that_cannot_hold_a_command_take_no_runner() -> None:
+    core = (ROOT / ".github/slash-agent/core.mjs").read_text()
+    names = re.search(r"\^\\/\(([a-z|]+)\)", core).group(1).split("|")
+    gate = _gate("slash-agent.yml", "route")
+    assert "github.event.comment.user.type == 'User'" in gate
+    for name in names:
+        assert f"contains(github.event.comment.body, '/{name}')" in gate
+
+
+def test_ci_and_review_wakeups_take_no_runner_without_a_live_session_branch() -> None:
+    source = (ROOT / ".github/slash-agent/github.mjs").read_text()
+    variable = re.search(r'WAKE_BRANCHES = "(\w+)"', source).group(1)
+    for workflow, job in [
+        ("slash-agent.yml", "route"),
+        ("slash-agent-review-event.yml", "notify"),
+    ]:
+        gate = _gate(workflow, job)
+        # An unset variable keeps routing every event, so sessions never stall
+        # before the publisher first writes it.
+        assert f"vars.{variable} == ''" in gate
+        assert f"contains(fromJSON(vars.{variable} || '[]')" in gate
+        for prefix in ("dependabot/", "renovate/"):
+            assert f"'{prefix}')" in gate
+
+
 def test_slash_workflow_keeps_publication_and_auth_outside_generated_code() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/slash-agent.yml").read_text())
     assert all(value == "read" for value in workflow["permissions"].values())
@@ -63,8 +93,6 @@ def test_slash_workflow_keeps_publication_and_auth_outside_generated_code() -> N
     assert "homeassistant-ai/ha-mcp" in admission["if"]
     assert "HA_MCP_AGENT_APP_SLUG != ''" in admission["if"]
     assert "HA_MCP_AGENT_CLIENT_ID != ''" in admission["if"]
-    assert "coderabbitai[bot]" in admission["if"]
-    assert "chatgpt-codex-connector[bot]" in admission["if"]
     assert "secrets." not in str(admission)
     session = yaml.safe_load(
         (ROOT / ".github/workflows/slash-agent-session.yml").read_text()

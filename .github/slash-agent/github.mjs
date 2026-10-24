@@ -301,6 +301,29 @@ export function eventTarget(api, event, eventName, env) {
   return { number: prs[0].number, commandId: null, automatic: true };
 }
 
+// Read by the `if:` gates in slash-agent.yml and slash-agent-review-event.yml.
+export const WAKE_BRANCHES = "SLASH_AGENT_WAKE_BRANCHES";
+// Statuses that a CI, status or review event can still advance.
+export const WAKEABLE = new Set(["working", "publishing", "retry", "waiting", "ready"]);
+
+export function trackWakeBranch(api, branch, wakeable) {
+  const path = `actions/variables/${WAKE_BRANCHES}`;
+  const current = api.optional(path);
+  // Entries for merged or closed PRs are dropped here; nothing else prunes them.
+  const open = new Set(
+    api.pages("pulls?state=open")
+      .filter((pr) => pr.head.repo?.full_name === api.repository)
+      .map((pr) => pr.head.ref),
+  );
+  const branches = new Set(JSON.parse(current?.value ?? "[]").filter((b) => open.has(b)));
+  if (wakeable) branches.add(branch);
+  else branches.delete(branch);
+  const value = JSON.stringify([...branches].sort());
+  if (current?.value === value) return;
+  if (current) api.write(path, { name: WAKE_BRANCHES, value }, "PATCH");
+  else api.write("actions/variables", { name: WAKE_BRANCHES, value });
+}
+
 function sessionSource(api, number, app, { idleIfUnowned = false } = {}) {
   let issue = api.get(`issues/${number}`);
   let pr = issue.pull_request ? api.get(`pulls/${number}`) : null;

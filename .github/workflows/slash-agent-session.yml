@@ -211,6 +211,7 @@ jobs:
           permission-actions: read
           permission-checks: read
           permission-statuses: read
+          permission-actions-variables: write
       - name: Revalidate, append commits and reconcile the PR
         timeout-minutes: 6
         env:
