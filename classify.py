@@ -1,44 +1,34 @@
-"""Classify one run's wire.log: clean / wrapped / stringified / other / no_call."""
+"""Summarise one run's wire log: per set-call, how each optional string field arrived, and the outcome."""
 import json, sys
 
-LIST_KEYS = ("triggers", "trigger", "conditions", "condition", "actions", "action", "sequence")
+FIELDS = ("identifier", "python_transform", "config_hash", "category", "BestPracticeKey")
 
 
-def classify(path):
-    try:
-        lines = [l for l in open(path, encoding="utf-8") if l.strip()]
-    except FileNotFoundError:
-        return ["no_call"], {}
-    if not lines:
-        return ["no_call"], {}
-    verdicts, shapes = [], {}
-    for l in lines:
-        cfg = json.loads(l)["params"]["arguments"].get("config")
-        prefix = ""
-        if isinstance(cfg, str):
-            try:
-                cfg, prefix = json.loads(cfg), "string:"
-            except ValueError:
-                verdicts.append("string:invalid_json")
-                continue
-        shapes = {}
-        if not isinstance(cfg, dict):
-            verdicts.append("other")
+def shape(args, k):
+    if k not in args:
+        return "omitted"
+    v = args[k]
+    if v is None:
+        return "null"
+    if v == "":
+        return "empty"
+    if isinstance(v, str) and not v.strip():
+        return "blank"
+    if isinstance(v, str) and v.lower() in ("null", "none", "undefined"):
+        return f"str:{v}"
+    return "value"
+
+
+calls = []
+try:
+    for line in open(sys.argv[1], encoding="utf-8"):
+        rec = json.loads(line)
+        if rec["name"] != "ha_config_set_automation":
             continue
-        for k in LIST_KEYS:
-            if k not in cfg:
-                continue
-            v = cfg[k]
-            if isinstance(v, list):
-                shapes[k] = "list"
-            elif isinstance(v, dict) and list(v) == ["item"]:
-                shapes[k] = "item-wrapped"
-            else:
-                shapes[k] = type(v).__name__
-        verdicts.append(prefix + ("wrapped" if "item-wrapped" in shapes.values() else "clean"))
-    return verdicts, shapes
-
-
-if __name__ == "__main__":
-    calls, shapes = classify(sys.argv[1])
-    print(json.dumps({"calls": calls, "first": calls[0], "final": calls[-1], "last_shapes": shapes}))
+        a = rec["arguments"]
+        calls.append({"fields": {k: shape(a, k) for k in FIELDS},
+                      "config": "omitted" if "config" not in a else type(a["config"]).__name__,
+                      "error": rec["error"] if rec["isError"] else None})
+except FileNotFoundError:
+    pass
+print(json.dumps({"calls": calls, "succeeded": bool(calls) and calls[-1]["error"] is None}))

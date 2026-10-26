@@ -1,22 +1,36 @@
-name: opencode-ab (issue 2548)
+name: optional-params repro (issue 2873)
 on:
   push:
-    branches: [scratch/2548-opencode-ab]
+    branches: [scratch/2873-optional-params]
   workflow_dispatch:
 
 jobs:
-  ab:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.m.outputs.models }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm i -g opencode-ai@1.18.32
+      - id: m
+        run: |
+          opencode models opencode | tee models.txt
+          # Free-tier models only (no provider key on this runner).
+          models=$(python3 -c "import json,sys; ms=[l.strip() for l in open('models.txt') if l.strip().startswith('opencode/') and ('free' in l or 'pickle' in l)]; print(json.dumps(ms[:8]))")
+          echo "models=$models" >> "$GITHUB_OUTPUT"
+          echo "$models"
+
+  run:
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        model: [opencode/big-pickle]
-        schema: [original]
-        # prompt: explicit array instruction in the user prompt, no error feedback
-        # ha: wrapped calls get today's HA 400 text back; explicit: wrapped calls get an error naming the {"item"} shape
-        variant: [automation, script, dashboard]
-        rep: [1, 2]
+        model: ${{ fromJSON(needs.discover.outputs.models) }}
+        variant: [create, update]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,35 +42,35 @@ jobs:
       - run: npm i -g opencode-ai@1.18.32 && opencode --version
       - name: Write opencode config
         run: |
-          ERRMODE=explicit
           cat > opencode.json <<EOF
           {"\$schema": "https://opencode.ai/config.json",
            "mcp": {"stubha": {"type": "local", "command": ["python", "stub_mcp.py"], "enabled": true,
-                              "environment": {"SCHEMA": "${{ matrix.schema }}", "ERRMODE": "$ERRMODE", "WIRE_LOG": "${{ github.workspace }}/wire.log"}}}}
+                              "environment": {"WIRE_LOG": "${{ github.workspace }}/wire.log"}}}}
           EOF
-          cat opencode.json
       - name: Runs
         env:
           MODEL: ${{ matrix.model }}
           VARIANT: ${{ matrix.variant }}
         run: |
           mkdir -p logs
-          R=" If the tool returns an error, correct the config and call it again, up to 3 attempts in total. Stop as soon as it succeeds."
+          R=" If the tool returns an error, fix the call and try again, up to 3 attempts in total. Stop as soon as it succeeds."
           case "$VARIANT" in
-            automation) P="Use the stubha ha_config_set_automation tool to create an automation: alias 'setpoint apply', triggered by state change of input_number.helper_1, only when sun.sun is above_horizon, action climate.set_temperature on climate.office with temperature from the helper.$R";;
-            script) P="Use the stubha ha_config_set_script tool to create script_id apply_setpoint: alias 'apply setpoint', whose sequence first increments input_number.helper_1 and then calls climate.set_temperature on climate.office with temperature from the helper.$R";;
-            dashboard) P="Use the stubha ha_config_set_dashboard tool to create dashboard url_path 'test-dash': one sections-type view titled Home with a section titled Climate containing a tile card for climate.office and a tile card for input_number.helper_1, plus a second masonry view titled Lights with an entities card listing light.kitchen and light.hall.$R";;
+            create) P="Use the stubha ha_config_set_automation tool to create a new automation: alias 'Porch light at sunset', triggered at sunset, action light.turn_on on light.porch.$R";;
+            update) P="Use the stubha tools to update the existing automation automation.morning_lights so its action turns on light.kitchen instead of light.bedroom. Read it with ha_config_get_automation first, then write the full updated config with ha_config_set_automation.$R";;
           esac
-          for i in $(seq 1 10); do
+          for i in $(seq 1 5); do
             rm -f wire.log
             timeout 300 opencode run -m "$MODEL" "$P" > logs/run$i.out 2>&1 || true
             [ -f wire.log ] && cp wire.log logs/run$i.wire.log
-            echo "{\"run\": $i, \"calls\": $(python classify_final.py wire.log)}" | tee -a results.jsonl
+            echo "{\"run\": $i, \"model\": \"$MODEL\", \"variant\": \"$VARIANT\", \"result\": $(python classify.py wire.log)}" | tee -a results.jsonl
           done
+      - name: Artifact name
+        id: n
+        run: echo "name=$(echo '${{ matrix.model }}-${{ matrix.variant }}' | tr '/:' '__')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: final-${{ matrix.variant }}-${{ matrix.rep }}
+          name: r-${{ steps.n.outputs.name }}
           path: |
             results.jsonl
             logs/

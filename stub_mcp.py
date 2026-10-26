@@ -1,105 +1,125 @@
-"""Stdio MCP stub that logs raw tools/call JSON. SCHEMA=original mirrors ha-mcp's open `config` object;
-SCHEMA=hinted additionally declares the list fields as arrays."""
+"""Stdio MCP stub for issue 2873: serves ha-mcp's live ha_config_set_automation inputSchema and
+mirrors the server's validation order (identifier non-empty check, then config/python_transform
+exclusivity), logging every raw tools/call so we can see what the model sends for omitted fields."""
 import json, os, sys
 
 LOG = os.environ.get("WIRE_LOG", "wire.log")
-HINTED = os.environ.get("SCHEMA") == "hinted"
-ERRMODE = os.environ.get("ERRMODE", "none")  # none | ha | explicit
-LIST_KEYS = ("triggers", "trigger", "conditions", "condition", "actions", "action", "sequence")
-FIRST_ERR = {"triggers": "required key not provided at 'triggers[0].trigger'", "trigger": "required key not provided at 'triggers[0].trigger'",
-             "conditions": "Unexpected value for condition: 'None'. Expected a condition, a list of conditions or a valid template at 'conditions[0]'",
-             "condition": "Unexpected value for condition: 'None'. Expected a condition, a list of conditions or a valid template at 'conditions[0]'",
-             "actions": "Unable to determine action at 'actions[0]'", "action": "Unable to determine action at 'actions[0]'",
-             "sequence": "Unable to determine action at 'sequence[0]'"}
+
+PT_SECURITY = (
+    "\n\nPYTHON TRANSFORM SECURITY:\n\nALLOWED:\n- Dictionary/list access: config['views'][0]['cards'][1]\n"
+    "- Assignment: config['key'] = 'value'\n- Deletion: del config['key'] or config.pop('key')\n"
+    "- List methods: append, insert, pop, remove, clear, extend\n- Loops: for, if/else\n\n"
+    "FORBIDDEN:\n- Imports, file operations, dunder access, eval/exec, def/class, try/except, while loops"
+)
 
 
-def _bad(v):
-    return v == "" or (isinstance(v, dict) and list(v) == ["item"])
+def opt(t, desc, default=None):
+    return {"anyOf": [{"type": t}, {"type": "null"}], "default": default, "description": desc}
 
 
-def malformed(name, cfg):
-    """Mirror of the PR's checks: returns {path: shape} for flagged list fields."""
-    if not isinstance(cfg, dict):
-        return {}
-    if name == "ha_config_set_dashboard":
-        fields = {"views": cfg.get("views")}
-        views = cfg.get("views")
-        for i, v in enumerate(views if isinstance(views, list) else []):
-            if isinstance(v, dict):
-                for k in ("cards", "sections", "badges"):
-                    fields[f"views[{i}].{k}"] = v.get(k)
-                secs = v.get("sections")
-                for j, sec in enumerate(secs if isinstance(secs, list) else []):
-                    if isinstance(sec, dict):
-                        fields[f"views[{i}].sections[{j}].cards"] = sec.get("cards")
-    elif name == "ha_config_set_script":
-        fields = {"sequence": cfg.get("sequence")}
-    else:
-        fields = {k: cfg.get(k) for k in ("triggers", "trigger", "conditions", "condition", "actions", "action")}
-    return {k: ('{"item": ...}' if isinstance(v, dict) else '""') for k, v in fields.items() if _bad(v)}
+SET_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "config": {
+            "anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}],
+            "default": None,
+            "description": "Complete automation configuration. Purpose-specific triggers/conditions (HA 2026.7+ default: "
+            "'trigger': '<domain>.<name>' with 'target'/'options') are valid config. Mutually exclusive with python_transform.",
+        },
+        "identifier": opt("string", "Target automation entity_id or HA config 'id' (unique_id). Omit for creation with a "
+                          "generated ID. Values such as 'new' are literal IDs, not placeholders."),
+        "python_transform": opt("string", "Python expression to transform existing automation config. Mutually exclusive "
+                                "with config. WARNING: Expressions with infinite loops will hang the server. Examples: "
+                                "Simple: python_transform=\"config['actions'][0]['data']['brightness'] = 255\"" + PT_SECURITY),
+        "config_hash": opt("string", "Config hash from ha_config_get_automation for optimistic locking. Required for "
+                           "python_transform and when a config update changes an existing automation's alias; otherwise "
+                           "optional for config updates (validates before full replacement if provided)."),
+        "take_control_of_blueprint": {"type": "boolean", "default": False, "description": "Convert a blueprint-backed "
+                                      "automation into an editable standalone one. Requires identifier; mutually exclusive "
+                                      "with config and python_transform."},
+        "category": opt("string", "Category ID to assign to this automation. Use ha_config_get_category(scope='automation') "
+                        "to list available categories, or ha_config_set_category() to create one."),
+        "wait": {"type": "boolean", "default": True, "description": "Wait for automation to be queryable before returning. "
+                 "Set to False for bulk operations."},
+        "enabled": {"anyOf": [{"type": "boolean"}, {"type": "null"}], "default": None, "description": "Turn the automation "
+                    "on (True) or off (False) after an optional config update; None leaves it unchanged."},
+        "run_actions": {"type": "boolean", "default": False, "description": "Run the automation's actions now, skipping "
+                        "its triggers and conditions. Can be used standalone with identifier and no config."},
+        "MandatoryBPS": {"type": "boolean", "default": True},
+        "BestPracticeKey": opt("string", "Read-receipt for the home-assistant-best-practices skill; required when strict "
+                               "best-practices mode is enabled. Pass the attestation phrase verbatim."),
+    },
+}
 
+SET_DESC = """Create or update a Home Assistant automation.
 
-def error_for(bad):
-    names = ", ".join(f"'{k}'" for k in bad)
-    shapes = "; ".join(f"'{k}' as {v}" for k, v in bad.items())
-    return {"success": False, "error": {"code": "VALIDATION_INVALID_PARAMETER",
-            "message": f"Received config {shapes} instead of a JSON array; nothing was sent to Home Assistant",
-            "suggestions": [f'Send {names} as a JSON array, e.g. "{next(iter(bad))}": [{{...}}, {{...}}], or omit an empty one',
-                            "If it still arrives malformed, pass the whole config as one JSON-encoded string",
-                            "If neither works, check the model or MCP client in use"]}}
+MODES (pick one; each can also take `enabled`, which alone with
+`identifier` turns the automation on or off without touching config):
+- python_transform: surgical edits to an existing automation. Requires
+  identifier and config_hash from ha_config_get_automation().
+- config: new automations or full restructures. Regular automations need
+  alias, triggers and actions.
+- take_control_of_blueprint: convert a blueprint-backed automation into a
+  standalone one. Takes no config of its own.
 
+IDENTITY: omit identifier and config['id'] to create with a generated ID;
+an unused raw ID creates that specific ID. Reusing an identifier targets
+the same automation even if the alias changes.
 
-ARR = {"type": "array", "items": {"type": "object"}}
+EXAMPLES:
+- Create: ha_config_set_automation(config={"alias": "Morning Lights", "triggers": [{"trigger": "time", "at": "07:00:00"}], "actions": [{"action": "light.turn_on", "target": {"area_id": "bedroom"}}]})
+- Update: current = ha_config_get_automation(identifier="automation.x"); ha_config_set_automation(identifier="automation.x", config_hash=current["config_hash"], config={...})
+- Disable: ha_config_set_automation(identifier="automation.x", enabled=False)"""
 
-
-def config_schema(desc, list_keys):
-    obj = {"additionalProperties": True, "type": "object"}
-    if HINTED:
-        obj["properties"] = {k: ARR for k in list_keys}
-    return {"anyOf": [obj, {"type": "null"}], "default": None, "description": desc}
-
+EXISTING = {
+    "id": "1700000000001",
+    "alias": "Morning Lights",
+    "description": "",
+    "triggers": [{"trigger": "time", "at": "07:00:00"}],
+    "conditions": [],
+    "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.bedroom"}}],
+    "mode": "single",
+}
 
 TOOLS = [
-    {
-        "name": "ha_config_set_dashboard",
-        "description": "Create or update a Home Assistant Lovelace dashboard. config holds views (list), each with cards or sections (lists).",
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "url_path": {"type": "string", "description": "Dashboard URL path, hyphenated."},
-                "config": {"anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}], "default": None,
-                           "description": "Dashboard configuration with views and cards."},
-            },
-            "required": ["url_path"],
-        },
-    },
-    {
-        "name": "ha_config_set_automation",
-        "description": "Create or update a Home Assistant automation. config needs alias, triggers (list) and actions (list).",
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "config": config_schema("Complete automation configuration.", ["triggers", "conditions", "actions"]),
-                "identifier": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
-            },
-        },
-    },
-    {
-        "name": "ha_config_set_script",
-        "description": "Create or update a Home Assistant script. config needs alias and sequence (list of actions).",
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "script_id": {"type": "string"},
-                "config": config_schema("Script configuration dictionary.", ["sequence"]),
-            },
-            "required": ["script_id"],
-        },
-    },
+    {"name": "ha_config_get_automation", "description": "Get an automation's stored config and config_hash.",
+     "inputSchema": {"type": "object", "additionalProperties": False,
+                     "properties": {"identifier": {"type": "string", "description": "Automation entity_id or unique_id."}},
+                     "required": ["identifier"]}},
+    {"name": "ha_config_set_automation", "description": SET_DESC, "inputSchema": SET_SCHEMA},
 ]
+
+
+def err(message, suggestions, **ctx):
+    body = {"success": False, "error": {"code": "VALIDATION_INVALID_PARAMETER", "message": message,
+                                        "suggestions": suggestions}, **ctx}
+    return {"isError": True, "content": [{"type": "text", "text": json.dumps(body)}]}
+
+
+def ok(body):
+    return {"content": [{"type": "text", "text": json.dumps(body)}]}
+
+
+def handle_set(a):
+    identifier, config, pt = a.get("identifier"), a.get("config"), a.get("python_transform")
+    if identifier is not None and not (isinstance(identifier, str) and identifier.strip()):
+        return err("identifier must be a non-empty, non-whitespace string",
+                   ["Omit identifier to create a new automation",
+                    "Or pass a valid automation entity_id / unique_id to update"],
+                   parameter="identifier", value=identifier, action="set")
+    if config is not None and pt is not None:
+        return err("Cannot use both config and python_transform simultaneously",
+                   ["Use only ONE of: config or python_transform", "config: Full replacement",
+                    "python_transform: Python-based edits (recommended for existing automations)"])
+    if isinstance(config, str):
+        return err("`config`: expected a JSON object. Pass {\"key\": \"value\"} directly, not a JSON-encoded string.", [])
+    if pt is not None and not a.get("config_hash"):
+        return err("config_hash is required for python_transform", ["Call ha_config_get_automation first"])
+    if config is None and pt is None and a.get("enabled") is None and not a.get("run_actions"):
+        return err("Provide config, python_transform, enabled or run_actions", [])
+    op = "updated" if identifier else "created"
+    return ok({"success": True, "operation": op, "automation_id": identifier or "automation.generated"})
 
 
 def send(msg):
@@ -114,22 +134,20 @@ for raw in sys.stdin:
     msg = json.loads(raw)
     method, mid = msg.get("method"), msg.get("id")
     if method == "tools/call":
-        with open(LOG, "a", encoding="utf-8") as f:
-            f.write(raw + "\n")
-        cfg = msg["params"].get("arguments", {}).get("config")
-        if isinstance(cfg, str):
-            try:
-                cfg = json.loads(cfg)
-            except ValueError:
-                pass
-        bad = malformed(msg["params"]["name"], cfg)
-        if bad and ERRMODE != "none":
-            body = error_for(bad)
-            send({"jsonrpc": "2.0", "id": mid, "result": {"isError": True, "content": [{"type": "text", "text": json.dumps(body)}]}})
+        name = msg["params"]["name"]
+        args = msg["params"].get("arguments") or {}
+        if name == "ha_config_get_automation":
+            result = ok({"success": True, "identifier": args.get("identifier"), "config": EXISTING,
+                         "config_hash": "abc123def456"})
         else:
-            send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": '{"success": true}'}]}})
+            result = handle_set(args)
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"name": name, "arguments": args, "isError": bool(result.get("isError")),
+                                "error": json.loads(result["content"][0]["text"]).get("error", {}).get("message")}) + "\n")
+        send({"jsonrpc": "2.0", "id": mid, "result": result})
     elif method == "initialize":
-        send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": msg["params"].get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}}, "serverInfo": {"name": "stub-ha", "version": "0"}}})
+        send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": msg["params"].get("protocolVersion", "2025-06-18"),
+              "capabilities": {"tools": {}}, "serverInfo": {"name": "stub-ha", "version": "0"}}})
     elif method == "tools/list":
         send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
     elif mid is not None:
