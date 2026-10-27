@@ -1007,9 +1007,24 @@ async def _component_dashboard_config(
     internal id) both return ``None`` so the caller runs its unchanged legacy
     read. ``url_path`` ``None`` targets the default dashboard.
     """
+    status, config = await _component_dashboard_read(client, url_path)
+    return config if status == "ok" else None
+
+
+async def _component_dashboard_read(
+    client: Any, url_path: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """The component ``get``'s status and config; ``(None, None)`` without it.
+
+    ``no_config`` is Core's ``ConfigNotFound``: the dashboard exists but has no
+    saved config, and the frontend renders its generated default view.
+    """
     result = await _dashboards_via_component(client, "get", url_path=url_path)
-    if result is None or result.get("status") != "ok":
-        return None
+    if result is None:
+        return None, None
+    status = result.get("status")
+    if status != "ok":
+        return status, None
     config = result.get("config")
     if not isinstance(config, dict):
         logger.debug(
@@ -1018,8 +1033,23 @@ async def _component_dashboard_config(
             WS_DASHBOARDS,
             url_path,
         )
-        return None
-    return config
+        return None, None
+    return status, config
+
+
+def _no_stored_config_result(url_path: str | None) -> dict[str, Any]:
+    """Get-mode answer for a dashboard that exists with no saved config."""
+    return {
+        "success": True,
+        "action": "get",
+        "url_path": url_path,
+        "config": None,
+        "stored_config": False,
+        "message": (
+            "The dashboard exists but has no saved config; Home Assistant shows "
+            "its generated default view until a config is saved."
+        ),
+    }
 
 
 async def fetch_dashboards_list(
@@ -2232,11 +2262,14 @@ class DashboardConfigTools:
         actually bust HA's Lovelace cache.
         """
         lovelace_url_path = _lovelace_url_path(url_path)
-        component_config = (
-            None
+        component_status, component_config = (
+            (None, None)
             if force_reload
-            else await _component_dashboard_config(self._client, lovelace_url_path)
+            else await _component_dashboard_read(self._client, lovelace_url_path)
         )
+        if component_status == "no_config":
+            resolved_url_path[0] = url_path
+            return _no_stored_config_result(url_path)
         if component_config is not None:
             # The component matches an exact url_path (or the default), so no
             # lazy-resolve is possible: original == final, resolved_from unset.
@@ -2275,6 +2308,10 @@ class DashboardConfigTools:
             error_msg = response.get("error", {})
             if isinstance(error_msg, dict):
                 error_msg = error_msg.get("message", str(error_msg))
+            # Without the component, Core's message is the only signal that
+            # an existing dashboard has no saved config.
+            if str(error_msg) in _NO_STORED_CONFIG_MESSAGES:
+                return _no_stored_config_result(url_path)
             raise_tool_error(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
