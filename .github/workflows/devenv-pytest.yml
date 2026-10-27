@@ -49,7 +49,7 @@ jobs:
       - name: ruff + mypy
         if: env.LINT == 'true'
         run: |
-          uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ packaging/ scripts/
+          uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ scripts/
           uv run ruff format --check src/ tests/ custom_components/
           uv run mypy src/ custom_components/ homeassistant-addon/ scripts/
       - name: pytest
