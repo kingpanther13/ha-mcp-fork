@@ -213,31 +213,11 @@ class HomeAssistantSmartMCPServer:
         # the skill guide tool are registered so it can wrap everything)
         self._apply_tool_search()
 
-        # Keep the pre-rename tool names callable for clients that still hold
-        # an older catalog. First in the chain, so everything after it sees the
-        # current name it is keyed on.
-        from .tools.renamed_tool_middleware import RenamedToolAliasMiddleware
+        # Retired-name aliasing, client result adaptation and error rewording
+        # run first in the chain, ahead of every gate below.
+        from .tools.outer_middleware import add_outer_middleware
 
-        self.mcp.add_middleware(RenamedToolAliasMiddleware())
-
-        # ChatGPT shows `{}` for a result with a top-level `content` key.
-        # Outer to every result-rewriting middleware so it renames final output.
-        from .tools.openai_content_key_middleware import OpenAiContentKeyMiddleware
-
-        self.mcp.add_middleware(OpenAiContentKeyMiddleware())
-
-        # Convert Pydantic type-validation errors to structured ToolErrors so
-        # models get actionable guidance instead of raw Pydantic messages.
-        from .tools.validation_middleware import ValidationErrorMiddleware
-
-        self.mcp.add_middleware(ValidationErrorMiddleware())
-
-        # Replace the opaque "Unknown tool" FastMCP raises when a client calls
-        # ha_search_tools / the ha_call_* proxies while Tool Search is off
-        # (stale client tool-list cache) with an actionable refresh hint.
-        from .tools.tool_search_hint_middleware import ToolSearchHintMiddleware
-
-        self.mcp.add_middleware(ToolSearchHintMiddleware())
+        add_outer_middleware(self.mcp)
 
         # Only the custom component's conversation-agent LLM API consumes the
         # private per-tool stamp. Avoid adding it to standalone/add-on catalogs,
