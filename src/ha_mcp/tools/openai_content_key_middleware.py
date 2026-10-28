@@ -16,14 +16,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from mcp.types import TextContent
-
 from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
     MiddlewareContext,
 )
 from ha_mcp._vendor.fastmcp.tools.base import default_serializer
+from ha_mcp._vendor.mcp.types import TextContent
 
 from .tools_bug_report import _extract_client_info
 

@@ -8,9 +8,9 @@ to ``contentText``; every other client keeps ``content``.
 import json
 
 import pytest
-from mcp.types import Implementation
 
 from ha_mcp._vendor.fastmcp import Client, FastMCP
+from ha_mcp._vendor.mcp.types import Implementation
 from ha_mcp.tools.openai_content_key_middleware import OpenAiContentKeyMiddleware
 
 
