@@ -220,6 +220,12 @@ class HomeAssistantSmartMCPServer:
 
         self.mcp.add_middleware(RenamedToolAliasMiddleware())
 
+        # ChatGPT shows `{}` for a result with a top-level `content` key.
+        # Outer to every result-rewriting middleware so it renames final output.
+        from .tools.openai_content_key_middleware import OpenAiContentKeyMiddleware
+
+        self.mcp.add_middleware(OpenAiContentKeyMiddleware())
+
         # Convert Pydantic type-validation errors to structured ToolErrors so
         # models get actionable guidance instead of raw Pydantic messages.
         from .tools.validation_middleware import ValidationErrorMiddleware
