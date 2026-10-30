@@ -1,0 +1,1100 @@
+"""
+Historical data access tools for Home Assistant MCP server.
+
+This module provides tools for accessing historical data from Home Assistant's
+recorder component via a single consolidated tool:
+
+ha_get_history -- Retrieve historical data with source-selectable mode:
+  - source="history" (default): Raw state changes, ~10 day retention
+  - source="statistics": Pre-aggregated long-term statistics, permanent retention
+"""
+
+import logging
+import math
+import re
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Annotated, Any, Literal
+
+from pydantic import Field
+
+from ha_mcp._vendor.fastmcp import Context
+from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp._vendor.fastmcp.tools import tool
+
+from ..config import get_global_settings
+from ..errors import ErrorCode, create_error_response, create_validation_error
+from .coercion import JSON_STRING_COERCION, parse_string_list_param
+from .core_contract import include_core_contract, merge_core_options
+from .helpers import (
+    exception_to_structured_error,
+    log_tool_usage,
+    raise_tool_error,
+    register_tool_methods,
+    safe_progress,
+)
+from .history_response import (
+    format_history_response,
+    summarize_states,
+    summary_warnings,
+)
+from .recorder_errors import raise_recorder_ws_failure as _raise_recorder_ws_failure
+from .response_helpers import (
+    add_timezone_metadata,
+    build_pagination_metadata,
+    fetch_ha_timezone,
+    project_fields,
+    resolve_local_timezone,
+)
+from .statistics_calendar import (
+    _CALENDAR_STATISTICS_PERIODS,
+    _statistics_scan_window,
+)
+from .statistics_helpers import (
+    _parse_statistic_types,
+    fetch_statistics_metadata,
+    format_entity_statistics,
+    resolve_requested_units,
+    statistics_warnings,
+)
+from .statistics_resets import restore_reset_timestamps
+from .tool_hints import read_only_hints
+
+logger = logging.getLogger(__name__)
+
+_RELATIVE_TIME_UNIT_SECONDS = {
+    "min": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+    "m": 30 * 24 * 60 * 60,
+}
+_RELATIVE_FORMAT_HINT = "Relative format: '30min', '24h', '7d', '2w', '1m' (= 30 days)"
+
+
+def parse_relative_time(
+    time_str: str | None,
+    default_hours: int = 24,
+    *,
+    reference_time: datetime | None = None,
+) -> datetime:
+    """Parse a time string that can be either ISO format or relative (e.g., '24h', '7d').
+
+    Args:
+        time_str: Time string in ISO format or relative format (e.g., "30min", "24h", "7d", "2w", "1m" (= 30 days))
+        default_hours: Default hours to go back if time_str is None
+        reference_time: Reference datetime for relative values and defaults.
+
+    Returns:
+        A datetime in the parsed value's timezone; relative values use ``reference_time``'s.
+    """
+    now = reference_time or datetime.now(UTC)
+    if time_str is None:
+        return now - timedelta(hours=default_hours)
+
+    relative_pattern = r"^(\d+)(min|[hdwm])$"
+    match = re.match(relative_pattern, time_str.lower().strip())
+
+    if match:
+        value = int(match.group(1))
+        unit = match.group(2)
+        try:
+            return now - timedelta(seconds=value * _RELATIVE_TIME_UNIT_SECONDS[unit])
+        except OverflowError as exc:
+            raise ValueError(
+                f"Invalid time format: {time_str} is out of range"
+            ) from exc
+
+    try:
+        if time_str.endswith("Z"):
+            time_str = time_str[:-1] + "+00:00"
+        dt = datetime.fromisoformat(time_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    except (ValueError, OverflowError) as e:
+        raise ValueError(
+            f"Invalid time format: {time_str}. Use ISO format or relative (e.g., '30min', '24h', '7d', '2w', '1m' (= 30 days))"
+        ) from e
+
+
+# Source-dependent default look-back periods
+_DEFAULT_START_HOURS_BY_SOURCE: dict[str, int] = {"history": 24, "statistics": 30 * 24}
+
+# Default and maximum limits for history entries
+_DEFAULT_HISTORY_LIMIT = 100
+_MAX_HISTORY_LIMIT = 1000
+
+# Home Assistant's recorder WebSocket APIs have no server-side row limit. These
+# estimated safety budgets bound recorder scan work; they are not measured HA
+# limits and deliberately favor ordinary default-window requests.
+_MAX_HISTORY_ENTITIES = 10
+_MAX_HISTORY_ENTITY_HOURS = 240.0
+_MAX_STATISTICS_ENTITIES = 25
+_MAX_SHORT_TERM_STATISTICS_ROWS = 10_000
+_MAX_LONG_TERM_STATISTICS_ROWS = 20_000
+_VALID_STATISTICS_PERIODS = frozenset(
+    {"5minute", "hour", *_CALENDAR_STATISTICS_PERIODS}
+)
+
+
+async def _get_statistics_timezone(client: Any) -> tzinfo:
+    """Resolve HA's timezone without accepting an unsafe UTC fallback."""
+    timezone_name, fetch_failed = await fetch_ha_timezone(client)
+    if fetch_failed:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.CONNECTION_FAILED,
+                "Could not fetch the Home Assistant timezone required for safe calendar statistics estimation",
+                suggestions=[
+                    "Check the Home Assistant connection, then retry.",
+                    "Use period='hour' or period='5minute', which do not require calendar alignment.",
+                ],
+            )
+        )
+    timezone, resolved_timezone_name = resolve_local_timezone(timezone_name)
+    if resolved_timezone_name != timezone_name:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                "Home Assistant reports a timezone that could not be resolved for safe calendar statistics estimation",
+                context={"home_assistant_timezone": timezone_name},
+                suggestions=[
+                    "Configure a valid Home Assistant timezone, then retry.",
+                    "Use period='hour' or period='5minute', which do not require calendar alignment.",
+                ],
+            )
+        )
+    return timezone
+
+
+async def _prepare_guardrail_query(
+    client: Any,
+    *,
+    enabled: bool,
+    source: str,
+    period: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    end_time_was_provided: bool,
+) -> tzinfo:
+    """Validate guarded ranges and resolve calendar statistics timezone."""
+    _validate_time_range(
+        start_dt,
+        end_dt,
+        end_time_was_provided=end_time_was_provided,
+        reject_zero_length=enabled,
+    )
+    if not enabled:
+        return UTC
+    if source != "statistics" or period not in _CALENDAR_STATISTICS_PERIODS:
+        return UTC
+    _validate_calendar_statistics_range(start_dt, end_dt, period)
+    return await _get_statistics_timezone(client)
+
+
+class HistoryTools:
+    """Historical data access tools for Home Assistant."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    @tool(
+        name="ha_get_history",
+        tags={"History & Statistics"},
+        annotations=read_only_hints(
+            "Get Entity History or Statistics", open_world=False
+        ),
+    )
+    @log_tool_usage
+    async def ha_get_history(
+        self,
+        entity_ids: Annotated[
+            str | list[str],
+            JSON_STRING_COERCION,
+            Field(
+                description="Entity ID(s) to query. Can be a single ID, comma-separated string, or JSON array."
+            ),
+        ],
+        source: Annotated[
+            Literal["history", "statistics"],
+            Field(
+                description=(
+                    'Data source: "history" for raw state changes at full resolution (~10 '
+                    'day retention), or "statistics" for pre-aggregated long-term data '
+                    "(permanent, requires state_class)."
+                ),
+                default="history",
+            ),
+        ] = "history",
+        start_time: Annotated[
+            str | None,
+            Field(
+                description="Start time: ISO datetime or a look-back from now with unit min, h, d, w or m (= 30 days), e.g. '30min' = 30 minutes ago. Default: 24h ago for history, 30d ago for statistics",
+                default=None,
+            ),
+        ] = None,
+        end_time: Annotated[
+            str | None,
+            Field(
+                description="End time: same formats as start_time. Omit it to end at the current time",
+                default=None,
+            ),
+        ] = None,
+        # History-specific (ignored when source="statistics")
+        minimal_response: Annotated[
+            bool,
+            Field(
+                description="Return only states/timestamps without attributes. Ignored when "
+                'source="statistics"',
+                default=True,
+            ),
+        ] = True,
+        significant_changes_only: Annotated[
+            bool,
+            Field(
+                description="Filter to significant state changes only. Ignored when "
+                'source="statistics"',
+                default=True,
+            ),
+        ] = True,
+        limit: Annotated[
+            int | None,
+            Field(
+                description='Max entries per entity. Default: 100. For source="history": state '
+                "rows; with summary=True, the states listed in summary.states, longest "
+                'first. For source="statistics": aggregated rows. With multiple '
+                "entity_ids, total rows returned can reach limit × len(entity_ids).",
+                default=None,
+                ge=1,
+                le=1000,
+            ),
+        ] = None,
+        offset: Annotated[
+            int | None,
+            Field(
+                description="Number of entries to skip per entity for pagination.",
+                default=None,
+                ge=0,
+            ),
+        ] = None,
+        # Statistics-specific (ignored when source="history")
+        period: Annotated[
+            str,
+            Field(
+                description='Aggregation period: "5minute", "hour", "day", "week", "month", "year".'
+                ' Ignored when source="history"',
+                default="day",
+            ),
+        ] = "day",
+        statistic_types: Annotated[
+            str | list[str] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description='Native Core statistics types (for example "sum", "change", "last_reset"). Default: Core chooses all. Use include_schema=True to discover the installed contract. Ignored when source="history"',
+                default=None,
+            ),
+        ] = None,
+        order: Annotated[
+            Literal["asc", "desc"],
+            Field(
+                default="desc",
+                description=(
+                    'Sort order for history entries. "desc": newest first. "asc": oldest '
+                    'first. Ignored when source="statistics".'
+                ),
+            ),
+        ] = "desc",
+        summary: Annotated[
+            bool,
+            Field(
+                default=False,
+                description=(
+                    "Return per-entity totals instead of state rows: changes "
+                    "(switches to a different state; the state at the window start is "
+                    "not one, but without that state, e.g. with core_options "
+                    "{'include_start_time_state': false} or purged history, the first "
+                    "recorded state counts as one), first_change and last_change (null "
+                    "without changes), and per state its periods (separate spells) and "
+                    "duration_s (seconds, up to end_time or now, whichever is "
+                    "earlier). distinct_states counts every state, listed or not. "
+                    'Ignored when source="statistics".'
+                ),
+            ),
+        ] = False,
+        fields: Annotated[
+            str | list[str] | None,
+            JSON_STRING_COERCION,
+            Field(
+                default=None,
+                description=(
+                    "Return only the specified keys within data to reduce response "
+                    "size. None = full response. History keys: success, source, entities, "
+                    "period, query_params. Statistics keys: success, source, entities, "
+                    "period_type, time_range, statistic_types, query_params. Warnings and timezone metadata remain outside data and are always retained."
+                ),
+            ),
+        ] = None,
+        include_schema: Annotated[
+            bool,
+            Field(
+                description="Include the running Core's native request schema when the component supports discovery."
+            ),
+        ] = False,
+        core_options: Annotated[
+            dict[str, Any] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description="Additional native Core request fields, e.g. {'units': {'energy': 'MWh'}} for statistics. Core validates them. Cannot override fields controlled by the tool's parameters or query limits."
+            ),
+        ] = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        """Get historical data from Home Assistant's recorder.
+
+        WHEN NOT TO USE:
+        For current values, use ha_get_state. To inspect Energy Dashboard
+        preferences and configured statistics, use
+        ha_manage_energy_prefs(mode="get", include_statistics=True).
+
+        WHEN TO USE:
+        Use source="history" (default) to troubleshoot why a value changed, check
+        event sequences, or analyze recent patterns. Use summary=True when the
+        question needs a count or a duration ("was it ever unavailable?") rather
+        than the rows. Use source="statistics" for long-term trends and period
+        averages.
+
+        CAVEATS:
+        History rows rename Core's compact keys once: s -> state, a -> attributes,
+        lu -> last_updated, lc -> last_changed. History event times are ISO strings
+        in HA's timezone (UTC if unavailable). When Core omits lc, last_changed
+        falls back to last_updated; this may not be the actual state-change time
+        with significant_changes_only (default) or a window-start snapshot.
+        Attributes and unknown fields pass through unchanged.
+        Statistics timestamps use Unix milliseconds. Minimal history may omit attributes.
+        No duplicate compact aliases are added. include_schema=True
+        retains core_contract even when fields selects other data keys.
+
+        Output units come from
+        Core recorder metadata and reflect its display-unit conversion; unresolved
+        units include a reason. statistics_metadata preserves Core's native fields.
+
+        All data is fetched from HA before slicing; limit/offset are client-side.
+        With multiple entity_ids, offset must be 0 — use a single entity_id for
+        offset > 0. Use has_more and next_offset from the response to paginate.
+        With source="history", summary=True does not combine with offset > 0.
+        Administrators can optionally enable recorder workload guardrails in
+        Advanced settings. When enabled, oversized entity/time workloads are
+        rejected before the recorder query is issued; narrow the time range or
+        entity list to stay within the budget. Calendar statistics may first
+        read HA's configured timezone so the estimate follows local calendar
+        boundaries.
+
+        EXAMPLES:
+        - ha_get_history(entity_ids="sensor.bedroom_temperature", start_time="24h")
+        - Paginate oldest-first: ha_get_history(entity_ids="sensor.temperature", start_time="7d", limit=100, offset=100, order="asc")
+        - Time per state: ha_get_history(entity_ids="binary_sensor.door", start_time="7d", summary=True)
+        - ha_get_history(source="statistics", entity_ids="sensor.living_room_temperature", start_time="6m", period="month", statistic_types=["mean", "min", "max"])
+        """
+        parsed_fields: list[str] | None = None
+        if fields is not None:
+            try:
+                parsed_fields = parse_string_list_param(
+                    fields, "fields", allow_csv=True
+                )
+            except ValueError as exc:
+                raise_tool_error(create_validation_error(str(exc), parameter="fields"))
+        try:
+            entity_id_list = _parse_entity_ids(entity_ids)
+            _validate_offset(
+                offset,
+                entity_count=len(entity_id_list),
+                summary=summary and source == "history",
+            )
+
+            default_hours = _DEFAULT_START_HOURS_BY_SOURCE[source]
+            now = datetime.now(UTC)
+            start_dt, end_dt = _parse_time_range(
+                start_time, end_time, default_hours, now
+            )
+            query_settings = get_global_settings()
+            statistics_timezone = await _prepare_guardrail_query(
+                self._client,
+                enabled=query_settings.enable_history_query_guardrails,
+                source=source,
+                period=period,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                end_time_was_provided=end_time is not None,
+            )
+            _validate_query_workload(
+                source=source,
+                entity_ids=entity_id_list,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                minimal_response=minimal_response,
+                significant_changes_only=significant_changes_only,
+                period=period,
+                enforce_budget=query_settings.enable_history_query_guardrails,
+                statistics_timezone=statistics_timezone,
+            )
+
+            logger.debug(
+                f"ha_get_history starting: source={source} "
+                f"entities={len(entity_id_list)} "
+                f"window={start_dt.isoformat()}..{end_dt.isoformat()}",
+            )
+            await safe_progress(
+                ctx,
+                progress=0,
+                total=3,
+                message="connecting to Home Assistant WebSocket",
+            )
+
+            await safe_progress(
+                ctx,
+                progress=1,
+                total=3,
+                message=f"querying recorder ({source})",
+            )
+
+            # Route through the shared pooled WebSocket (issue #1813) instead of
+            # a dedicated connect/auth handshake per call. Statistics also fetches
+            # native recorder metadata through the same pooled client.
+            if source == "statistics":
+                inner = await _fetch_statistics(
+                    self._client,
+                    entity_id_list,
+                    start_dt,
+                    end_dt,
+                    period,
+                    statistic_types,
+                    limit,
+                    offset,
+                    core_options=core_options,
+                )
+            else:
+                inner = await _fetch_history(
+                    self._client,
+                    entity_id_list,
+                    start_dt,
+                    end_dt,
+                    minimal_response,
+                    significant_changes_only,
+                    limit,
+                    offset,
+                    _DEFAULT_HISTORY_LIMIT,
+                    _MAX_HISTORY_LIMIT,
+                    order=order,
+                    core_options=core_options,
+                    summary_until=min(end_dt, now) if summary else None,
+                )
+            if include_schema:
+                command = (
+                    "recorder/statistics_during_period"
+                    if source == "statistics"
+                    else "history/history_during_period"
+                )
+                await include_core_contract(self._client, inner, command)
+            await safe_progress(
+                ctx,
+                progress=3,
+                total=3,
+                message="recorder query complete",
+            )
+            # Wrap first so the outer {"data": ..., "metadata": ...} shape
+            # is always present; then project the inner data dict in-place
+            # when caller requested field projection.
+            _r = await add_timezone_metadata(
+                self._client, inner, convert_timestamps=False
+            )
+            _r = format_history_response(_r)
+            _r["data"] = project_fields(
+                _r["data"],
+                parsed_fields,
+                extra_always_keep=frozenset({"core_contract"})
+                if include_schema
+                else None,
+            )
+            if warnings := _r["data"].pop("warnings", None):
+                _r.setdefault("warnings", []).extend(warnings)
+            return _r
+
+        except ToolError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            if source == "statistics":
+                suggestions = [
+                    "Check Home Assistant connection",
+                    "Verify entities have state_class attribute",
+                    "Ensure recorder component is enabled with statistics",
+                ]
+            else:
+                suggestions = [
+                    "Check Home Assistant connection",
+                    "Verify entity IDs are correct",
+                    "Ensure recorder component is enabled",
+                ]
+            exception_to_structured_error(e, suggestions=suggestions)
+            return (
+                None  # exception_to_structured_error always raises; explicit for CodeQL
+            )
+
+
+def register_history_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
+    """Register historical data access tools with the MCP server."""
+    register_tool_methods(mcp, HistoryTools(client))
+
+
+def _parse_entity_ids(entity_ids: str | list[str]) -> list[str]:
+    """Parse entity_ids parameter into a list of strings."""
+    if isinstance(entity_ids, str):
+        if entity_ids.startswith("["):
+            # Belt-and-suspenders: JSON_STRING_COERCION on the param already
+            # parses a JSON-array string to a list upstream, so a string reaching
+            # here is normally CSV/single. This branch stays as a fallback.
+            parsed_ids = parse_string_list_param(entity_ids, "entity_ids")
+            if parsed_ids is None:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_MISSING_PARAMETER,
+                        "entity_ids is required",
+                        suggestions=["Provide at least one entity ID"],
+                    )
+                )
+            return parsed_ids
+        elif "," in entity_ids:
+            result = [e.strip() for e in entity_ids.split(",") if e.strip()]
+            if not result:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_MISSING_PARAMETER,
+                        "entity_ids is required",
+                        suggestions=["Provide at least one entity ID"],
+                    )
+                )
+            return result
+        else:
+            return [entity_ids.strip()]
+    if not entity_ids:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_MISSING_PARAMETER,
+                "entity_ids is required",
+                suggestions=["Provide at least one entity ID"],
+            )
+        )
+
+    return entity_ids
+
+
+def _validate_offset(offset: int | None, *, entity_count: int, summary: bool) -> None:
+    """Reject offsets the response could not honour."""
+    if not offset:
+        return
+    # Summary first: dropping to one entity_id alone would still be rejected.
+    if summary:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                "summary=True covers the whole window and does not take an offset",
+                context={"offset": offset},
+                suggestions=[
+                    "Omit offset, or set summary=False to page through state rows."
+                ],
+            )
+        )
+    # build_pagination_metadata applies per entity — limit=100 across
+    # 5 entities returns up to 500 rows with no top-level has_more signal.
+    if entity_count > 1:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                "offset > 0 requires a single entity_id",
+                context={"offset": offset, "entity_count": entity_count},
+                suggestions=[
+                    "Use a single entity_id when offset > 0, or use offset=0 for multi-entity requests."
+                ],
+            )
+        )
+
+
+def _parse_time_range(
+    start_time: str | None,
+    end_time: str | None,
+    default_hours: int,
+    reference_time: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    """Parse start_time and end_time into datetime objects."""
+    reference_time = reference_time or datetime.now(UTC)
+    try:
+        start_dt = parse_relative_time(
+            start_time,
+            default_hours=default_hours,
+            reference_time=reference_time,
+        )
+    except (ValueError, OverflowError) as e:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                str(e),
+                context={"parameter": "start_time"},
+                suggestions=[
+                    "ISO format: '2025-01-25T00:00:00Z'",
+                    _RELATIVE_FORMAT_HINT,
+                ],
+            )
+        )
+
+    if end_time:
+        try:
+            end_dt = parse_relative_time(
+                end_time,
+                default_hours=0,
+                reference_time=reference_time,
+            )
+        except (ValueError, OverflowError) as e:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_INVALID_PARAMETER,
+                    str(e),
+                    context={"parameter": "end_time"},
+                    suggestions=[
+                        "ISO format: '2025-01-26T00:00:00Z'",
+                        _RELATIVE_FORMAT_HINT,
+                    ],
+                )
+            )
+    else:
+        end_dt = reference_time
+
+    return start_dt, end_dt
+
+
+def _validate_time_range(
+    start_dt: datetime,
+    end_dt: datetime,
+    *,
+    end_time_was_provided: bool = True,
+    reject_zero_length: bool = True,
+) -> None:
+    """Reject reversed ranges and, when requested, zero-length ranges."""
+    if end_dt < start_dt or (reject_zero_length and end_dt == start_dt):
+        if not end_time_was_provided and start_dt > end_dt:
+            message = "start_time must not be in the future when end_time is omitted"
+            suggestions = ["Choose a start_time at or before the current time."]
+        else:
+            message = "end_time must be later than start_time"
+            suggestions = ["Choose an end_time later than start_time."]
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                message,
+                context={
+                    "start_time": start_dt.isoformat(),
+                    "end_time": end_dt.isoformat(),
+                },
+                suggestions=suggestions,
+            )
+        )
+
+
+def _validate_calendar_statistics_range(
+    start_dt: datetime, end_dt: datetime, period: str
+) -> None:
+    """Reject boundary years that calendar alignment cannot advance safely."""
+    if start_dt.year <= datetime.min.year or end_dt.year >= datetime.max.year:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"Time range is outside the safe calendar alignment bounds for period='{period}'",
+                context={
+                    "start_time": start_dt.isoformat(),
+                    "end_time": end_dt.isoformat(),
+                    "period": period,
+                },
+                suggestions=[
+                    "Choose start_time and end_time between years 2 and 9998."
+                ],
+            )
+        )
+
+
+def _validate_query_workload(
+    *,
+    source: str,
+    entity_ids: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    minimal_response: bool,
+    significant_changes_only: bool,
+    period: str,
+    enforce_budget: bool,
+    statistics_timezone: tzinfo = UTC,
+) -> None:
+    """Reject recorder requests likely to monopolize Home Assistant resources."""
+    if not enforce_budget:
+        return
+
+    _validate_time_range(start_dt, end_dt)
+    if source == "history":
+        violation = _history_workload_violation(
+            entity_ids,
+            start_dt,
+            end_dt,
+            minimal_response,
+            significant_changes_only,
+        )
+    else:
+        violation = _statistics_workload_violation(
+            entity_ids, start_dt, end_dt, period, statistics_timezone
+        )
+
+    if violation is None:
+        return
+    context, suggestions = violation
+
+    suggestions.append(
+        "An administrator can disable history query guardrails in Advanced settings after evaluating the workload risk."
+    )
+    raise_tool_error(
+        create_error_response(
+            ErrorCode.VALIDATION_INVALID_PARAMETER,
+            "Recorder query exceeds the safe workload budget",
+            context=context,
+            suggestions=suggestions,
+        )
+    )
+
+
+def _history_workload_violation(
+    entity_ids: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    minimal_response: bool,
+    significant_changes_only: bool,
+) -> tuple[dict[str, Any], list[str]] | None:
+    """Return raw-history violation details, or None when within budget."""
+    # Estimated multipliers account for the larger recorder payload when
+    # filtering and attribute minimization are disabled; they are not measured
+    # row counts.
+    detail_weight = 1
+    if not significant_changes_only:
+        detail_weight *= 4
+    if not minimal_response:
+        detail_weight *= 2
+    entity_count = len(entity_ids)
+    estimated_entity_hours = (
+        (end_dt - start_dt).total_seconds() / 3600 * entity_count * detail_weight
+    )
+    if (
+        entity_count <= _MAX_HISTORY_ENTITIES
+        and estimated_entity_hours <= _MAX_HISTORY_ENTITY_HOURS
+    ):
+        return None
+    context = {
+        "entity_count": entity_count,
+        "max_entities": _MAX_HISTORY_ENTITIES,
+        "estimated_entity_hours": round(estimated_entity_hours, 2),
+        "max_entity_hours": _MAX_HISTORY_ENTITY_HOURS,
+        "detail_weight": detail_weight,
+        "minimal_response": minimal_response,
+        "significant_changes_only": significant_changes_only,
+    }
+    suggestions = ["Query fewer entities or use a shorter time range."]
+    if not significant_changes_only:
+        suggestions.append("Set significant_changes_only=true to reduce recorder work.")
+    if not minimal_response:
+        suggestions.append("Set minimal_response=true to omit full state attributes.")
+    suggestions.append(
+        "Use source='statistics' for long ranges when the entities support long-term statistics."
+    )
+    return context, suggestions
+
+
+def _statistics_workload_violation(
+    entity_ids: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    period: str,
+    statistics_timezone: tzinfo,
+) -> tuple[dict[str, Any], list[str]] | None:
+    """Return statistics violation details, or None when within budget."""
+    if period not in _VALID_STATISTICS_PERIODS:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"Cannot safely estimate recorder workload for period: {period}",
+                context={"period": period},
+                suggestions=[
+                    "Use one of: '5minute', 'hour', 'day', 'week', 'month', 'year'."
+                ],
+            )
+        )
+    scan_start, scan_end = _statistics_scan_window(
+        start_dt, end_dt, period, statistics_timezone
+    )
+    scan_granularity_seconds = 300 if period == "5minute" else 3600
+    max_statistics_rows = (
+        _MAX_SHORT_TERM_STATISTICS_ROWS
+        if period == "5minute"
+        else _MAX_LONG_TERM_STATISTICS_ROWS
+    )
+    entity_count = len(entity_ids)
+    estimated_rows = (
+        math.ceil((scan_end - scan_start).total_seconds() / scan_granularity_seconds)
+        * entity_count
+    )
+    if (
+        entity_count <= _MAX_STATISTICS_ENTITIES
+        and estimated_rows <= max_statistics_rows
+    ):
+        return None
+    context = {
+        "entity_count": entity_count,
+        "max_entities": _MAX_STATISTICS_ENTITIES,
+        "estimated_rows": estimated_rows,
+        "max_estimated_rows": max_statistics_rows,
+        "period": period,
+        "scan_granularity_minutes": scan_granularity_seconds // 60,
+        "scan_start_time": scan_start.isoformat(),
+        "scan_end_time": scan_end.isoformat(),
+    }
+    suggestions = ["Query fewer entities or use a shorter time range."]
+    if period == "5minute":
+        suggestions.append("Use period='hour' to scan the long-term statistics table.")
+    return context, suggestions
+
+
+async def _fetch_history(
+    client: Any,
+    entity_id_list: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    minimal_response: bool,
+    significant_changes_only: bool,
+    limit: int | None,
+    offset: int | None,
+    default_limit: int,
+    max_limit: int,
+    order: str = "desc",
+    core_options: dict[str, Any] | None = None,
+    summary_until: datetime | None = None,
+) -> dict[str, Any]:
+    """Execute the history/history_during_period WebSocket call.
+
+    *order* controls state-list ordering: ``"desc"`` (default) returns the
+    newest states first; ``"asc"`` returns the oldest first. With
+    *summary_until*, each entity carries ``summarize_states`` totals up to that
+    time instead of its rows.
+
+    Returns the unwrapped history dict; the caller is responsible for projection
+    and wrapping with ``add_timezone_metadata``.
+    """
+    effective_limit = min(limit, max_limit) if limit is not None else default_limit
+    effective_offset = offset if offset is not None else 0
+
+    command_params = {
+        "start_time": start_dt.isoformat(),
+        "end_time": end_dt.isoformat(),
+        "entity_ids": entity_id_list,
+        "minimal_response": minimal_response,
+        "significant_changes_only": significant_changes_only,
+        "no_attributes": minimal_response,
+    }
+
+    command_params = merge_core_options(command_params, core_options)
+    response = await client.send_websocket_message(
+        {"type": "history/history_during_period", **command_params}
+    )
+
+    if not response.get("success"):
+        _raise_recorder_ws_failure(
+            "history",
+            response.get("error", "Unknown error"),
+            entity_id_list,
+            error_code=response.get("error_code"),
+            suggestions=[
+                "Verify entity IDs exist using ha_search()",
+                "Check that entities are recorded (not excluded from recorder)",
+                "Ensure time range is within recorder retention period (~10 days)",
+            ],
+        )
+
+    result_data = response.get("result", {})
+    if summary_until is not None:
+        # ha_get_history passes min(end_time, the clock it read before this
+        # query). Core answers a future end_time up to its own clock, which can
+        # run past that reading. Like Core's end_time, summary_until is exclusive.
+        until_ts = summary_until.timestamp()
+        result_data = {
+            entity_id: [row for row in rows if row["lu"] < until_ts]
+            for entity_id, rows in result_data.items()
+        }
+    entities_history = []
+    summaries: dict[str, dict[str, Any]] = {}
+    start_ts = start_dt.timestamp()
+    period = {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
+
+    for entity_id in entity_id_list:
+        entity_states = result_data.get(entity_id, [])
+        if summary_until is not None:
+            summary = summaries[entity_id] = summarize_states(
+                entity_states, start_ts, summary_until.timestamp(), effective_limit
+            )
+            entities_history.append(
+                {"entity_id": entity_id, "period": period, "summary": summary}
+            )
+            continue
+        if order == "desc":
+            entity_states = list(reversed(entity_states))
+        paged_states = entity_states[
+            effective_offset : effective_offset + effective_limit
+        ]
+
+        pagination = build_pagination_metadata(
+            total_count=len(entity_states),
+            offset=effective_offset,
+            limit=effective_limit,
+            count=len(paged_states),
+        )
+        entities_history.append(
+            {
+                "entity_id": entity_id,
+                "period": period,
+                "states": paged_states,
+                **pagination,
+            }
+        )
+
+    history_data = {
+        "success": True,
+        "source": "history",
+        "entities": entities_history,
+        "period": period,
+        "query_params": {
+            "minimal_response": minimal_response,
+            "significant_changes_only": significant_changes_only,
+            "limit": effective_limit,
+            "offset": effective_offset,
+            "order": order,
+            "summary": summary_until is not None,
+        },
+    }
+    if summary_until is not None:  # ha_get_history drops an empty list
+        history_data["warnings"] = summary_warnings(result_data, summaries, start_ts)
+
+    return history_data
+
+
+async def _fetch_statistics(
+    client: Any,
+    entity_id_list: list[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    period: str,
+    statistic_types: str | list[str] | None,
+    limit: int | None,
+    offset: int | None,
+    core_options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute the recorder/statistics_during_period WebSocket call.
+
+    Returns the unwrapped statistics dict; the caller is responsible for projection
+    and wrapping with ``add_timezone_metadata``.
+    """
+    effective_limit = limit if limit is not None else _DEFAULT_HISTORY_LIMIT
+    effective_offset = offset if offset is not None else 0
+
+    stat_types_list = _parse_statistic_types(statistic_types)
+
+    command_params: dict[str, Any] = {
+        "start_time": start_dt.isoformat(),
+        "end_time": end_dt.isoformat(),
+        "statistic_ids": entity_id_list,
+        "period": period,
+    }
+    command_params = merge_core_options(
+        {**command_params, "types": stat_types_list}, core_options
+    )
+    if stat_types_list is None:
+        command_params.pop("types")
+
+    response = await client.send_websocket_message(
+        {"type": "recorder/statistics_during_period", **command_params}
+    )
+
+    if not response.get("success"):
+        _raise_recorder_ws_failure(
+            "statistics",
+            response.get("error", "Unknown error"),
+            entity_id_list,
+            error_code=response.get("error_code"),
+            suggestions=[
+                "Verify entities have state_class attribute (measurement, total, total_increasing)",
+                "Use ha_search() to check entity attributes",
+                "Statistics are only available for entities that track numeric values",
+            ],
+        )
+
+    result_data = response.get("result", {})
+    metadata, metadata_failure = await fetch_statistics_metadata(client, entity_id_list)
+    entities_statistics = format_entity_statistics(
+        result_data,
+        entity_id_list,
+        period,
+        effective_offset,
+        effective_limit,
+        metadata,
+        metadata_failure,
+    )
+    resolved_units = await resolve_requested_units(
+        client, entities_statistics, command_params.get("units", {})
+    )
+    reset_warnings = await restore_reset_timestamps(
+        client, result_data, metadata, command_params, resolved_units
+    )
+    all_stat_types = (
+        stat_types_list
+        if stat_types_list is not None
+        else sorted(
+            {
+                key
+                for rows in result_data.values()
+                for row in rows
+                for key in row
+                if key not in {"start", "end"}
+            }
+        )
+    )
+
+    empty_entities: list[str] = [
+        str(e["entity_id"]) for e in entities_statistics if e["count"] == 0
+    ]
+
+    statistics_data: dict[str, Any] = {
+        "success": True,
+        "source": "statistics",
+        "entities": entities_statistics,
+        "period_type": period,
+        "time_range": {
+            "start": start_dt.isoformat(),
+            "end": end_dt.isoformat(),
+        },
+        "statistic_types": all_stat_types,
+        "query_params": {
+            "statistic_types": stat_types_list,
+            "limit": effective_limit,
+            "offset": effective_offset,
+        },
+    }
+
+    warnings = statistics_warnings(entities_statistics) + reset_warnings
+    if empty_entities:
+        warnings += [
+            f"No statistics found for: {', '.join(empty_entities)}. "
+            "These entities may not have state_class attribute or may not have recorded data yet."
+        ]
+
+    if warnings:
+        statistics_data["warnings"] = warnings
+    return statistics_data
