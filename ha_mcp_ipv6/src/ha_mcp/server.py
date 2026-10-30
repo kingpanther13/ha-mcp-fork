@@ -1,0 +1,1116 @@
+"""
+Core Smart MCP Server implementation.
+
+Implements lazy initialization pattern for improved startup time:
+- Settings and FastMCP server are created immediately (fast)
+- Smart tools and device tools are created lazily on first access
+- Tool modules are discovered at startup but imported on first use
+"""
+
+from __future__ import annotations
+
+import logging
+from functools import partial
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
+
+from pydantic import Field
+
+from .config import _PACKAGE_VERSION, get_global_settings
+from .errors import ErrorCode, create_error_response
+from .http_transport import HttpTransportFastMCP as FastMCP
+from .server_instructions import (
+    build_skills_instructions,
+    compose_instructions,
+    search_tool_skills_hint,
+    skill_tool_hidden,
+)
+from .server_lifespan import server_lifespan
+from .server_tool_text import (
+    LITE_DOCSTRING_DESTINATIONS,
+    LITE_DOCSTRINGS,
+    SEARCH_KEYWORDS,
+    SEARCH_TOOL_DESCRIPTION,
+    SKILL_TOOL_NAME,
+    SKILL_USE_BEFORE_KEYWORDS,
+)
+from .tools.helpers import raise_tool_error
+from .tools.tool_hints import read_only_hints
+from .transforms import DEFAULT_PINNED_TOOLS
+from .utils.skill_loader import (
+    BEST_PRACTICES_SKILL_NAME,
+    best_practices_skill,
+    list_skill_files,
+    log_skill_registration_summary,
+    parse_skill_frontmatter,
+)
+
+if TYPE_CHECKING:
+    from .client.rest_client import HomeAssistantClient
+    from .tools.registry import ToolsRegistry
+
+logger = logging.getLogger(__name__)
+
+# Names this tool replaced in #1134. Appended to the catalog description
+# so agents trained on the prior catalog (or pasting old instructions)
+# see the redirect inside the tool itself, not just via BM25 keyword
+# enrichment.
+_OLD_SKILL_TOOL_ALIASES = (
+    "Replaces (and supersedes) the prior tools: ha_list_resources, "
+    "ha_read_resource, and ha_get_skill_home_assistant_best_practices. "
+    "If you were going to call any of those, call this instead."
+)
+
+# Hint shipped at the top of ha_get_skill_guide responses that deliver
+# best-practice skill content directly. Smart clients that fetch the reference
+# files proactively via this tool would otherwise still receive duplicate
+# canonical content from the per-call write-tool attach — this hint tells them
+# to opt out so the same body doesn't ride along again on every subsequent
+# write. Defined here (its only consumer) rather than in util_helpers.
+_SKILL_GUIDE_MANDATORYBPS_HINT = (
+    "You now have this best-practice reference in your context. "
+    "Pass `MandatoryBPS=false` on subsequent write-tool calls in this "
+    "session (ha_config_set_automation / _script / _scene / _helper / "
+    "_dashboard / _yaml) to avoid re-receiving the canonical reference "
+    "files inline."
+)
+
+
+class HomeAssistantSmartMCPServer:
+    """Home Assistant MCP Server with smart tools and fuzzy search.
+
+    Uses lazy initialization to improve startup time:
+    - Client, smart_tools, device_tools are created on first access
+    - Tool modules are discovered at startup but imported when first called
+    """
+
+    def __init__(
+        self,
+        client: HomeAssistantClient | None = None,
+        server_name: str = "ha-mcp",
+        server_version: str = _PACKAGE_VERSION,
+    ):
+        """Initialize the smart MCP server with lazy loading support."""
+        # Load settings first (fast operation)
+        self.settings = get_global_settings()
+
+        # Store provided client or mark for lazy creation
+        self._client: HomeAssistantClient | None = client
+        self._client_provided = client is not None
+
+        # Lazy initialization placeholders
+        self._smart_tools: Any = None
+        self._device_tools: Any = None
+        self._tools_registry: ToolsRegistry | None = None
+        # Populated by _apply_settings_visibility from tool_config.json on startup
+        self._user_pinned_tools: list[str] = []
+        # Tools the user explicitly toggled to "enabled" in the Tools tab.
+        # Used by _apply_tool_search to remove default-pinned tools from
+        # the always_visible set so users can unpin defaults (#966).
+        self._user_enabled_tools: set[str] = set()
+
+        # Get server name/version from settings if no client provided
+        if not self._client_provided:
+            server_name = self.settings.mcp_server_name
+            server_version = self.settings.mcp_server_version
+
+        instructions = self._build_instructions()
+
+        self.mcp = FastMCP(
+            name=server_name,
+            version=server_version,
+            instructions=instructions,
+            lifespan=server_lifespan,
+        )
+
+        # Register all tools and expert prompts
+        self._initialize_server()
+
+    @property
+    def client(self) -> HomeAssistantClient:
+        """Lazily create and return the Home Assistant client."""
+        if self._client is None:
+            from .client.rest_client import HomeAssistantClient
+
+            self._client = HomeAssistantClient()
+            logger.debug("Lazily created HomeAssistantClient")
+        return self._client
+
+    @property
+    def smart_tools(self) -> Any:
+        """Lazily create and return the smart search tools."""
+        if self._smart_tools is None:
+            from .tools.smart_search import create_smart_search_tools
+
+            self._smart_tools = create_smart_search_tools(self.client)
+            logger.debug("Lazily created SmartSearchTools")
+        return self._smart_tools
+
+    @property
+    def device_tools(self) -> Any:
+        """Lazily create and return the device control tools."""
+        if self._device_tools is None:
+            from .tools.device_control import create_device_control_tools
+
+            self._device_tools = create_device_control_tools(self.client)
+            logger.debug("Lazily created DeviceControlTools")
+        return self._device_tools
+
+    @property
+    def tools_registry(self) -> ToolsRegistry:
+        """Lazily create and return the tools registry."""
+        if self._tools_registry is None:
+            from .tools.registry import ToolsRegistry
+
+            self._tools_registry = ToolsRegistry(
+                self, enabled_modules=self.settings.enabled_tool_modules
+            )
+            logger.debug("Lazily created ToolsRegistry")
+        return self._tools_registry
+
+    def _initialize_server(self) -> None:
+        """Initialize all server components."""
+        # Register tools
+        self.tools_registry.register_all_tools()
+
+        # Register bundled skills as MCP resources
+        self._register_skills()
+
+        # Apply user-configured tool visibility (must come before keyword
+        # enrichment / tool search so disabled tools are excluded from
+        # search indexing too).
+        self._apply_settings_visibility()
+
+        # Read Only Mode catalog filter (discussion #1569) — always
+        # installed, consults the live flag per request. Must come
+        # before the search transforms so the BM25 index never indexes
+        # hidden write tools while the mode is on.
+        self._apply_read_only_catalog_filter()
+
+        # Replace heavy tool descriptions with lite variants when
+        # ENABLE_LITE_DOCSTRINGS=true. Must come BEFORE keyword
+        # enrichment so BM25 keywords append to the lite text (instead
+        # of the full description we just discarded).
+        self._apply_lite_docstrings()
+
+        # Append the Claude Desktop approval note to write tools. After
+        # lite docstrings so the note survives the replacement.
+        self._apply_write_tool_note()
+
+        # Enrich tool descriptions with BM25 keyword boosts. Runs
+        # unconditionally so Claude's native deferred-tool search
+        # (claude.ai) benefits even when ENABLE_TOOL_SEARCH is off.
+        # Must come before _apply_tool_search so CategorizedSearchTransform
+        # indexes the enriched descriptions.
+        self._apply_search_keyword_enrichment()
+
+        # Capability-specific metadata supersedes legacy/lite descriptions,
+        # and must reach the catalog before categorized search indexes it.
+        from .transforms import ComponentSearchSchemaTransform
+
+        self.mcp.add_transform(ComponentSearchSchemaTransform(self.client))
+
+        # Apply tool search transform (must come after all tools and
+        # the skill guide tool are registered so it can wrap everything)
+        self._apply_tool_search()
+
+        # Keep the pre-rename tool names callable for clients that still hold
+        # an older catalog. First in the chain, so everything after it sees the
+        # current name it is keyed on.
+        from .mcp_client_context import McpClientDebugLogMiddleware
+        from .tools.renamed_tool_middleware import RenamedToolAliasMiddleware
+
+        self.mcp.add_middleware(RenamedToolAliasMiddleware())
+        # After the alias, so the DEBUG line logs the current tool name.
+        self.mcp.add_middleware(McpClientDebugLogMiddleware())
+
+        # Convert Pydantic type-validation errors to structured ToolErrors so
+        # models get actionable guidance instead of raw Pydantic messages.
+        from .tools.validation_middleware import ValidationErrorMiddleware
+
+        self.mcp.add_middleware(ValidationErrorMiddleware())
+
+        # Replace the opaque "Unknown tool" FastMCP raises when a client calls
+        # ha_search_tools / the ha_call_* proxies while Tool Search is off
+        # (stale client tool-list cache) with an actionable refresh hint.
+        from .tools.tool_search_hint_middleware import ToolSearchHintMiddleware
+
+        self.mcp.add_middleware(ToolSearchHintMiddleware())
+
+        # Only the custom component's conversation-agent LLM API consumes the
+        # private per-tool stamp. Avoid adding it to standalone/add-on catalogs,
+        # or to an embedded server whose LLM API is disabled (#2479).
+        from .config import should_emit_llm_api_metadata
+
+        if should_emit_llm_api_metadata():
+            from .llm_exposure import LlmExposureMiddleware
+
+            # policy_live: whether the gating middleware/queue actually wired
+            # at startup — stamped so the component can distinguish configured
+            # from enforcing on the connection it is using (#1990).
+            self.mcp.add_middleware(
+                LlmExposureMiddleware(
+                    policy_live=lambda: (
+                        getattr(self, "approval_queue", None) is not None
+                    )
+                )
+            )
+
+        # Entity visibility enforce mode, INBOUND half (#2015) — always
+        # installed, consults the live config per request (no-op unless
+        # enforce is on with an active hide dimension). Must precede the
+        # read-only guard and PolicyMiddleware: a call naming a hidden
+        # entity is concealed as not-found BEFORE it can be stored verbatim
+        # in the approval queue (rendered in the settings UI) or answered
+        # with a read-only/approval response that would confirm existence.
+        self._apply_visibility_inbound_middleware()
+
+        # Read Only Mode write blocker (discussion #1569) — always
+        # installed, consults the live flag per call. Before
+        # PolicyMiddleware so a write blocked by Read Only Mode never
+        # queues a pointless approval request.
+        self._apply_read_only_middleware()
+
+        # Strict mandatory best-practices gate (#1779) — always installed,
+        # self-no-ops at call time. Registered immediately AFTER the
+        # read-only middleware so a read-only rejection wins over the
+        # strict-BPS one (a write blocked by read-only mode should not be
+        # asked for an acknowledgment key it could never usefully supply).
+        self._apply_strict_bps_middleware()
+
+        # Wire tool security policies middleware (#966) — opt-in via
+        # ENABLE_TOOL_SECURITY_POLICIES. Must come last so the middleware
+        # wraps the final tool surface (including the search proxies).
+        self._apply_tool_security_policies()
+
+        # Constrained installs can opt into cross-session tool queuing. This
+        # sits after approval gates so a call awaiting approval holds no slot.
+        if self.settings.ha_tool_concurrency:
+            from .ha_request_queue import HomeAssistantRequestQueueMiddleware
+
+            self.mcp.add_middleware(
+                HomeAssistantRequestQueueMiddleware(self.settings.ha_tool_concurrency)
+            )
+
+        # Known-secret-value scrub (#2157) — registered just before the
+        # visibility outbound half so that half stays innermost (its scan
+        # must see truly raw output; a secret value could embed a hidden
+        # entity id). Since the visibility scan only refuses or passes
+        # through — never rewrites — this scrubber still sees the unmodified
+        # tool output on the way back out. Consults the live redact_secrets
+        # flag per call and is a passthrough while the flag is off.
+        from .redaction import RedactSecretsMiddleware
+
+        self.mcp.add_middleware(RedactSecretsMiddleware())
+
+        # Entity visibility enforce mode, OUTBOUND half (#2015) — added LAST
+        # so it is innermost: its result scan sees the raw tool output before
+        # any other middleware transforms it.
+        self._apply_visibility_outbound_middleware()
+
+    def _get_skills_dir(self) -> Path | None:
+        """Return the bundled skills directory if it exists.
+
+        Skills are vendored via a git submodule at resources/skills-vendor/.
+        The actual skill directories live under the skills/ subdirectory
+        within that repo. Delegates to
+        :func:`ha_mcp.utils.skill_loader.get_skills_dir` so the write-tool
+        ``MandatoryBPS`` parameter resolves the same path.
+        """
+        from .utils.skill_loader import get_skills_dir
+
+        return get_skills_dir()
+
+    def _build_instructions(self) -> str:
+        """Compose the server instructions sent in the MCP initialize response."""
+        return compose_instructions(self._build_skills_instructions(), self.settings)
+
+    def _build_skills_instructions(self) -> str | None:
+        """The skills section of the instructions, or None without skills."""
+        return build_skills_instructions(
+            self._get_skills_dir(), self.settings, skill_tool_hidden(self.settings)
+        )
+
+    _parse_skill_frontmatter = staticmethod(parse_skill_frontmatter)
+
+    def _apply_settings_visibility(self) -> None:
+        """Apply persisted tool visibility from ``tool_config.json``.
+
+        Reads the saved enable/disable/pin state and applies it to the
+        FastMCP instance via ``apply_tool_visibility``. HTTP routes for
+        the settings UI are registered separately by entry-point callers
+        (start.py / main_web) so they can be mounted under the secret
+        path; that keeps the routes inert in stdio mode and behind the
+        same auth posture as the MCP endpoint in HTTP mode.
+        """
+        from .settings_ui import (
+            apply_tool_visibility,
+            effective_tool_config,
+            env_pinned_tools,
+        )
+
+        # Surface env-pinned tools at startup so an operator who pinned
+        # something via DISABLED_TOOLS / PINNED_TOOLS can see that
+        # those values are overriding whatever's in tool_config.json.
+        # Silent overlay was the previous behavior — the file would
+        # show "enabled" for a tool, but runtime would treat it as
+        # disabled, and there was no log line to chase.
+        pinned = env_pinned_tools(self.settings)
+        if pinned:
+            logger.info(
+                "Env-pinned tools active (DISABLED_TOOLS / PINNED_TOOLS): %s",
+                ", ".join(f"{name}={state}" for name, state in sorted(pinned.items())),
+            )
+
+        config = effective_tool_config(self.settings)
+        # When tool_config.json is absent (fresh install), `config` is falsy
+        # and we leave self._user_enabled_tools at its __init__ default (empty
+        # set). That yields no defaults filtered in _apply_tool_search, which
+        # is correct: a fresh install gets the full DEFAULT_PINNED_TOOLS set.
+        if config:
+            result = apply_tool_visibility(self.mcp, config, self.settings)
+            if result.pinned_names:
+                self._user_pinned_tools = list(result.pinned_names)
+            # Captured even when empty so _apply_tool_search can subtract
+            # explicit "enabled" entries from DEFAULT_PINNED_TOOLS — this
+            # is how users unpin a default-pinned tool from the UI.
+            self._user_enabled_tools = set(result.enabled_names)
+            logger.info(
+                "Applied persisted tool config (%d entries)",
+                len(config.get("tools", {})),
+            )
+
+    # Tools pinned outside the search transform for individual permission gating.
+    # These are always visible in list_tools() regardless of search transform.
+    _PINNED_TOOLS: ClassVar[list[str]] = list(DEFAULT_PINNED_TOOLS)
+
+    _SEARCH_TOOL_DESCRIPTION = SEARCH_TOOL_DESCRIPTION
+
+    _SEARCH_KEYWORDS: ClassVar[dict[str, str]] = SEARCH_KEYWORDS
+
+    _LITE_DOCSTRINGS: ClassVar[dict[str, str]] = LITE_DOCSTRINGS
+
+    _LITE_DOCSTRING_DESTINATIONS: ClassVar[dict[str, str]] = LITE_DOCSTRING_DESTINATIONS
+
+    # Description overrides that REPLACE the original description for BM25.
+    # Used to narrow overly broad tools so they stop matching generic queries
+    # against ha-mcp's internal BM25 search tool. Only applied when
+    # enable_tool_search=True, because they are tuned specifically for the
+    # categorized search transform and replacing the base description would
+    # unnecessarily trim context for other clients.
+    _SEARCH_DESCRIPTION_OVERRIDES: ClassVar[dict[str, str]] = {}
+
+    def _apply_lite_docstrings(self) -> None:
+        """Swap heavy tool descriptions for shorter variants if enabled.
+
+        Beta feature gated on ``settings.enable_lite_docstrings`` /
+        ``ENABLE_LITE_DOCSTRINGS=true``. Replaces the description on
+        each tool listed in ``_LITE_DOCSTRINGS`` with a shorter variant
+        that defers detail to
+        ``ha_get_skill_guide``. Tools not in the
+        mapping pass through unchanged.
+
+        Emits a startup WARNING when enabled so non-addon users (Docker,
+        uvx, pip) see the trade-off in their logs — the addon UI surfaces
+        the same warning via the toggle description. A second WARNING is
+        emitted if the transform install fails, so users don't silently
+        get full descriptions back after explicitly enabling the toggle.
+
+        Runs before ``_apply_search_keyword_enrichment`` so BM25 keywords
+        append to the lite text instead of the discarded full description.
+        """
+        if not self.settings.enable_lite_docstrings:
+            return
+
+        logger.warning(
+            "ENABLE_LITE_DOCSTRINGS=true: replacing %d tool descriptions "
+            "with shorter variants. This reduces idle catalog token usage "
+            "but may degrade LLM performance — the trimmed descriptions "
+            "rely on the LLM calling ha_get_skill_guide "
+            "(or reading skill:// resources) for detail, which is not "
+            "guaranteed. See docs/beta.md.",
+            len(self._LITE_DOCSTRINGS),
+        )
+
+        try:
+            from .transforms import LiteDocstringsTransform
+        except ImportError:
+            logger.exception(
+                "LiteDocstringsTransform not importable — please file a "
+                "bug. ENABLE_LITE_DOCSTRINGS=true is in effect but full "
+                "tool descriptions will be exposed."
+            )
+            return
+
+        try:
+            self.mcp.add_transform(
+                LiteDocstringsTransform(replacements=self._LITE_DOCSTRINGS)
+            )
+        except Exception:
+            logger.exception("Failed to apply LiteDocstringsTransform")
+            logger.warning(
+                "ENABLE_LITE_DOCSTRINGS=true was set but the transform "
+                "failed to install — full tool descriptions remain in "
+                "effect. Catalog token usage will be unchanged from the "
+                "default."
+            )
+
+    def _apply_write_tool_note(self) -> None:
+        """Append the Claude Desktop manual-approval note to write tools.
+
+        Applied unconditionally: the dropped calls never reach the server
+        (issue #2367), so the tool description is the only channel that
+        reaches the agent before the user clicks approve.
+        """
+        try:
+            from .transforms import WriteToolNoteTransform
+
+            self.mcp.add_transform(WriteToolNoteTransform())
+        except Exception:
+            logger.exception("Failed to apply WriteToolNoteTransform")
+
+    def _apply_search_keyword_enrichment(self) -> None:
+        """Append BM25 keyword boosts to tool descriptions.
+
+        Applied unconditionally so Claude's native deferred-tool search
+        (claude.ai uses BM25 over tool names and descriptions) can find
+        ha-mcp tools for common natural-language queries like "create
+        automation" — the scenario in #940. The original tool docstrings
+        in ``src/ha_mcp/tools/`` are unchanged; keywords are appended at
+        list-tools time via ``SearchKeywordsTransform``.
+
+        Description overrides (``_SEARCH_DESCRIPTION_OVERRIDES``) are only
+        applied when ``enable_tool_search`` is also set, because they
+        REPLACE the original description and are tuned specifically for
+        ha-mcp's internal BM25 search tool.
+
+        Runs before ``_apply_tool_search`` so downstream transforms
+        index the enriched descriptions.
+        """
+        try:
+            from .transforms import SearchKeywordsTransform
+        except ImportError:
+            logger.warning(
+                "SearchKeywordsTransform not available; skipping description "
+                "enrichment (tool discoverability on claude.ai may be degraded)."
+            )
+            return
+
+        overrides = (
+            self._SEARCH_DESCRIPTION_OVERRIDES
+            if self.settings.enable_tool_search
+            else None
+        )
+        try:
+            self.mcp.add_transform(
+                SearchKeywordsTransform(
+                    keywords=self._SEARCH_KEYWORDS,
+                    overrides=overrides,
+                )
+            )
+            logger.info(
+                "Search keyword enrichment applied (%d boosts%s)",
+                len(self._SEARCH_KEYWORDS),
+                f", {len(overrides)} overrides" if overrides else "",
+            )
+        except Exception:
+            logger.exception("Failed to apply SearchKeywordsTransform")
+
+    def _apply_tool_search(self) -> None:
+        """Apply the CategorizedSearchTransform if enabled.
+
+        Replaces the full tool catalog with a unified BM25 search tool and
+        three categorized call proxies (read/write/delete). Pinned tools
+        remain directly visible in list_tools() for individual permission
+        gating. The ``ha_get_skill_guide`` tool is pinned via
+        ``DEFAULT_PINNED_TOOLS`` (transforms/categorized_search.py) so the
+        bundled skill trigger-conditions stay in the catalog — no explicit
+        ``pinned.append(...)`` for it here.
+
+        Note: ``_apply_search_keyword_enrichment`` already ran before this
+        method and installed ``SearchKeywordsTransform`` — the enriched
+        catalog is what the categorized transform indexes.
+        """
+        if not self.settings.enable_tool_search:
+            return
+
+        try:
+            from .transforms import CategorizedSearchTransform
+        except ImportError:
+            logger.error(
+                "CategorizedSearchTransform not available but ENABLE_TOOL_SEARCH=true — "
+                "full tool catalog will be exposed. Install fastmcp>=3.1 to fix."
+            )
+            return
+
+        # Build the always_visible list: defaults (minus tools the user
+        # explicitly toggled to "enabled" in the Tools tab) + user pins.
+        # The skill guide tool is part of DEFAULT_PINNED_TOOLS, and in
+        # strict-BPS mode also in BPS_MANDATORY_TOOLS (settings UI strips
+        # it from any disable list before applying), so the catalog
+        # presence is protected from the search transform and, in strict
+        # mode, from user disables.
+        # Filtering by _user_enabled_tools is how a user unpins a
+        # default-pinned tool — flipping its UI state to "enabled" (not
+        # "pinned") removes it from the always_visible set so it goes
+        # behind the search proxy like any other tool.
+        pinned = [
+            name for name in self._PINNED_TOOLS if name not in self._user_enabled_tools
+        ]
+        pinned.extend(self._user_pinned_tools)
+
+        # ``ha_manage_custom_tool`` was previously pinned here whenever
+        # code mode was enabled, so users could gate it via per-tool MCP
+        # permission prompts even when toolsearch hid the catalog. The
+        # tool security policies middleware shipped in #966 now gates it
+        # at call time regardless of catalog visibility, so it no longer
+        # needs an explicit pin just to be reachable for gating.
+
+        # The client may not support resources or server instructions — add
+        # skills hint to the search tool description (the one place the LLM
+        # is guaranteed to see).
+        description = (
+            self._SEARCH_TOOL_DESCRIPTION
+            + "\n\n"
+            + search_tool_skills_hint(skill_tool_hidden(self.settings))
+        )
+
+        try:
+            self.mcp.add_transform(
+                CategorizedSearchTransform(
+                    max_results=self.settings.tool_search_max_results,
+                    always_visible=pinned,
+                    search_tool_description=description,
+                    # Pinned tools must be excluded from the proxy's
+                    # category sets when code mode is on; otherwise sandbox
+                    # code can launder a recursive ``ha_manage_custom_tool``
+                    # invocation through ``ha_call_write_tool``. See the
+                    # docstring on ``_rebuild_category_cache``.
+                    enable_code_mode=self.settings.enable_code_mode,
+                )
+            )
+            logger.info(
+                "Tool search transform applied (%d pinned tools, max_results=%d, code_mode=%s)",
+                len(pinned),
+                self.settings.tool_search_max_results,
+                self.settings.enable_code_mode,
+            )
+        except Exception:
+            logger.exception("Failed to apply tool search transform")
+
+    def _apply_tool_security_policies(self) -> None:
+        """Register the tool security policies middleware (#966).
+
+        Opt-in via ``ENABLE_TOOL_SECURITY_POLICIES``. When enabled, every
+        tool call is funneled through :class:`PolicyMiddleware`, which
+        consults the persisted :class:`Policy` and gates calls matching
+        a rule until the user approves or denies via the settings UI's
+        ``/api/policy/approve`` / ``/api/policy/deny`` endpoints.
+
+        The middleware is exposed alongside an :class:`ApprovalQueue`
+        attached to ``self.approval_queue`` so the settings-UI handler
+        layer (``build_settings_handlers``) can discover the same queue
+        via ``getattr(server, "approval_queue", None)``.
+
+        Policies are reloaded from disk on every gated call (a small
+        JSON file, typically well under a kB) so live updates via the
+        UI take effect immediately without restart and without a stale
+        in-memory cache.
+        """
+        # One-time ANY-match schema migration (PR #1993) runs even when
+        # policies are disabled, so the file already matches the editor's
+        # ANY semantics whenever the user turns the feature on. Never
+        # blocks startup.
+        try:
+            from .policy.persistence import migrate_policy_any_semantics
+            from .utils.data_paths import get_data_dir as _get_data_dir
+
+            migrate_policy_any_semantics(_get_data_dir())
+        except Exception:
+            logger.error(
+                "tool_policy.json ANY-match migration failed; continuing. The "
+                "file may still carry pre-ANY semantics: multi-condition rules "
+                "will gate only when ALL conditions match, while the policy "
+                "editor presents them as ANY-match. Fix the file (or re-save "
+                "the policy in the settings UI) and restart.",
+                exc_info=True,
+            )
+
+        if not self.settings.enable_tool_security_policies:
+            return
+
+        try:
+            from .policy.approval_queue import ApprovalQueue
+            from .policy.decisions import ApprovalResponseListener
+            from .policy.middleware import PolicyMiddleware
+            from .policy.model import Policy
+            from .policy.persistence import load_policy
+            from .policy.server_channels import (
+                approval_ws_client,
+                emit_approval_result_as,
+            )
+            from .utils.data_paths import get_data_dir
+        except ImportError:
+            logger.exception(
+                "Tool Security Policies enabled (ENABLE_TOOL_SECURITY_POLICIES=true) "
+                "but the policy package failed to import. TOOL SECURITY GATING IS NOT ACTIVE; "
+                "all tool calls pass through ungated. Verify ha_mcp.policy is importable."
+            )
+            return
+
+        self.approval_queue = ApprovalQueue()
+        data_dir = get_data_dir()
+
+        def _policy_provider() -> Policy:
+            # Re-read from disk each call so UI edits via PUT
+            # /api/policy/config take effect immediately. The file is
+            # tiny; the cost is negligible relative to the network/HA
+            # roundtrip of a gated tool call.
+            return load_policy(data_dir)
+
+        # Reads the same policy file as the middleware, so the toggle that
+        # opens this channel is the one the user flips in the settings UI,
+        # with no restart in between.
+        self.approval_response_listener = ApprovalResponseListener(
+            policy_provider=_policy_provider,
+            queue=self.approval_queue,
+            data_dir=data_dir,
+            get_ws_client=partial(approval_ws_client, self),
+            emit_result=partial(emit_approval_result_as, self),
+        )
+
+        try:
+            self.mcp.add_middleware(
+                PolicyMiddleware(
+                    policy_provider=_policy_provider,
+                    queue=self.approval_queue,
+                    get_client=lambda: self.client,
+                    ensure_decisions_listener=(
+                        self.approval_response_listener.ensure_subscribed
+                    ),
+                )
+            )
+            logger.info(
+                "Tool security policies middleware registered (data_dir=%s)",
+                data_dir,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to register PolicyMiddleware (data_dir=%s, "
+                "ENABLE_TOOL_SECURITY_POLICIES=true). TOOL SECURITY GATING IS NOT ACTIVE; "
+                "all tool calls pass through ungated.",
+                data_dir,
+            )
+
+    def _apply_read_only_catalog_filter(self) -> None:
+        """Install the Read Only Mode catalog filter (discussion #1569).
+
+        Always installed — :class:`ReadOnlyToolsTransform` consults the
+        live ``read_only_mode`` flag per list request, so it is a no-op
+        while the mode is off and standalone-mode toggles take effect
+        without a restart. Hides write-capable tools (``readOnlyHint``
+        not True) except the exempt mixed read/write tools, whose write
+        actions ``ReadOnlyMiddleware`` blocks at call time instead.
+        """
+        from .read_only import ReadOnlyToolsTransform
+
+        self.mcp.add_transform(ReadOnlyToolsTransform())
+        if self.settings.read_only_mode:
+            logger.info(
+                "Read Only Mode is ON — write-capable tools are hidden "
+                "and write operations are blocked"
+            )
+
+    def _apply_read_only_middleware(self) -> None:
+        """Install the Read Only Mode write blocker (discussion #1569).
+
+        Always installed — consults the live flag per call, so there is
+        no per-call work beyond the flag check while the mode is off.
+        The annotation lookup uses the UNFILTERED tool list (private
+        FastMCP API, same justified usage as the settings UI and policy
+        handlers) so hidden tools still resolve to a clear structured
+        error instead of an opaque unknown-tool failure.
+        """
+        from .read_only import ReadOnlyMiddleware
+
+        async def _list_all_tools() -> Any:
+            return await self.mcp.local_provider._list_tools()
+
+        self.mcp.add_middleware(ReadOnlyMiddleware(list_tools=_list_all_tools))
+
+    def _apply_strict_bps_middleware(self) -> None:
+        """Install the strict best-practices gate (#1779).
+
+        Always installed — the middleware self-no-ops at call time
+        (consults ``strict_bps_effective()`` per call), so a toggle applies
+        live in standalone-HTTP/embedded mode like ``read_only_mode``
+        (other modes pick it up on restart).
+
+        Also emits a startup WARNING when the child flag is on while its
+        parent (``enable_mandatory_bps``) is off: strict mode is inert in
+        that configuration, and env-var users (Docker, uvx, pip) would
+        otherwise have no signal that their strict toggle does nothing.
+        Precedent: the lite-docstrings warning.
+        """
+        from .strict_bps import StrictBpsMiddleware
+
+        if self.settings.enable_strict_mandatory_bps and (
+            not self.settings.enable_mandatory_bps
+        ):
+            logger.warning(
+                "ENABLE_STRICT_MANDATORY_BPS is on but ENABLE_MANDATORY_BPS is "
+                "off — strict best-practices mode is INERT. The strict gate only "
+                "engages when the mandatory-BPS master switch is also on. Enable "
+                "ENABLE_MANDATORY_BPS to activate the acknowledgment gate."
+            )
+
+        # Unfiltered catalog lookup so the gate can pass through calls to
+        # gate-map tools that never registered (e.g. ha_config_set_yaml with
+        # yaml editing off) — those get FastMCP's unknown-tool error instead
+        # of a key-fetch misdirection (#1820 review).
+        async def _list_all_tools() -> Any:
+            return await self.mcp.local_provider._list_tools()
+
+        self.mcp.add_middleware(StrictBpsMiddleware(list_tools=_list_all_tools))
+
+    def _apply_visibility_inbound_middleware(self) -> None:
+        """Install the enforce-mode INBOUND (conceal/refuse) middleware (#2015).
+
+        Always installed — self-no-ops at call time (loads the visibility
+        config per request and passes through unless enforce is on with an
+        active hide dimension), so a settings-UI toggle applies live in
+        standalone-HTTP/embedded mode like ``read_only_mode``. It needs the HA
+        client to fetch the registry/states for the hidden-set computation;
+        inject the lazy client accessor so no eager connection is made at
+        startup. Ordering (before read-only/policy) is owned by the caller.
+        """
+        from .visibility.enforcement import VisibilityInboundEnforcement
+
+        self.mcp.add_middleware(
+            VisibilityInboundEnforcement(get_client=lambda: self.client)
+        )
+
+    def _apply_visibility_outbound_middleware(self) -> None:
+        """Install the enforce-mode OUTBOUND (result-scan) middleware (#2015).
+
+        Same always-installed/self-no-op contract as the inbound half; the
+        caller registers it last so it is innermost and scans raw tool output.
+        """
+        from .visibility.enforcement import VisibilityOutboundEnforcement
+
+        self.mcp.add_middleware(
+            VisibilityOutboundEnforcement(get_client=lambda: self.client)
+        )
+
+    _SKILL_USE_BEFORE_KEYWORDS: ClassVar[str] = SKILL_USE_BEFORE_KEYWORDS
+
+    def _register_skills(self) -> None:
+        """Register bundled skills as MCP resources and the skill tool.
+
+        Two paths to the same content:
+
+        - **Resources**: ``SkillsDirectoryProvider`` serves every skill
+          file at ``skill://<skill>/<path>``. Resource-capable clients
+          (Claude Code, Cursor, anything that supports the MCP
+          ``resources/list`` / ``resources/read`` methods) discover and
+          read skills natively. Best-effort: skipped if the provider
+          can't be loaded or the skills dir is missing.
+        - **Tool**: ``ha_get_skill_guide`` serves the best-practices
+          skill to tool-only clients (claude.ai, etc. that don't read
+          server instructions). No arguments returns SKILL.md; ``file``
+          returns one reference file. **Registration is always
+          attempted** so an absent tool isn't a silent failure mode:
+          even if the skills submodule is missing, the tool reports that
+          at call time with an explanatory error. A genuine registration
+          failure (FastMCP API regression, etc.) is caught at the call
+          site, logged with full traceback, and flips
+          ``status["tool"] = "failed"`` so the summary log warns
+          rather than aborting server startup.
+        """
+        status: dict[str, str | int] = {
+            "provider": "skipped",
+            "tool": "skipped",
+            "guidance_count": 0,
+        }
+
+        skills_dir = self._get_skills_dir()
+
+        # Phase 1+2: Best-effort MCP resource registration. The skill
+        # tool stands on its own (just reads disk in the handler), so
+        # provider failure is logged but doesn't block tool registration.
+        if skills_dir is None:
+            logger.warning(
+                "Skills directory not found at %s; skill resources unavailable. "
+                "%s will still be registered; its calls report an error.",
+                Path(__file__).parent / "resources" / "skills-vendor" / "skills",
+                SKILL_TOOL_NAME,
+            )
+        else:
+            try:
+                from ha_mcp._vendor.fastmcp.server.providers.skills import (
+                    SkillsDirectoryProvider,
+                )
+            except ImportError:
+                logger.warning(
+                    "SkillsDirectoryProvider not available in fastmcp; "
+                    "skill resources unavailable. %s will still be registered.",
+                    SKILL_TOOL_NAME,
+                )
+            else:
+                try:
+                    self.mcp.add_provider(
+                        SkillsDirectoryProvider(
+                            roots=[skills_dir], supporting_files="resources"
+                        )
+                    )
+                    logger.info("Registered bundled skills as MCP resources")
+                    status["provider"] = "ok"
+                except Exception:
+                    logger.exception("Failed to register skills as resources")
+                    status["provider"] = "failed"
+
+        # Phase 3: Register the skill tool unconditionally. Tool
+        # absence would be a silent failure for tool-only clients; an
+        # always-registered tool that reports "no skills available" is
+        # the loud-failure alternative. Wrap the registration call so a
+        # FastMCP-side regression (renamed mcp.tool kwargs, etc.) emits a
+        # WARNING-level summary instead of aborting server startup.
+        try:
+            guidance_count = self._register_skill_guide_tool(skills_dir)
+            status["tool"] = "ok"
+            status["guidance_count"] = guidance_count
+        except Exception:
+            logger.exception(
+                "Failed to register %s — tool-only clients will not see skill guidance",
+                SKILL_TOOL_NAME,
+            )
+            status["tool"] = "failed"
+
+        log_skill_registration_summary(status)
+
+    def _register_skill_guide_tool(self, skills_dir: Path | None) -> int:
+        """Register the ``ha_get_skill_guide`` tool unconditionally.
+
+        Returns 1 when the bundled best-practices skill's frontmatter
+        parsed, else 0 (used by ``_register_skills`` for the summary log).
+        The tool is **always** registered: a missing tool would be a
+        silent failure for tool-only clients. When the skill is not
+        reachable (missing submodule, unparseable frontmatter), the
+        description says so and every call raises an explanatory error.
+
+        The description embeds the skill's frontmatter ``description`` so
+        clients that don't read server instructions (claude.ai) still see
+        its trigger conditions in the catalog.
+        """
+        skill = best_practices_skill(skills_dir)
+
+        if skill:
+            # Keeps the "CALL THIS FIRST" framing so claude.ai's
+            # catalog-level retrieval surfaces the tool for relevant tasks.
+            (name, _dir, frontmatter) = skill
+            tool_description = (
+                "Get the bundled Home Assistant best-practices skill. "
+                "CALL THIS FIRST before performing matching actions.\n\n"
+                "Call with no arguments to read SKILL.md: the workflow, the "
+                "common mistakes, and a table that says which reference "
+                "file to read for each task. Then read only the files that "
+                "table points to.\n\n"
+                f"### {name} (skill://{name}/SKILL.md)\n"
+                f"{frontmatter['description'].strip()}"
+                f"\n\n{self._SKILL_USE_BEFORE_KEYWORDS}\n\n" + _OLD_SKILL_TOOL_ALIASES
+            )
+        else:
+            # Even in degraded mode, append the action-phrased keyword
+            # block so BM25 retrieval still ranks this tool for the
+            # workflow positions the description covers. The tool is
+            # mandatory-pinned, so it stays in the catalog regardless.
+            tool_description = (
+                "Get the bundled Home Assistant best-practices skill. "
+                "The skill is currently not available on this server: the "
+                "skills directory is missing or its SKILL.md failed to "
+                "parse. Calls return an error; ask the operator to verify "
+                "the skills-vendor submodule is initialized."
+                f"\n\n{self._SKILL_USE_BEFORE_KEYWORDS}\n\n" + _OLD_SKILL_TOOL_ALIASES
+            )
+
+        async def ha_get_skill_guide(
+            file: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Path of the file to read, exactly as SKILL.md links "
+                        "it (e.g. 'references/triggers-and-conditions.md'). "
+                        "Omit to read SKILL.md."
+                    ),
+                ),
+            ] = "SKILL.md",
+        ) -> dict[str, Any]:
+            # Re-read the skills dir live on every call (#1820 review):
+            # the strict-BPS gate also reads it live, so a registration-time
+            # capture deadlocks the one recovery path. Vendor absent at
+            # boot (gate fails open), operator runs `git submodule update
+            # --init` in place, the gate flips ON, but a captured None here
+            # would keep the acknowledgment key unobtainable until restart.
+            return self._handle_skill_guide_call(self._get_skills_dir(), file)
+
+        self.mcp.tool(
+            name=SKILL_TOOL_NAME,
+            description=tool_description,
+            annotations=read_only_hints(
+                "Get Home Assistant Best Practices Skill Guide", open_world=False
+            ),
+            tags={"System"},
+        )(ha_get_skill_guide)
+        logger.info(
+            "Registered %s (%d bundled skill(s))",
+            SKILL_TOOL_NAME,
+            1 if skill else 0,
+        )
+        return 1 if skill else 0
+
+    def _handle_skill_guide_call(
+        self, skills_dir: Path | None, file: str = "SKILL.md"
+    ) -> dict[str, Any]:
+        """Serve one file of the bundled best-practices skill.
+
+        Split out from the registered async closure so the same logic is
+        unit-testable without round-tripping through the MCP tool layer.
+        Synchronous because every operation is bounded local disk I/O.
+
+        The default is SKILL.md, whose table links every reference file
+        by the path this tool accepts. ``file`` is matched exactly against
+        the regular files that exist in the skill; no path is built from
+        it, so traversal, absolute paths and symlinks are refused by the
+        same lookup. Failures raise ``ToolError`` (via
+        ``raise_tool_error``) per .gemini/styleguide.md.
+        """
+        skill = BEST_PRACTICES_SKILL_NAME
+        entry = best_practices_skill(skills_dir)
+        if entry is None:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    message=(
+                        f"The {skill!r} skill is not available on this "
+                        "server. The skills-vendor submodule may be missing "
+                        "or uninitialized, or its SKILL.md failed to parse."
+                    ),
+                    context={"file": file},
+                    suggestions=[
+                        "Ask the server operator to initialize the "
+                        "skills-vendor submodule "
+                        "(`git submodule update --init`).",
+                    ],
+                )
+            )
+
+        skill_dir = entry[1]
+        requested = file or "SKILL.md"
+        allowed = list_skill_files(skill_dir)
+        if requested not in allowed:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    message=f"Unknown file {requested!r} in skill {skill!r}.",
+                    context={"file": requested},
+                    suggestions=[
+                        "Pass one of these paths exactly as written: "
+                        + ", ".join(allowed),
+                        f"Call {SKILL_TOOL_NAME}() with no arguments to read "
+                        "SKILL.md, whose table says which file to read.",
+                    ],
+                )
+            )
+        content = self._read_skill_file_content(skill, requested, skill_dir / requested)
+        return self._build_skill_guide_response(skill, requested, content)
+
+    def _read_skill_file_content(self, skill: str, file: str, target: Path) -> str:
+        """Read one skill file, raising a structured error on I/O failure."""
+        try:
+            return target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.INTERNAL_ERROR,
+                    message=f"Could not read file {file!r} in skill {skill!r}: {e}",
+                    context={"skill": skill, "file": file},
+                    suggestions=[
+                        "Check filesystem permissions on the skills-vendor directory.",
+                        "Check the server logs for the underlying OSError.",
+                    ],
+                )
+            )
+
+    def _build_skill_guide_response(
+        self, skill: str, file: str, content: str
+    ) -> dict[str, Any]:
+        """Build the response for one skill file.
+
+        In strict mode the acknowledgment key goes at the top of every
+        file this tool serves (#1779), so a model obtains it whether it
+        reads SKILL.md or the reference file a block error points to.
+        The skill:// resources read raw files and never carry it;
+        resource-preferring clients recover through the block error's
+        suggestion, which points back at this tool.
+
+        The ``MandatoryBPS=false`` hint rides only on reference files.
+        SKILL.md is what every first call returns, and a model that took
+        the hint there would drop the reference files the write tools
+        attach before it had read any of them.
+        """
+        from .strict_bps import strict_bps_ack_line, strict_bps_effective
+
+        if strict_bps_effective():
+            content = f"{strict_bps_ack_line()}\n\n{content}"
+
+        response: dict[str, Any] = {}
+        if file != "SKILL.md":
+            response["skill_content_hint"] = _SKILL_GUIDE_MANDATORYBPS_HINT
+        response.update(
+            {
+                "success": True,
+                "file": file,
+                "uri": f"skill://{skill}/{file}",
+                "content": content,
+            }
+        )
+        if file == "SKILL.md":
+            response["how_to_use"] = (
+                f"Call {SKILL_TOOL_NAME}(file='<path>') for the reference "
+                "files the table above points to for your task, using the "
+                "path exactly as linked (e.g. 'references/triggers-and-"
+                "conditions.md'). Read only those; do not load every file."
+            )
+        return response
+
+    async def start(self) -> None:
+        """Start the Smart MCP server with async compatibility."""
+        logger.info(
+            f"🚀 Starting Smart {self.settings.mcp_server_name} v{self.settings.mcp_server_version}"
+        )
+
+        # Test connection on startup
+        try:
+            success, error = await self.client.test_connection()
+            if success:
+                config = await self.client.get_config()
+                logger.info(
+                    f"✅ Successfully connected to Home Assistant: {config.get('location_name', 'Unknown')}"
+                )
+            else:
+                logger.warning(f"⚠️ Failed to connect to Home Assistant: {error}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ Error testing connection: {e}")
+
+        # Log successful server initialization
+        logger.info("🔧 Home Assistant MCP tools loaded")
+
+        # Run the MCP server with async compatibility
+        await self.mcp.run_async()
+
+    async def close(self) -> None:
+        """Close the MCP server and cleanup resources."""
+        # Only close client if it was actually created
+        if self._client is not None and hasattr(self._client, "close"):
+            await self._client.close()
+        logger.info("🔧 Home Assistant Smart MCP Server closed")

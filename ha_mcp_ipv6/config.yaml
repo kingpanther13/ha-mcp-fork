@@ -1,0 +1,98 @@
+name: "HA MCP (IPv6 branch test)"
+description: "Development channel - AI assistant integration via MCP (unstable)"
+version: "9.1.0-ipv6.1"
+slug: "ha_mcp_ipv6"
+url: "https://github.com/homeassistant-ai/ha-mcp"
+stage: experimental
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: manual
+ingress: true
+ingress_port: 9583
+ingress_stream: true
+hassio_api: true
+# `manager` (not `default`) is required so the Supervisor token grants access
+# to /addons/<slug>/logs and /<service>/logs (system service logs). Verified
+# via live test — `default` returns 403 for both. See #1116.
+hassio_role: manager
+# Announces this server to Home Assistant's Model Context Protocol
+# integration (Core 2026.10+); src/ha_mcp/app_discovery.py posts the URL to
+# /discovery when the server starts.
+discovery:
+  - mcp
+homeassistant_api: true
+host_network: true
+# options and schema are generated from ha_mcp.config_settings by
+# scripts/generate_app_options.py. Do not edit them here.
+options:
+  verify_ssl: true
+  ha_tool_concurrency: 0
+  custom_instructions: ""
+  enable_beta_features: true
+  enable_tool_search: false
+  tool_search_max_results: 5
+  enable_tool_security_policies: false
+  enable_security_policy_tool: false
+  read_only_mode: false
+  redact_secrets: false
+  redact_app_option_keys: ""
+  ipv6_allowed_networks: ""
+  enable_mandatory_bps: true
+  enable_strict_mandatory_bps: true
+  enable_yaml_config_editing: false
+  enable_yaml_edit_confirm: true
+  enable_yaml_packages_automation: false
+  enable_yaml_packages_script: false
+  enable_yaml_packages_scene: false
+  enable_lite_docstrings: false
+  enable_filesystem_tools: false
+  enable_code_mode: false
+  enable_dashboard_screenshot: false
+  enable_auto_backup: true
+  auto_backup_throttle_minutes: 0
+  auto_backup_retain_per_entity: 100
+  enable_snapshot_actions: true
+  backup_read_only: false
+  enable_snapshot_delete: false
+  snapshot_delete_min_age_days: 7
+  disabled_tools: ""
+  pinned_tools: ""
+schema:
+  verify_ssl: bool?
+  ha_tool_concurrency: int(0,32)?
+  custom_instructions: str?
+  enable_beta_features: bool?
+  enable_tool_search: bool?
+  tool_search_max_results: int(2,10)?
+  enable_tool_security_policies: bool?
+  enable_security_policy_tool: bool?
+  read_only_mode: bool?
+  redact_secrets: bool?
+  redact_app_option_keys: str?
+  ipv6_allowed_networks: str?
+  enable_mandatory_bps: bool?
+  enable_strict_mandatory_bps: bool?
+  enable_yaml_config_editing: bool?
+  enable_yaml_edit_confirm: bool?
+  enable_yaml_packages_automation: bool?
+  enable_yaml_packages_script: bool?
+  enable_yaml_packages_scene: bool?
+  enable_lite_docstrings: bool?
+  enable_filesystem_tools: bool?
+  enable_code_mode: bool?
+  enable_dashboard_screenshot: bool?
+  enable_auto_backup: bool?
+  auto_backup_throttle_minutes: int(0,1440)?
+  auto_backup_retain_per_entity: int(1,10000)?
+  enable_snapshot_actions: bool?
+  backup_read_only: bool?
+  enable_snapshot_delete: bool?
+  snapshot_delete_min_age_days: int(0,365)?
+  disabled_tools: str?
+  pinned_tools: str?
+  secret_path: str?
+ports:
+  9583/tcp: 9583
