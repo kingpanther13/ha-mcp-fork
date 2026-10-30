@@ -18,16 +18,17 @@ from collections.abc import Callable
 ALL_INTERFACES_V4 = "0.0.0.0"
 
 
-def wildcard_listen_sockets(host: str, port: int) -> list[socket.socket] | None:
+def wildcard_listen_sockets(host: str, port: int) -> list[_ListenSocket] | None:
     """Bind ``port`` on every IPv4 and IPv6 address when ``host`` is ``0.0.0.0``.
 
     Returns ``None`` for any other host, which uvicorn then binds itself. Like
     asyncio's ``create_server(host=None)``, a family the machine has disabled is
     skipped; any other bind error (such as the port being in use) is raised.
+    Raises ``OSError`` too when no family can be bound.
     """
     if host != ALL_INTERFACES_V4:
         return None
-    sockets: list[socket.socket] = []
+    sockets: list[_ListenSocket] = []
     try:
         for family, kind, proto, _name, address in socket.getaddrinfo(
             None, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
@@ -44,19 +45,20 @@ def wildcard_listen_sockets(host: str, port: int) -> list[socket.socket] | None:
                 sock.bind(address)
             except OSError as err:
                 if family == socket.AF_INET6 and err.errno == errno.EADDRNOTAVAIL:
-                    sockets.pop().close()
+                    sockets.remove(sock)
+                    sock.close()
                     continue
                 raise
     except BaseException:
-        for sock in sockets:
-            sock.close()
+        for opened in sockets:
+            opened.close()
         raise
     if not sockets:
         raise OSError(f"No address family could bind port {port}")
     return sockets
 
 
-def announce_when_listening(sockets: list[socket.socket], host: str, port: int) -> None:
+def announce_when_listening(sockets: list[_ListenSocket], host: str, port: int) -> None:
     """Log uvicorn's "Uvicorn running on ..." line once ``sockets`` are serving.
 
     uvicorn skips that line when handed pre-bound sockets, assuming a process
@@ -70,15 +72,11 @@ def announce_when_listening(sockets: list[socket.socket], host: str, port: int) 
         pending.discard(id(sock))
         if not pending:
             logging.getLogger("uvicorn.error").info(
-                "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)",
-                "http",
-                host,
-                port,
+                "Uvicorn running on http://%s:%d (Press CTRL+C to quit)", host, port
             )
 
     for sock in sockets:
-        if isinstance(sock, _ListenSocket):
-            sock.on_listen = listened
+        sock.on_listen = listened
 
 
 class _ListenSocket(socket.socket):
