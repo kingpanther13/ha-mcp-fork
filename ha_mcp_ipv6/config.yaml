@@ -1,6 +1,6 @@
 name: "HA MCP (IPv6 branch test)"
 description: "Development channel - AI assistant integration via MCP (unstable)"
-version: "9.1.0-ipv6.1"
+version: "9.1.0-ipv6.2"
 slug: "ha_mcp_ipv6"
 url: "https://github.com/homeassistant-ai/ha-mcp"
 stage: experimental
