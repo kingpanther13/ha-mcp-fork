@@ -813,7 +813,7 @@ async def test_ha_auth_refresh_with_redirect_translates_presented_origin(
     hass = _hass(oauth, oauth.MODE_HA_AUTH)
     hass.data[oauth.DOMAIN]["session"] = relay_session
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -830,6 +830,64 @@ async def test_ha_auth_refresh_with_redirect_translates_presented_origin(
     assert response.status == 200
     forwarded = relay_session.post.call_args.kwargs["data"]
     assert forwarded["client_id"] == ("https://oauth-redirect.googleusercontent.com")
+
+
+async def test_ha_auth_token_exchange_reaches_a_tls_core_without_a_configured_url(
+    oauth_stack, monkeypatch
+):
+    """A core serving TLS itself (http.ssl_certificate) answered every
+    sign-in with 503: the token forward verified a certificate that can never
+    name 127.0.0.1 (#2950)."""
+
+    class NoURLAvailableError(Exception):
+        pass
+
+    def unavailable(_hass, **_kwargs):
+        raise NoURLAvailableError
+
+    network = types.ModuleType("homeassistant.helpers.network")
+    network.NoURLAvailableError = NoURLAvailableError
+    network.get_url = unavailable
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.network", network)
+    oauth, dcr, autoapprove = (
+        oauth_stack.oauth,
+        oauth_stack.dcr,
+        oauth_stack.autoapprove,
+    )
+    client_id = dcr.mint_client_id(KEY, ["https://a.example/cb"])
+    core_response = SimpleNamespace(
+        status=200,
+        content_type="application/json",
+        read=AsyncMock(return_value=b'{"access_token":"core"}'),
+    )
+
+    class _CoreRequest:
+        async def __aenter__(self):
+            return core_response
+
+        async def __aexit__(self, *_args):
+            return False
+
+    relay_session = SimpleNamespace(post=MagicMock(return_value=_CoreRequest()))
+    hass = _hass(oauth, oauth.MODE_HA_AUTH)
+    hass.config = SimpleNamespace(api=SimpleNamespace(use_ssl=True, port=9443))
+    hass.data[oauth.DOMAIN]["session"] = relay_session
+
+    response = await autoapprove.AutoApproveTokenView(hass).post(
+        _oauth_request(
+            form={
+                "grant_type": "authorization_code",
+                "code": "code-1",
+                "client_id": client_id,
+                "redirect_uri": "https://a.example/cb",
+            }
+        )
+    )
+
+    assert response.status == 200
+    call = relay_session.post.call_args
+    assert call.args[0] == "https://127.0.0.1:9443/auth/token"
+    assert call.kwargs["ssl"] is False
 
 
 def _hand_signed_envelope(indirect, payload: object) -> str:
@@ -1068,7 +1126,7 @@ async def test_ha_auth_code_leg_wraps_the_core_refresh_token(oauth_stack, monkey
     hass = _hass(oauth, oauth.MODE_HA_AUTH)
     hass.data[oauth.DOMAIN]["session"] = relay_session
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -1109,7 +1167,7 @@ async def test_ha_auth_refresh_envelope_restores_core_token_and_identity(
     hass = _hass(oauth, oauth.MODE_HA_AUTH)
     hass.data[oauth.DOMAIN]["session"] = relay_session
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -1150,7 +1208,7 @@ def _pin_cimd_document(monkeypatch, indirect, redirect_uris: list[str]) -> None:
 
     monkeypatch.setattr(indirect, "fetch_cimd_redirects", fetch_redirects)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
 
@@ -1283,7 +1341,7 @@ async def test_ha_auth_refresh_leg_rewraps_a_rotated_core_refresh_token(
     )
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -1320,7 +1378,7 @@ async def test_ha_auth_non_200_core_response_is_relayed_unwrapped(
     )
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -1364,7 +1422,7 @@ async def test_ha_auth_revoke_unwraps_the_envelope_before_forwarding(
     )
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(
@@ -1473,7 +1531,7 @@ async def test_scoped_revoke_forwards_the_unwrapped_envelope(oauth_stack, monkey
     relay_session = _core_relay_session(b"")
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveRevokeView(hass).post(
@@ -1553,7 +1611,7 @@ async def test_scoped_revoke_transport_error_returns_temporarily_unavailable(
     relay_session = SimpleNamespace(post=MagicMock(side_effect=TimeoutError()))
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveRevokeView(hass).post(
@@ -1620,7 +1678,7 @@ async def test_revocation_forwards_an_unverifiable_envelope(
     relay_session = _core_relay_session(b"")
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await _post_revocation(autoapprove, hass, surface, envelope)
@@ -1722,7 +1780,7 @@ async def test_revocation_503_names_the_retry_delay_on_both_surfaces(
     relay_session = SimpleNamespace(post=MagicMock(side_effect=TimeoutError()))
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await _post_revocation(autoapprove, hass, surface, envelope)
@@ -1754,7 +1812,7 @@ async def test_non_revocation_token_503_carries_no_retry_after(
     relay_session = SimpleNamespace(post=MagicMock(side_effect=TimeoutError()))
     hass = _ha_auth_hass(oauth, relay_session)
     monkeypatch.setattr(
-        indirect, "core_token_base_url", lambda _hass: "https://core.example"
+        indirect, "core_token_base_url", lambda _hass: ("https://core.example", True)
     )
 
     response = await autoapprove.AutoApproveTokenView(hass).post(

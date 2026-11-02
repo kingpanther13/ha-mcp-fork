@@ -9,6 +9,13 @@ history from before the fork.
 -->
 
 
+## v3.0.5.dev3 (2026-11-02)
+
+- `ha_auth` sign-in works when Home Assistant serves HTTPS itself
+  (`http: ssl_certificate`): the token exchange is forwarded to Core's own
+  listener without verifying a certificate that can never name `127.0.0.1`,
+  instead of answering 503 (#2950).
+
 ## v3.0.5.dev2 (2026-10-15)
 
 - The Dockerfile takes its python base image through a `PYTHON_BASE` build

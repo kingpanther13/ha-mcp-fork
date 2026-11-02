@@ -673,22 +673,15 @@ def _stable_origin_or_unreproducible(
     return stable
 
 
-def core_token_base_url(hass: HomeAssistant) -> str:
-    """Return a trusted base URL for forwarding to core's token and revocation
-    endpoints."""
-    api = getattr(hass.config, "api", None)
-    if api is not None and not getattr(api, "use_ssl", False):
-        return f"http://127.0.0.1:{api.port}"
-    from homeassistant.helpers.network import NoURLAvailableError, get_url
+def core_token_base_url(hass: HomeAssistant) -> tuple[str, bool]:
+    """Core's own loopback listener for the token and revocation forwards,
+    and whether to verify its TLS.
 
-    try:
-        return str(
-            get_url(
-                hass,
-                prefer_external=False,
-                allow_cloud=False,
-                require_ssl=True,
-            )
-        ).rstrip("/")
-    except NoURLAvailableError:
-        return f"https://127.0.0.1:{getattr(api, 'port', 8123)}"
+    Never request-derived (#2213). Home Assistant's certificate never names
+    127.0.0.1, so an https listener is reached unverified (#2950).
+    """
+    api = getattr(hass.config, "api", None)
+    port = getattr(api, "port", 8123)
+    if getattr(api, "use_ssl", False):
+        return f"https://127.0.0.1:{port}", False
+    return f"http://127.0.0.1:{port}", True

@@ -91,8 +91,8 @@ class _CoreTokenSession:
         self.status = status
         self.calls = []
 
-    def post(self, url, *, data, timeout):
-        self.calls.append({"url": url, "data": data, "timeout": timeout})
+    def post(self, url, *, data, timeout, ssl=True):
+        self.calls.append({"url": url, "data": data, "timeout": timeout, "ssl": ssl})
         if self.error is not None:
             raise self.error
         return _CoreTokenResponse(self.body, self.status)
@@ -105,6 +105,7 @@ if "yarl" not in sys.modules:
 
 import custom_components.ha_mcp_tools.oauth_autoapprove as aa  # noqa: E402
 from custom_components.ha_mcp_tools import (  # noqa: E402
+    loopback_url,
     oauth_dcr,
     oauth_ha_auth,
     oauth_legacy,
@@ -270,6 +271,7 @@ async def unified_view_client_factory():
             cimd_session: object | None = None,
             dcr_key: bytes | None = None,
             allowlist: list[str] | None = None,
+            api: object | None = None,
         ):
             cfg = _mode_cfg(
                 mode,
@@ -283,6 +285,7 @@ async def unified_view_client_factory():
             hass = SimpleNamespace(
                 data={DOMAIN: {DATA_WEBHOOK: cfg}},
                 http=SimpleNamespace(),
+                config=SimpleNamespace(api=api),
             )
 
             def register_view(view):
@@ -780,9 +783,9 @@ async def test_ha_auth_token_forwards_translated_client_id(
     dcr_key = b"d" * 32
     client_id = oauth_dcr.mint_client_id(dcr_key, ["https://a.example/cb"])
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
     client = await unified_view_client_factory(
         mode="ha_auth", session=session, dcr_key=dcr_key
@@ -807,6 +810,49 @@ async def test_ha_auth_token_forwards_translated_client_id(
     assert call["data"]["client_id"] == "https://a.example"
 
 
+async def test_ha_auth_token_exchange_reaches_a_tls_core_without_a_configured_url(
+    unified_view_client_factory, monkeypatch
+):
+    """A core serving TLS itself (http.ssl_certificate) with no HTTPS URL set
+    answered every sign-in with 503: the token forward verified a certificate
+    that can never name 127.0.0.1 (#2950)."""
+
+    class NoURLAvailableError(Exception):
+        pass
+
+    def unavailable(_hass, **_kwargs):
+        raise NoURLAvailableError
+
+    network = ModuleType("homeassistant.helpers.network")
+    network.NoURLAvailableError = NoURLAvailableError
+    network.get_url = unavailable
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.network", network)
+    session = _CoreTokenSession()
+    dcr_key = b"d" * 32
+    client_id = oauth_dcr.mint_client_id(dcr_key, ["https://a.example/cb"])
+    client = await unified_view_client_factory(
+        mode="ha_auth",
+        session=session,
+        dcr_key=dcr_key,
+        api=SimpleNamespace(use_ssl=True, port=9443),
+    )
+
+    resp = await client.post(
+        "/api/ha_mcp_tools/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": "code-1",
+            "client_id": client_id,
+            "redirect_uri": "https://a.example/cb",
+        },
+    )
+
+    assert resp.status == 200
+    call = session.calls[0]
+    assert call["url"] == "https://127.0.0.1:9443/auth/token"
+    assert call["ssl"] is False
+
+
 async def test_ha_auth_refresh_forwards_translated_client_id(
     unified_view_client_factory, monkeypatch
 ):
@@ -815,9 +861,9 @@ async def test_ha_auth_refresh_forwards_translated_client_id(
     dcr_key = b"d" * 32
     client_id = oauth_dcr.mint_client_id(dcr_key, ["https://a.example/cb"])
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
     client = await unified_view_client_factory(
         mode="ha_auth", session=session, dcr_key=dcr_key
@@ -847,9 +893,9 @@ async def test_ha_auth_authorization_code_without_redirect_uses_default_path(
     dcr_key = b"d" * 32
     client_id = oauth_dcr.mint_client_id(dcr_key, ["https://a.example/cb"])
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
     client = await unified_view_client_factory(
         mode="ha_auth", session=session, dcr_key=dcr_key
@@ -883,9 +929,9 @@ async def test_ha_auth_token_timeout_returns_temporarily_unavailable(
     dcr_key = b"d" * 32
     client_id = oauth_dcr.mint_client_id(dcr_key, ["https://a.example/cb"])
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
     client = await unified_view_client_factory(
         mode="ha_auth", session=session, dcr_key=dcr_key
@@ -1225,9 +1271,9 @@ async def test_ha_auth_refresh_with_redirect_uri_translates_like_authorize(
     session = _CoreTokenSession()
     dcr_key = b"d" * 32
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
     redirect = "https://oauth-redirect.googleusercontent.com/r/ha-mcp"
     client_id = oauth_dcr.mint_client_id(
@@ -1299,9 +1345,9 @@ CORE_BODY_WITH_REFRESH = (
 def _pin_core_token_base(monkeypatch) -> None:
     """Point the server-side forward at a fixed core base URL."""
     monkeypatch.setattr(
-        oauth_ha_auth,
-        "core_token_base_url",
-        lambda _hass: "https://core.example",
+        loopback_url,
+        "derive_loopback_url",
+        lambda _hass: ("https://core.example", None),
     )
 
 

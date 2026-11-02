@@ -592,7 +592,7 @@ async def _forward_to_core(
     with ``action=revoke`` — get the same 503, and neither call site has to
     remember to say so.
     """
-    from .oauth_ha_auth import core_token_base_url
+    from .loopback_url import derive_loopback_url
 
     revocation = path == "/auth/revoke" or form.get("action") == "revoke"
     session = cfg.get("session")
@@ -603,12 +603,15 @@ async def _forward_to_core(
             path,
         )
         return _unavailable("token forwarding is not available", revocation=revocation)
-    base = core_token_base_url(hass)
+    # Core's own listener, never a request-derived host (#2213). Its
+    # certificate cannot name 127.0.0.1, so TLS goes unverified (#2950).
+    base, verify_ssl = derive_loopback_url(hass)
     try:
         async with session.post(
             f"{base}{path}",
             data=form,
             timeout=aiohttp.ClientTimeout(total=25),
+            ssl=verify_ssl is not False,
         ) as resp:
             return (
                 resp.status,
