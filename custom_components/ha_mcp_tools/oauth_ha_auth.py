@@ -64,7 +64,6 @@ from enum import Enum
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 import aiohttp
-from homeassistant.core import HomeAssistant
 
 from .oauth_dcr import (
     _refresh_identity_is_reproducible,
@@ -816,37 +815,3 @@ def _stable_origin_or_unreproducible(
         )
         return RefreshDisposition.UNREPRODUCIBLE
     return stable
-
-
-def core_token_base_url(hass: HomeAssistant) -> str:
-    """Base URL for the server-side ``/auth/token`` and ``/auth/revoke``
-    forwards — never request-derived.
-
-    Loopback when core serves plain http (no TLS mismatch possible); otherwise
-    the operator-configured URL via ``homeassistant.helpers.network.get_url``.
-    A forwarded-header-derived base would let an anonymous caller steer this
-    server-side POST to a host of their choosing and read the relayed
-    response (#2213 review) — request headers are deliberately not consulted.
-    """
-    api = getattr(hass.config, "api", None)
-    if api is not None and not getattr(api, "use_ssl", False):
-        return f"http://127.0.0.1:{api.port}"
-    from homeassistant.helpers.network import NoURLAvailableError, get_url
-
-    try:
-        # str() wrapper: hass typing stubs leave get_url as Any in this
-        # environment (mypy no-any-return).
-        return str(
-            get_url(
-                hass,
-                prefer_external=False,
-                allow_cloud=False,
-                require_ssl=True,
-            )
-        ).rstrip("/")
-    except NoURLAvailableError:
-        # Preserve the listener's TLS scheme. Certificate verification may
-        # still reject a loopback hostname, but that fails loudly (503) rather
-        # than leaking the token request in clear text or trusting caller
-        # supplied headers.
-        return f"https://127.0.0.1:{getattr(api, 'port', 8123)}"

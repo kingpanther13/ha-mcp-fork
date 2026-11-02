@@ -560,12 +560,13 @@ async def _forward_to_core(
             path,
         )
         return _unavailable("token forwarding is not available", revocation=revocation)
-    base = core_token_base_url(hass)
+    base, verify_ssl = core_token_base_url(hass)
     try:
         async with session.post(
             f"{base}{path}",
             data=form,
             timeout=aiohttp.ClientTimeout(total=25),
+            ssl=verify_ssl,
         ) as response:
             return (
                 response.status,
