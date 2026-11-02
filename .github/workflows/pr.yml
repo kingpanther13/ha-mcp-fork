@@ -532,7 +532,7 @@ jobs:
       run: cd tests/js && corepack npm ci
 
     - name: Run unit tests
-      run: uv run pytest tests/src/unit/ -n auto --tb=short -v
+      run: uv run pytest tests/src/unit/ -n auto --tb=short -v --maxfail=1000
 
     - name: Run BAT runner tests
       # The tests of the UAT/BAT tooling need no Docker and no model.
