@@ -12,7 +12,7 @@ start_tunnel() {
   echo "$target" > "tunnel-$name.target"
   rm -f "tunnel-$name.url"
   for attempt in 1 2 3 4 5; do
-    nohup ./cloudflared tunnel --no-autoupdate --url "$target" > "$log" 2>&1 &
+    nohup ./cloudflared tunnel --no-autoupdate --no-tls-verify --url "$target" > "$log" 2>&1 &
     pid=$!
     echo "$pid" > "tunnel-$name.pid"
     url=""
@@ -60,8 +60,28 @@ publish_urls() {
 # change (a new URL, or a published one now down), publish them and set
 # URLS_CHANGED; a tunnel that stays down publishes nothing new.
 revive_tunnels() {
-  local name had_url changed=""
+  local name had_url changed="" t rest hostport
   for name in ha mcp; do
+    # Throwaway (#2950 repro): follow HA switching between http and https on
+    # its port, so enabling http.ssl_certificate keeps the tunnels usable.
+    t=$(cat "tunnel-$name.target" 2>/dev/null || true)
+    rest=${t#*://}
+    hostport=${rest%%/*}
+    if [ -n "$t" ]; then
+      if [ "${t%%://*}" = http ] \
+        && ! curl -s -o /dev/null --max-time 5 "http://$hostport/" \
+        && curl -sk -o /dev/null --max-time 5 "https://$hostport/"; then
+        echo "https://$rest" > "tunnel-$name.target"
+        kill "$(cat "tunnel-$name.pid")" 2>/dev/null || true
+        sleep 1
+      elif [ "${t%%://*}" = https ] \
+        && ! curl -sk -o /dev/null --max-time 5 "https://$hostport/" \
+        && curl -s -o /dev/null --max-time 5 "http://$hostport/"; then
+        echo "http://$rest" > "tunnel-$name.target"
+        kill "$(cat "tunnel-$name.pid")" 2>/dev/null || true
+        sleep 1
+      fi
+    fi
     if ! kill -0 "$(cat "tunnel-$name.pid" 2>/dev/null)" 2>/dev/null \
       || [ ! -s "tunnel-$name.url" ]; then
       had_url=""
