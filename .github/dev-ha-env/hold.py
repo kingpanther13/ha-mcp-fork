@@ -296,6 +296,98 @@ def apply_stale_component(inst: Instance, sha: str) -> None:
     raise RuntimeError("the branch's component could not be applied") from last_err
 
 
+def _enable_private_ca_tls(inst: Instance, config_path: Any) -> None:
+    """Throwaway (#2950 repro): serve HA's own port over TLS with a leaf from
+    a private CA (SAN DNS:homeassistant.local only), then restart Core."""
+    if not config_path:
+        log(tls="skipped: no host config_path (HAOS)")
+        return
+    ssl_dir = Path(config_path) / "devenv_ssl"
+    ssl_dir.mkdir(exist_ok=True)
+
+    def ossl(*args: str) -> None:
+        subprocess.run(["openssl", *args], cwd=ssl_dir, check=True, capture_output=True)
+
+    ossl(
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        "ca.key",
+        "-out",
+        "ca.pem",
+        "-days",
+        "7",
+        "-subj",
+        "/CN=Devenv Private Root CA",
+    )
+    ossl(
+        "req",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        "privkey.pem",
+        "-out",
+        "leaf.csr",
+        "-subj",
+        "/CN=homeassistant.local",
+    )
+    (ssl_dir / "ext.cnf").write_text("subjectAltName=DNS:homeassistant.local\n")
+    ossl(
+        "x509",
+        "-req",
+        "-in",
+        "leaf.csr",
+        "-CA",
+        "ca.pem",
+        "-CAkey",
+        "ca.key",
+        "-CAcreateserial",
+        "-out",
+        "leaf.pem",
+        "-days",
+        "7",
+        "-extfile",
+        "ext.cnf",
+    )
+    (ssl_dir / "fullchain.pem").write_text(
+        (ssl_dir / "leaf.pem").read_text() + (ssl_dir / "ca.pem").read_text()
+    )
+    for f in ssl_dir.iterdir():
+        f.chmod(0o644)
+    with open(Path(config_path) / "configuration.yaml", "a") as cfg:
+        cfg.write(
+            "\nhttp:\n"
+            "  ssl_certificate: /config/devenv_ssl/fullchain.pem\n"
+            "  ssl_key: /config/devenv_ssl/privkey.pem\n"
+        )
+    try:
+        requests.post(
+            f"{inst.base_url}/api/services/homeassistant/restart",
+            headers=inst.headers,
+            timeout=30,
+        )
+    except requests.ConnectionError:
+        pass
+    https = inst.base_url.replace("http://", "https://", 1)
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        try:
+            r = requests.get(
+                f"{https}/api/", headers=inst.headers, timeout=5, verify=False
+            )
+            if r.status_code == 200:
+                log(tls="on", url=https)
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(3)
+    log(tls="failed: HA did not answer over https after the restart")
+
+
 def test_hold_dev_ha_env(ha_container_with_fresh_config: dict[str, Any]) -> None:
     inst = Instance(dict(ha_container_with_fresh_config))
     inst.start_server()
@@ -309,4 +401,5 @@ def test_hold_dev_ha_env(ha_container_with_fresh_config: dict[str, Any]) -> None
     except Exception as err:  # noqa: BLE001
         # HA is up; fix the server through the tools, as on any instance.
         log(sha=sha, backend=inst.backend, ready=False, error=str(err))
+    _enable_private_ca_tls(inst, ha_container_with_fresh_config.get("config_path"))
     time.sleep(60 * int(os.environ.get("DEVENV_MINUTES", "340")))
