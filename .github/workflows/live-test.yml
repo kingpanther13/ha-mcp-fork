@@ -1,0 +1,21 @@
+name: Live test ha-mcp#2937 scripts
+on:
+  push:
+    branches: [live-test-pr2937]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+      - name: Compare merge base and PR head
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash live/run.sh
