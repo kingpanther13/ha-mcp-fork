@@ -19,7 +19,7 @@ jobs:
         with:
           persist-credentials: false
           repository: kingpanther13/default
-          ref: e1b11a14725699322e0baf904dbeefd77378a50d
+          ref: 89997c02a3033815974a0733fd8b5b2a2f471452
       - uses: actions/setup-python@v7.0.0
         with:
           python-version-file: .python-version
@@ -96,7 +96,7 @@ jobs:
         with:
           persist-credentials: false
           repository: kingpanther13/default
-          ref: e1b11a14725699322e0baf904dbeefd77378a50d
+          ref: 89997c02a3033815974a0733fd8b5b2a2f471452
       - name: Clone submitted repository
         run: git clone --depth 1 https://github.com/homeassistant-ai/ha-mcp /tmp/repositories/addition
       - name: Run catalog Hassfest command
