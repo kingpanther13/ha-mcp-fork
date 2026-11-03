@@ -2,6 +2,7 @@ name: Live test ha-mcp#2937 scripts
 on:
   push:
     branches: [live-test-pr2937]
+    paths: [live/run.sh, live/stub.py, live/tl_driver.py, .github/workflows/live-test.yml]
   workflow_dispatch:
 permissions:
   contents: read
