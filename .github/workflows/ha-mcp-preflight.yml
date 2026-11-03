@@ -1,0 +1,108 @@
+name: HA-MCP catalog submission preflight
+
+on:
+  push:
+    branches: [ci/hacs-catalog-preflight-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    name: Catalog checks and lint
+    runs-on: ubuntu-latest
+    env:
+      REPOSITORY: homeassistant-ai/ha-mcp
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          repository: kingpanther13/default
+          ref: e1b11a14725699322e0baf904dbeefd77378a50d
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install catalog check dependencies
+        run: |
+          scripts/setup
+          python -m pip install jsonschema
+      - name: Clone the catalog baseline and submitted repository
+        run: |
+          git clone --depth 1 https://github.com/hacs/default /tmp/repositories/default
+          git clone --depth 1 https://github.com/homeassistant-ai/ha-mcp /tmp/repositories/addition
+          git -C /tmp/repositories/default rev-parse HEAD
+          git -C /tmp/repositories/addition rev-parse HEAD
+      - name: Confirm the single integration addition
+        run: |
+          test "$(python -m scripts.changed.repo)" = "homeassistant-ai/ha-mcp"
+          test "$(python -m scripts.changed.category)" = "integration"
+          python -m scripts.helpers.integration_path
+          test "$(python -m scripts.helpers.domain)" = "ha_mcp_tools"
+      - name: Validate JSON and ordering with the catalog commands
+        run: |
+          jq --raw-output . appdaemon blacklist critical integration netdaemon plugin python_script removed template theme > /dev/null
+          python scripts/is_sorted.py
+      - name: Validate the catalog JSON schemas
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import jsonschema
+          groups = {
+              'repositories': 'appdaemon blacklist integration netdaemon plugin python_script template theme'.split(),
+              'critical': ['critical'],
+              'removed': ['removed'],
+          }
+          for schema_name, files in groups.items():
+              schema = json.loads(Path(f'tools/jsonschema/{schema_name}.schema.json').read_text())
+              for filename in files:
+                  jsonschema.validate(json.loads(Path(filename).read_text()), schema, format_checker=jsonschema.FormatChecker())
+                  print(f'{filename}: schema passed')
+          PY
+      - name: Owner eligibility using the intended submitting account
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # No PR exists. Only the known submitting identity is supplied here.
+          printf '%s\n' '{"pull_request":{"user":{"login":"kingpanther13"}}}' > "$RUNNER_TEMP/intended-submitter.json"
+          GITHUB_EVENT_PATH="$RUNNER_TEMP/intended-submitter.json" python -m scripts.check.owner
+      - name: Releases, removed, existing and core-domain checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m scripts.check.releases
+          python -m scripts.check.removed
+          python -m scripts.check.existing
+          python -m scripts.check.core_domain_conflict
+      - name: Explain the remaining PR-only check
+        run: echo 'Editable PR is checked after opening from kingpanther13/default with maintainer edits enabled. No PR was created by this workflow.'
+
+  hacs:
+    name: HACS action (catalog configuration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          repository: homeassistant-ai/ha-mcp
+          category: integration
+          comment: false
+
+  hassfest:
+    name: Hassfest (catalog configuration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          repository: kingpanther13/default
+          ref: e1b11a14725699322e0baf904dbeefd77378a50d
+      - name: Clone submitted repository
+        run: git clone --depth 1 https://github.com/homeassistant-ai/ha-mcp /tmp/repositories/addition
+      - name: Run catalog Hassfest command
+        run: |
+          integration=$(python3 -m scripts.helpers.integration_path)
+          domain=$(python3 -m scripts.helpers.domain)
+          docker run --rm \
+            -v "$integration":"/github/workspace/custom_components/$domain" \
+            ghcr.io/home-assistant/hassfest:latest
