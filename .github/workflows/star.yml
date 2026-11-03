@@ -10,8 +10,7 @@ env:
   HEAD: d32ce82423d4be267372a8defb44bc1a81a7b75a
 jobs:
   render:
-    # One runner per side: the unauthenticated API allows 60 requests an hour,
-    # and ha-mcp's stargazers take ~55 pages.
+    # The Actions token may read only this repository's stargazers.
     strategy:
       matrix:
         side: [B, H]
@@ -20,16 +19,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Render with the ${{ matrix.side }} script, unauthenticated
+      - name: Render with the ${{ matrix.side }} script
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set +e
           sha=$HEAD; [ "${{ matrix.side }}" = B ] && sha=$BASE
           curl -fsSL "https://raw.githubusercontent.com/homeassistant-ai/ha-mcp/$sha/scripts/generate_star_history.py" -o gsh.py
-          unset GITHUB_TOKEN GH_TOKEN
-          for repo in homeassistant-ai/ha-mcp kingpanther13/Hubitat-local-MCP-server; do
+          for repo in ${{ github.repository }}; do
             out=out/${repo//\//_}
             python gsh.py --repository "$repo" --output-dir "$out"; echo "rc=$?" | tee "$out.rc"
           done
-          curl -s https://api.github.com/rate_limit | python -c "import json,sys;print('core remaining', json.load(sys.stdin)['resources']['core']['remaining'])"
       - uses: actions/upload-artifact@v4
         with:
           name: star-${{ matrix.side }}
