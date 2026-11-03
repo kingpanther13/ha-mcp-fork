@@ -1,0 +1,144 @@
+name: repro-2954
+
+on:
+  push:
+    branches: [repro/2954-sidecar-disable]
+    paths: ['.github/workflows/repro-2954.yml', '.github/repro-2954/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        target: [pypi-9.0.0, master]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Install driver env
+        run: uv sync --no-dev
+      - name: Install server under test
+        run: |
+          if [ "${{ matrix.target }}" = "master" ]; then
+            echo "HAMCP_CMD=$PWD/.venv/bin/ha-mcp" >> "$GITHUB_ENV"
+          else
+            uv tool install --python 3.13 ha-mcp==9.0.0
+            echo "HAMCP_CMD=$HOME/.local/bin/ha-mcp" >> "$GITHUB_ENV"
+          fi
+          echo "HA_TOKEN=$(uv run python -c 'from tests.test_constants import TEST_TOKEN; print(TEST_TOKEN)')" >> "$GITHUB_ENV"
+          echo "CONFIG_DIR=$RUNNER_TEMP/hamcp" >> "$GITHUB_ENV"
+      - name: Start Home Assistant 2026.10.4 (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          cp -r tests/initial_test_state "$RUNNER_TEMP/ha"
+          docker run -d --name ha -p 8123:8123 -v "$RUNNER_TEMP/ha:/config" \
+            ghcr.io/home-assistant/home-assistant:2026.10.4
+          for i in $(seq 1 90); do
+            if curl -sf -H "Authorization: Bearer $HA_TOKEN" http://127.0.0.1:8123/api/ >/dev/null; then
+              echo "HA up"; echo "HA_URL=http://127.0.0.1:8123" >> "$GITHUB_ENV"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs ha | tail -50; exit 1
+      - name: Reproduce
+        run: uv run python .github/repro-2954/repro.py
+
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv sync --group dev
+      - name: Touched tests on the fix
+        run: >-
+          uv run pytest -q -p no:cacheprovider
+          tests/src/unit/test_stdio_sidecar_disable.py
+          tests/src/unit/test_stdio_settings_sidecar.py
+          tests/src/unit/test_overview_system_info.py
+          tests/src/unit/test_ha_overview_component_routing.py
+          tests/src/unit/test_module_size_ratchet.py
+      - name: Mypy on the fix
+        run: uv run mypy src/ha_mcp/stdio_settings_sidecar.py src/ha_mcp/tools/tools_search.py
+      - name: Regression tests on pre-fix source (must fail)
+        run: |
+          git checkout HEAD~4 -- src/
+          set +e
+          uv run pytest -q -p no:cacheprovider --maxfail=100 tests/src/unit/test_stdio_sidecar_disable.py             "tests/src/unit/test_stdio_settings_sidecar.py::TestMaybeSpawnGates::test_maybe_spawn_retires_but_never_spawns_when_disabled"
+          rc=$?
+          echo "pre-fix pytest exit code: $rc"
+          git checkout HEAD -- src/
+          [ "$rc" -ne 0 ]
+      - name: Zombie test without the reaper (must fail)
+        run: |
+          git checkout HEAD~2 -- src/
+          set +e
+          uv run pytest -q -p no:cacheprovider tests/src/unit/test_stdio_sidecar_disable.py -k sigkilled
+          rc=$?
+          echo "pre-reaper pytest exit code: $rc"
+          [ "$rc" -ne 0 ]
+
+  fast-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE: a463a2219
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv lock --check
+      - run: uv sync --dev
+      - name: ruff check
+        run: uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ scripts/
+      - name: ruff format on PR-changed Python files
+        run: git diff --name-only --diff-filter=ACMR "$BASE" HEAD~1 -- '*.py' | tee /dev/stderr | xargs uv run ruff format --check
+      - name: ast-grep
+        run: uv run ast-grep scan
+      - name: mypy
+        run: |
+          status=0
+          uv run mypy src/ custom_components/ homeassistant-addon/ scripts/ || status=1
+          uv run mypy homeassistant-addon-webhook-proxy/ || status=1
+          uv run mypy homeassistant-addon-webhook-proxy-dev/ || status=1
+          exit $status
+      - name: ratchets
+        run: |
+          status=0
+          uv run python scripts/module_size_ratchet.py --base "$BASE" || status=1
+          uv run python scripts/duplicate_code_ratchet.py --base "$BASE" || status=1
+          exit $status
+
+  unit-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Drop this throwaway workflow so repo workflow-shape tests see only the PR
+        run: rm .github/workflows/repro-2954.yml
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: uv sync --all-extras --dev
+      - run: cd tests/js && corepack npm ci
+      - run: uv run pytest tests/src/unit/ -n auto --tb=short -q -p no:cacheprovider
