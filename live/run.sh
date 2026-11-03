@@ -77,6 +77,9 @@ for s in B H; do
   echo $? >"$W/sh_$s.rc"
 done
 same "star history: same exit code ($(cat "$W/sh_H.rc"))" "$W/sh_B.rc" "$W/sh_H.rc"
+info "star history output B: $(tail -3 "$W/sh_B.out" | tr '
+' ' ') | H: $(tail -3 "$W/sh_H.out" | tr '
+' ' ')"
 same "star history: identical light.svg" "$W/sh_B/light.svg" "$W/sh_H/light.svg"
 same "star history: identical dark.svg" "$W/sh_B/dark.svg" "$W/sh_H/dark.svg"
 info "star history desc: $(grep -o '<desc>[^<]*' "$W/sh_H/light.svg" | head -1)"
@@ -149,7 +152,7 @@ for s in B H; do
   sed -i 's/tools-[^-]*-blue/tools-0-blue/' "$W/etw_$s/README.md"
   (cd "$W/etw_$s" && $PY scripts/extract_tools.py && $PY scripts/extract_tools.py --check) >"$W/etw_$s.out" 2>&1; echo "rc=$?" >>"$W/etw_$s.out"
 done
-diff -rq "$W/etw_B" "$W/etw_H" | grep -v 'scripts/extract_tools.py' >"$W/etw.diff"
+diff -rq -x __pycache__ "$W/etw_B" "$W/etw_H" | grep -v 'scripts/extract_tools.py' >"$W/etw.diff"
 [ -s "$W/etw.diff" ] && { fail "extract_tools write mode: generated files differ"; cat "$W/etw.diff"; } || pass "extract_tools write mode: identical generated files, then --check passes ($(tail -1 "$W/etw_H.out"))"
 for s in B H; do
   rm -rf "$W/etm_$s"; tree "$W/etm_$s"
@@ -212,10 +215,11 @@ tl_run() {  # scenario stub-mode delay -> runs both sides in parallel against th
   wait $pids
   for s in B H; do kill "$(cat "$W/stubpid_$s")" 2>/dev/null
     gaps=$(awk 'NR>1{printf "%.1f ", $1-p} {p=$1}' "$W/stub_${sc}_$s.log")
-    info "translate $sc side $s: requests=$(wc -l <"$W/stub_${sc}_$s.log") gaps=[${gaps}] $(cat "$W/tl_${sc}_$s.json")"
+    info "translate $sc side $s: requests=$(wc -l <"$W/stub_${sc}_$s.log") gaps=[${gaps}] $(tail -1 "$W/tl_${sc}_$s.json")"
   done
 }
-jq_() { $PY -c "import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))" "$@"; }
+# The driver's JSON is the last stdout line; the script's own progress prints precede it.
+jq_() { $PY -c "import json,sys;d=json.loads(open(sys.argv[1]).read().strip().splitlines()[-1]);print(eval(sys.argv[2]))" "$@"; }
 tl_run call 503 0
 reqH=$(wc -l <"$W/stub_call_H.log"); eH=$(jq_ "$W/tl_call_H.json" 'd["elapsed"]'); eB=$(jq_ "$W/tl_call_B.json" 'd["elapsed"]')
 $PY -c "import sys; sys.exit(not ($reqH==5 and 195<=$eH<=215 and 295<=$eB<=315))" \
