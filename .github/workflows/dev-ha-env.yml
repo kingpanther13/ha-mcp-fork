@@ -195,6 +195,8 @@ jobs:
           python3 scripts/stamp_component_version.py --component-dir custom_components/ha_mcp_tools --version 9.1.1 --pin 9.1.1.dev3360 --dist ha-mcp-dev
           sed -i '0,/name = "ha-mcp"/s//name = "ha-mcp-dev"/' pyproject.toml
           sed -i '0,/version = "9.1.0"/s//version = "9.1.1.dev3360"/' pyproject.toml
+          # Exercise the next-release floor with real AwesomeVersion inside HA.
+          sed -i 's/^MIN_COMPONENT_VERSION = "1.2.0"$/MIN_COMPONENT_VERSION = "9.1.1"/' src/ha_mcp/tools/tools_filesystem.py
           # The dev holder ordinarily builds the stable-named source wheel.
           sed -i 's/ha_mcp-\*.whl/ha_mcp_dev-*.whl/; s/ha-mcp @ file:/ha-mcp-dev @ file:/' tests/src/e2e/_conftest_embedded.py
       - name: Install cloudflared
