@@ -10,6 +10,8 @@ name: Dev HA environment
 # run was started with. Cancel the run when done.
 # Usage: docs/dev-ha-env.md
 on:
+  push:
+    branches: [ci/live-pr2963]
   workflow_dispatch:
     inputs:
       track_ref:
@@ -50,13 +52,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-ha-env-${{ inputs.track_ref }}-${{ inputs.platform }}-${{ inputs.server }}-${{ inputs.no_component }}
+  group: dev-ha-env-${{ 'ci/live-pr2963' }}-${{ 'docker' }}-${{ 'embedded' }}-${{ false }}
   cancel-in-progress: true
 
 env:
-  TRACK_REF: ${{ inputs.track_ref }}
-  E2E_NO_TOOLS_ENTRY: ${{ inputs.no_component && '1' || '' }}
-  DEVENV_STRICT_BPS: ${{ inputs.strict_bps }}
+  TRACK_REF: ${{ 'ci/live-pr2963' }}
+  E2E_NO_TOOLS_ENTRY: ${{ false && '1' || '' }}
+  DEVENV_STRICT_BPS: ${{ true }}
   HAMCP_ENV_FILE: tests/.env.test
   # A fixed host port survives container restarts, so the tunnel target holds.
   HA_TEST_PORT: "8123"
@@ -68,14 +70,14 @@ jobs:
   env:
     # Upstream runners are shared CI capacity; contributors run this on forks.
     if: github.repository != 'homeassistant-ai/ha-mcp'
-    runs-on: ${{ inputs.platform == 'haos' && 'ubuntu-22.04' || 'ubuntu-latest' }}
+    runs-on: ${{ 'docker' == 'haos' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 355
     steps:
       - name: Check inputs
         env:
-          PUBLIC_KEY: ${{ inputs.public_key }}
-          PLATFORM: ${{ inputs.platform }}
-          SERVER: ${{ inputs.server }}
+          PUBLIC_KEY: ${{ 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUFzUXFvdExZTXNqcGdVUGdWRE9WNQp6OWJVSEs5SFAvczZId2Z1V1RLdjNialFTd09IcWlXejFNb2xROHRnd1Mxc2hQMmZjVkhmbHdKNDhML1c4UTArCjNvaVZJTUlSbmVBQlQ5M1RaWUlBZjVvRWNWeFR2UUpOTkhWZnFzVkRxcXpnVEJyM0xWaERoaDFqNWJMcXhsKzgKbmMrdDFMeFRLdGdVb29xNWwvSmZ0bnhPd0QwMmtJa080c2dESDlYOXNRd0RNYkYwYjVDRHd6clRyT2xEWjVwRwpSdXJaUWFETWRJcFhXUTFGSHFJUFdKNWprTGw3UkRvMzVCY0lpbUJzV1lHZnJtYmNNbmRRaUhJbm5zVDgwZUxnCmp2Ylo0Rjc1TDlLMmNZNExNVDRrc1dpM0JEQS8xTUxGbG1JZytnTFdjdlZ5aHlOSFNRL1ZDN3hWUlVwKy83dHIKaDBCNFFKbmE3NDRYWHdvNFA4QjVBWWsxaG1hdCtQUmZiZlQyK2ltMzhxb1UwL3RocjdlVFY0dWVVRzF6ekx3bgpjUHZEVXg1WG9VY0NaOXkwek1VS2grYTRnVGM3bGZ1NVNtUDlWM0xQcnQ5dVY5T01VWEZ1KzZPTHdmZDZlRkFoClpGTlNnME9qU3h1MXMrZkQwNVVrbWRmdW5nOXVicytCOUJBdE94WmpSSVZSMCtsOXQ2L3N1dlJudlVUd0FZa0wKSWQyd1E2TExlUXUwVnVsQ1BXSFBuNVgyZ0dFZHVaU2Z5MWltODFLdW1MQk9mQmh5OEY4M055a1hhMEN2U0VsTwoxYlhQTjFTUnBLNFVkRmdFaFpYa01rT0dZcnJtMnJqZ20wQ1VacTk2NnFrMHd4OWV2NS96Nnp0WE1RcldCZ0hjCmRoUHAyRHRVMEtHeUY5ejhnaCtxNFVVQ0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=' }}
+          PLATFORM: ${{ 'docker' }}
+          SERVER: ${{ 'embedded' }}
         run: |
           KEY="$RUNNER_TEMP/url-key.pem"
           printf '%s' "$PUBLIC_KEY" | openssl base64 -d -A > "$KEY" || true
@@ -111,7 +113,7 @@ jobs:
           submodules: recursive
 
       - name: Compute HAOS image cache keys
-        if: inputs.platform == 'haos'
+        if: 'docker' == 'haos'
         id: key
         working-directory: src
         run: |
@@ -133,7 +135,7 @@ jobs:
           echo "base-prefix=haos-image-devenv-$base-" >> "$GITHUB_OUTPUT"
           echo "devenv-key=haos-image-devenv-$base-$component" >> "$GITHUB_OUTPUT"
       - name: Restore HAOS image from cache
-        if: inputs.platform == 'haos'
+        if: 'docker' == 'haos'
         id: restore-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -143,7 +145,7 @@ jobs:
             ${{ steps.key.outputs.devenv-key }}
             ${{ steps.key.outputs.base-prefix }}
       - name: Install QEMU + OVMF + libguestfs
-        if: inputs.platform == 'haos'
+        if: 'docker' == 'haos'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -154,7 +156,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Build HAOS image (cache miss)
-        if: inputs.platform == 'haos' && steps.restore-cache.outputs.cache-matched-key == ''
+        if: 'docker' == 'haos' && steps.restore-cache.outputs.cache-matched-key == ''
         working-directory: src
         run: |
           sudo rm -rf /usr/share/dotnet /usr/share/swift /opt/ghc \
@@ -165,7 +167,7 @@ jobs:
           python3 tests/haos_image_build/build_image.py --verbose \
             --output /tmp/haos-test-image.qcow2
       - name: Save HAOS image to this fork's cache
-        if: inputs.platform == 'haos' && steps.restore-cache.outputs.cache-matched-key == ''
+        if: 'docker' == 'haos' && steps.restore-cache.outputs.cache-matched-key == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/haos-test-image.qcow2
@@ -174,7 +176,7 @@ jobs:
         # Also after an exact hit, so the image an e2e prime left is reachable
         # by prefix once this branch's component changes. Never after a prefix
         # hit: that image carries another commit's component.
-        if: inputs.platform == 'haos' && (steps.restore-cache.outputs.cache-matched-key == '' || steps.restore-cache.outputs.cache-matched-key == steps.key.outputs.cache-key)
+        if: 'docker' == 'haos' && (steps.restore-cache.outputs.cache-matched-key == '' || steps.restore-cache.outputs.cache-matched-key == steps.key.outputs.cache-key)
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/haos-test-image.qcow2
@@ -187,6 +189,14 @@ jobs:
       - name: Install test dependencies
         working-directory: src
         run: uv sync --all-extras --dev
+      - name: Stamp the unpublished dev snapshot for live validation
+        working-directory: src
+        run: |
+          python3 scripts/stamp_component_version.py --component-dir custom_components/ha_mcp_tools --version 9.1.1 --pin 9.1.1.dev3360 --dist ha-mcp-dev
+          sed -i '0,/name = "ha-mcp"/s//name = "ha-mcp-dev"/' pyproject.toml
+          sed -i '0,/version = "9.1.0"/s//version = "9.1.1.dev3360"/' pyproject.toml
+          # The dev holder ordinarily builds the stable-named source wheel.
+          sed -i 's/ha_mcp-\*.whl/ha_mcp_dev-*.whl/; s/ha-mcp @ file:/ha-mcp-dev @ file:/' tests/src/e2e/_conftest_embedded.py
       - name: Install cloudflared
         env:
           # The binary runs beside the instance and the job token, so pin it
@@ -201,16 +211,16 @@ jobs:
       - name: Boot HA and open the tunnels
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PLATFORM: ${{ inputs.platform }}
-          SERVER: ${{ inputs.server }}
-          HA_IMAGE: ${{ inputs.ha_image }}
-          DEVENV_MINUTES: ${{ inputs.minutes }}
-          CPU_MAX: ${{ inputs.cpu_max }}
+          PLATFORM: ${{ 'docker' }}
+          SERVER: ${{ 'embedded' }}
+          HA_IMAGE: ${{ 'ghcr.io/home-assistant/home-assistant:2026.10.4' }}
+          DEVENV_MINUTES: ${{ '90' }}
+          CPU_MAX: ${{ '' }}
           DEVENV_TARGETS: ${{ github.workspace }}/targets.json
           # A prefix cache hit restored an image baked with another commit's
           # component (neither the exact nor the current devenv key matched);
           # the holder applies the branch's copy at boot.
-          DEVENV_COMPONENT_STALE: ${{ (inputs.platform == 'haos' && steps.restore-cache.outputs.cache-matched-key != '' && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.cache-key && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.devenv-key) && '1' || '' }}
+          DEVENV_COMPONENT_STALE: ${{ ('docker' == 'haos' && steps.restore-cache.outputs.cache-matched-key != '' && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.cache-key && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.devenv-key) && '1' || '' }}
         run: |
           [ "$DEVENV_MINUTES" -le 330 ] 2>/dev/null || DEVENV_MINUTES=330
           export DEVENV_MINUTES
