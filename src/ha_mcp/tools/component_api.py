@@ -547,8 +547,7 @@ def invalidate_caps(client: Any) -> None:
     stale positive doesn't keep routing to a dead command.
     """
     client = _per_user(client)
-    if client not in _PROBE_FAILURES and _CAPS_CACHE.get(client) is not None:
-        _DROPPED_WORKING.add(client)
+    # REVERTED (red proof): dropped working caps not remembered
     _PROBE_FAILURES.pop(client, None)
     _PROBE_AUTH_REJECTED.pop(client, None)
     _CAPS_CACHE.pop(client, None)
