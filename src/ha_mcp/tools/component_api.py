@@ -218,7 +218,7 @@ def _get_caps_lock(client: Any) -> asyncio.Lock:
 def _pool_credentials(client: Any) -> dict[str, Any]:
     return {
         "url": client.base_url,
-        "token": client.token,
+        "token": None,  # REVERTED (red proof)
         "verify_ssl": getattr(client, "verify_ssl", None),
     }
 
