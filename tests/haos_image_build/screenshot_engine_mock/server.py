@@ -18,7 +18,7 @@ against balloob's Puppet add-on, but WITHOUT Chromium:
   real engine, given a bad token, reaches only the HA login screen and cannot
   reproduce the working render).
 
-Stdlib only; runs on python:3.13-slim. Never shipped to users.
+Stdlib only; runs on python:3.14-slim. Never shipped to users.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _options() -> dict:
         with open(_OPTIONS_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
             return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -98,7 +98,7 @@ def _token_authenticates(base_url: str, token: str) -> bool:
             return resp.status == 200
     except urllib.error.HTTPError:
         return False  # 401 on a bad token, etc.
-    except (urllib.error.URLError, OSError):
+    except urllib.error.URLError, OSError:
         return False  # HA not reachable -> never render under a broken auth state
 
 

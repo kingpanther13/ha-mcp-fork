@@ -9,6 +9,11 @@ history from before the fork.
 -->
 
 
+## v3.0.5.dev7 (2026-11-08)
+
+- The app (add-on) image is built on Python 3.14 (`python:3.14-slim`).
+
+
 ## v3.0.5.dev6 (2026-11-08)
 
 - Type annotations match Home Assistant Core 2026.11's own types (repairs

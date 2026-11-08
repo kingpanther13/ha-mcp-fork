@@ -40,7 +40,7 @@ def test_each_vendoring_hook_is_scoped_to_its_private_pins() -> None:
     rules = {
         rule["postUpgradeTasks"]["commands"][0]: rule
         for rule in config["packageRules"]
-        if "postUpgradeTasks" in rule
+        if "postUpgradeTasks" in rule and rule.get("matchFileNames") == [_PIN_FILE]
     }
     assert set(rules) == set(_HOOKS), "one regeneration hook per vendoring script"
     for command, (packages, file_filters) in _HOOKS.items():
@@ -52,7 +52,7 @@ def test_each_vendoring_hook_is_scoped_to_its_private_pins() -> None:
         assert rule["postUpgradeTasks"]["commands"] == [command]
         assert rule["postUpgradeTasks"]["fileFilters"] == file_filters
         assert rule["postUpgradeTasks"]["installTools"] == {"python": {}}
-        assert rule["constraints"]["python"] == ">=3.13,<3.14"
+        assert rule["constraints"]["python"] == ">=3.14,<3.15"
         # Update mode retains the matched upgrade's Python constraint in 44.50.1.
         assert rule["postUpgradeTasks"]["executionMode"] == "update"
         assert "minimumReleaseAge" not in rule
@@ -83,9 +83,21 @@ def test_vendored_fastmcp_packages_update_together() -> None:
         ("python3 scripts/vendor_websockets.py", False),
         ("python3 scripts/vendor_fastmcp.py", False),
         ("python3 -I scripts/another_script.py", False),
+        ("uv lock", True),
+        ("uv lock --upgrade", False),
+        ("uv lock; echo unsafe", False),
+        (
+            "uv run --no-project --with packaging python -I scripts/check_ha_constraint_alignment.py --sync-lock",
+            True,
+        ),
+        (
+            "uv run --no-project --with packaging python -I scripts/check_ha_constraint_alignment.py --sync-lock --extra",
+            False,
+        ),
+        ("uv run --no-project --with packaging python -I scripts/other.py", False),
     ],
 )
-def test_only_the_exact_vendoring_commands_are_authorized(
+def test_only_the_exact_post_upgrade_commands_are_authorized(
     command: str, allowed: bool
 ) -> None:
     _, env = _configuration()
