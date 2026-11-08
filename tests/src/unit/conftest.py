@@ -25,7 +25,13 @@ if TYPE_CHECKING:
 # socket/thread/task checks. pyproject.toml blocks its entry point so the E2E
 # tree never loads it. Nothing above imports Home Assistant: the plugin patches
 # Core's JSON and time helpers before Core is first imported.
-pytest_plugins = ["pytest_homeassistant.plugins"]
+if os.environ.get("HAMCP_EXP_NOPLUGIN") != "1":
+    pytest_plugins = ["pytest_homeassistant.plugins"]
+if os.environ.get("HAMCP_EXP_NODEBUG") == "1":
+
+    @pytest.fixture(autouse=True)
+    def enable_event_loop_debug() -> None:
+        return None
 
 # quickjs starts its shared worker thread on import; importing it here starts
 # that thread before any test, so Core's leftover-thread check never sees it.
