@@ -1,0 +1,171 @@
+name: TMP non-e2e checks
+on:
+  workflow_dispatch: null
+permissions:
+  contents: read
+env:
+  PYTHON_VERSION: '3.13'
+  UV_CACHE_DIR: /tmp/.uv-cache
+  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.11.0
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+jobs:
+  fast-checks:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Docs Size Check
+      run: "max_chars=16000\nmax_lines=200\nchars=$(LC_ALL=C.UTF-8 wc -m < AGENTS.md)\nlines=$(wc -l < AGENTS.md)\nif [ \"$chars\" -gt \"$max_chars\" ] || [ \"$lines\" -gt \"$max_lines\" ]; then\n  echo \"::error file=AGENTS.md::AGENTS.md is ${chars} Unicode characters and ${lines} lines; keep the canonical startup guidance at or below ${max_chars} characters and ${max_lines} lines, and move scoped detail to linked documents.\"\n  exit 1\nfi\n"
+    - name: HACS validation
+      if: success() || failure()
+      uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
+      with:
+        category: integration
+    - name: Remove vendored test fixtures
+      if: success() || failure()
+      run: rm -rf tests/initial_test_state
+    - name: Hassfest
+      if: success() || failure()
+      uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361
+    - name: Restore vendored test fixtures
+      if: success() || failure()
+      run: "git checkout HEAD -- tests/initial_test_state\nif ! git diff --quiet HEAD -- tests/initial_test_state; then\n  echo \"::error::tests/initial_test_state was not fully restored; the lint steps below would silently skip its files\"\n  exit 1\nfi\n"
+    - name: Install uv
+      if: success() || failure()
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Set up Python
+      if: success() || failure()
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Verify uv.lock is in sync with pyproject.toml
+      if: success() || failure()
+      run: uv lock --check
+    - name: Check dependency alignment with HA core constraints
+      if: success() || failure()
+      run: "minimum=$(python3 -c 'import json; print(json.load(open(\"hacs.json\"))[\"homeassistant\"])')\n[[ \"$minimum\" =~ ^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+$ ]]\nfailed=0\nfor ha_version in \"${HA_IMAGE_GHCR##*:}\" \"$minimum\"; do\n  status=0\n  uv run --no-project --with packaging python \\\n    scripts/check_ha_constraint_alignment.py \\\n    --ha-version \"$ha_version\" || status=$?\n  if [ \"$status\" -eq 78 ]; then\n    echo \"::warning::could not reach HA ${ha_version} constraints - dependency alignment for this version was not verified\"\n  elif [ \"$status\" -ne 0 ]; then\n    failed=1\n  fi\ndone\nexit \"$failed\"\n"
+    - name: Install dependencies
+      if: success() || failure()
+      run: uv sync --dev
+    - name: Run ruff check
+      if: success() || failure()
+      run: uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ scripts/
+    - name: Run ruff format check on changed Python files
+      if: success() || failure()
+      run: "# Changed-files-only gate per the maintainer call on issue #1318:\n# new edits must be formatted; pre-existing format-debt on\n# untouched files stays grandfathered. Avoids the disruption of a\n# repo-wide sweep while still preventing fresh debt from landing.\nif [ -z \"${GITHUB_BASE_REF}\" ]; then\n  echo \"::notice::no PR base ref (workflow_dispatch) - the ruff format check did not run\"\n  exit 0\nfi\ngit fetch --depth=1 origin \"${GITHUB_BASE_REF}\"\nbase_sha=$(git rev-parse \"origin/${GITHUB_BASE_REF}\")\nchanged_py=$(git diff --name-only --diff-filter=ACMR \"${base_sha}\" -- '*.py')\nif [ -z \"$changed_py\" ]; then\n  echo \"::notice::no Python files changed - the ruff format check did not run\"\n  exit 0\nfi\ncount=$(echo \"$changed_py\" | wc -l)\necho \"Checking ruff format on $count changed Python files:\"\necho \"$changed_py\" | sed 's/^/  /'\necho \"$changed_py\" | xargs uv run ruff format --check\n"
+    - name: Run ast-grep
+      if: success() || failure()
+      run: uv run ast-grep scan
+    - name: Run mypy
+      if: success() || failure()
+      run: 'status=0
+
+        uv run mypy src/ custom_components/ homeassistant-addon/ scripts/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy-dev/ || status=1
+
+        exit "$status"
+
+        '
+    - name: Check the ratchet baselines and files against the base
+      if: success() || failure()
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: "if [ -z \"$BASE_REF\" ]; then\n  echo \"not a pull request - no base branch to compare with\"\n  exit 0\nfi\nparents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')\nif [ \"$(echo \"$parents\" | wc -l)\" -ne 2 ]; then\n  echo \"::error::HEAD is not the pull request merge commit\"\n  exit 1\nfi\nbase_sha=$(echo \"$parents\" | head -n 1)\ngit fetch --depth=1 origin \"$base_sha\"\nstatus=0\nuv run python scripts/module_size_ratchet.py --base \"$base_sha\" || status=1\nuv run python scripts/duplicate_code_ratchet.py --base \"$base_sha\" || status=1\nexit \"$status\"\n"
+  site-checks:
+    name: Site (astro check + eslint a11y)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: site
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+    - name: Install dependencies
+      run: corepack npm ci
+    - name: Astro type & diagnostics check
+      run: npm run check
+    - name: ESLint (eslint-plugin-astro + jsx-a11y)
+      run: npm run lint
+    - name: Build site
+      run: npm run build
+    - name: Accessibility audit (axe-core)
+      run: npm run audit:a11y
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.6-python3.13-trixie-slim
+    timeout-minutes: 10
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-v1
+    - name: Install git and jq for workflow contract tests
+      run: "# Keep cached .debs after install so the cache stays warm for\n# future runs (default Debian behaviour deletes them).\nrm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\napt-get install -y -qq git jq >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+    - name: Install Python dependencies
+      run: uv sync --all-extras --dev
+    - name: Install JS test dependencies (jsdom, esbuild)
+      run: cd tests/js && corepack npm ci
+    - name: Run unit tests
+      run: uv run pytest tests/src/unit/ -n auto --tb=short -v
+    - name: Run BAT runner tests
+      run: uv run pytest tests/uat/ --ignore=tests/uat/stories/test_stories.py -n auto --tb=short -v
+    - name: Check unit tests left no local state
+      run: "if [ -e ~/.ha-mcp ]; then\n  find ~/.ha-mcp\n  echo \"::error::Unit tests wrote to ~/.ha-mcp\"\n  exit 1\nfi\n# procps (pgrep) is not in the slim image; read /proc directly.\nif grep -ls '[s]tdio_settings_sidecar' /proc/[0-9]*/cmdline; then\n  echo \"::error::Unit tests left a settings sidecar running\"\n  exit 1\nfi\n"
+    - name: Run add-on structure tests
+      run: uv run pytest tests/addon/ -n auto --tb=short -v --ignore=tests/addon/test_addon_startup.py
+  docker-validation:
+    name: Docker & Add-on Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        cache-binary: true
+    - name: Install uv
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Set up Python
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Install test dependencies
+      run: uv sync --dev
+    - name: "Pull python base image (GHCR mirror \u2192 ECR Public \u2192 Docker Hub)"
+      run: "PYTHON_BASE_ECR=$(sed -n 's/^ARG PYTHON_BASE=//p' Dockerfile)\n[ -n \"$PYTHON_BASE_ECR\" ] || { echo \"Dockerfile has no ARG PYTHON_BASE\"; exit 1; }\nPYTHON_BASE_MIRROR=\"ghcr.io/homeassistant-ai/ha-mcp-python-base@${PYTHON_BASE_ECR#*@}\"\nPYTHON_BASE_DOCKERHUB=\"docker.io/library/${PYTHON_BASE_ECR#public.ecr.aws/docker/library/}\"\nfor image in \"$PYTHON_BASE_MIRROR\" \"$PYTHON_BASE_ECR\" \"$PYTHON_BASE_DOCKERHUB\"; do\n  echo \"Trying $image...\"\n  if docker pull \"$image\"; then\n    echo \"PYTHON_BASE=$image\" >> \"$GITHUB_ENV\"\n    echo \"Pulled from $image\"\n    exit 0\n  fi\n  echo \"Failed to pull $image, trying next...\"\n  sleep 15\ndone\necho \"All registries failed\" && exit 1\n"
+    - name: Run add-on tests
+      run: uv run pytest tests/addon/ --ignore=tests/addon/test_skills_config.py --tb=short -v
+    - name: Validate docker-compose configuration
+      run: uv run pytest tests/test_docker/test_docker_compose.py -v
+    - name: Build and test standalone Docker image
+      run: uv run pytest tests/test_docker/test_docker_build.py -v
