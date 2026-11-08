@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [core, nodebug, noplugin, profile]
+        variant: [profile]
     runs-on: ubuntu-latest
     container:
       # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
@@ -98,6 +98,6 @@ jobs:
         for f in tests/src/unit/test_e2e_classifier_arms.py tests/src/unit/test_tools_config_scenes.py; do
           echo "===== $f"
           uv run python -m cProfile -o /tmp/p.prof -m pytest "$f" -q -p no:cacheprovider -o log_cli=false 2>&1 | tail -3
-          uv run python -c "import pstats; p=pstats.Stats('/tmp/p.prof'); p.sort_stats('cumulative').print_stats(45); p.sort_stats('tottime').print_stats(30)" | sed -n '1,200p'
+          uv run python -c "import pstats; p=pstats.Stats('/tmp/p.prof'); p.sort_stats('cumulative'); p.print_callers('threading.py.*\\(join\\)'); p.print_callers('_teardown_yield_fixture'); p.print_callees('_teardown_yield_fixture')" | sed -n '1,160p'
         done
 
