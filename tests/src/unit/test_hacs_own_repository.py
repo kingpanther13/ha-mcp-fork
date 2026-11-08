@@ -352,7 +352,10 @@ async def test_a_refused_download_on_a_doubled_marketplace_carries_the_way_out()
         )
 
     body = json.loads(str(excinfo.value))
-    assert "Repairs" in " ".join(body["error"]["suggestions"])
+    suggestions = " ".join(body["error"]["suggestions"])
+    assert "Repairs" in suggestions
+    assert "Route 1" in suggestions and "Route 2" in suggestions
+    assert "already provides this integration" not in suggestions
     assert body["installed"] == [
         "homeassistant-ai/ha-mcp",
         "homeassistant-ai/ha-mcp-integration",
