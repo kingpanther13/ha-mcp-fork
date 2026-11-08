@@ -575,9 +575,8 @@ class SystemTools:
         loaded integrations. Optional sections are selected with `include`.
 
         The result may include ``ha_mcp_update`` ``{current, latest,
-        update_available}``. When update_available is true, tell the user a
-        newer ha-mcp release is available; if it carries ``python_required``,
-        the release needs that Python, so give them ``upgrade_command``.
+        update_available}``. When update_available is true, tell the user a newer
+        ha-mcp release is available (with ``python_required``, give ``upgrade_command``).
 
         EXAMPLES:
         - ha_get_system_health(include="repairs,zha_network,zwave_network,config_check")
