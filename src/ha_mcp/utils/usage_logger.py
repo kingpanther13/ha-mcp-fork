@@ -385,7 +385,7 @@ def _redact_parameters(value: Any, _depth: int = 0) -> Any:
         if _JSON_CONTAINER_START.match(value):
             try:
                 return _redact_parameters(json.loads(value), _depth + 1)
-            except (ValueError, RecursionError):
+            except ValueError, RecursionError:
                 pass
         if any(_is_sensitive_key(name) for name in _QUOTED_MEMBER_NAME.findall(value)):
             return _UNPARSED_VALUE
@@ -505,8 +505,8 @@ class UsageLogger:
                         # only taken off the queue.
                         self._log_queue.task_done()
                 else:
-                    # Sleep briefly to avoid busy waiting
-                    threading.Event().wait(0.1)
+                    # Wait briefly to avoid busy waiting; shutdown() wakes it at once.
+                    self._stop_event.wait(0.1)
             except Exception as e:  # noqa: BLE001
                 # Silent error handling to avoid disrupting MCP server
                 print(f"Usage logger error: {e}")
