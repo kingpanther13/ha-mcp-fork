@@ -1,0 +1,66 @@
+name: TMP non-e2e checks
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  t-promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install ha-mcp, ruff + pytest
+        # The unit conftest imports ha_mcp (its helper-flow fixtures).
+        run: pip install -e . ruff pytest pytest-asyncio pytest-timeout
+
+      - name: Run the promote transform in place
+        id: promote
+        env:
+          BUMP: patch
+        run: |
+          set -euo pipefail
+          NEW=$(python3 scripts/webhook_proxy_sync.py --direction promote --bump "$BUMP")
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "New stable version: $NEW"
+
+      # The committed-tree drift guards are sync-point invariants: they skip in
+      # per-PR CI (dev intentionally runs ahead of stable between promotes) and
+      # run HERE, right after the transform, as its acceptance gate.
+      - name: Verify transform exactness (drift guards)
+        env:
+          WEBHOOK_PROXY_TREES_SYNCED: "1"
+        run: python3 -m pytest tests/src/unit/test_webhook_proxy_sync.py -q
+
+  reset-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install ha-mcp, ruff + pytest
+        # The unit conftest imports ha_mcp (its helper-flow fixtures).
+        run: pip install -e . ruff pytest pytest-asyncio pytest-timeout
+
+      - name: Run the reset transform in place
+        id: reset
+        run: |
+          set -euo pipefail
+          NEW=$(python3 scripts/webhook_proxy_sync.py --direction reset)
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "New dev version: $NEW"
+
+      # The committed-tree drift guards are sync-point invariants: they skip in
+      # per-PR CI (dev intentionally runs ahead of stable between promotes) and
+      # run HERE, right after the transform, as its acceptance gate.
+      - name: Verify transform exactness (drift guards)
+        env:
+          WEBHOOK_PROXY_TREES_SYNCED: "1"
+        run: python3 -m pytest tests/src/unit/test_webhook_proxy_sync.py -q
+
