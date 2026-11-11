@@ -19,8 +19,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.tools.search import entities as search_entities
-from ha_mcp.tools.smart_search._overview import SystemOverviewMixin
+from ha_mcp.tools.smart_search import SmartSearchTools
+from ha_mcp.tools.tools_search import SearchTools
 from ha_mcp.tools.util_helpers import merge_visibility_warnings
 from ha_mcp.visibility import resolver
 
@@ -71,12 +71,8 @@ async def test_exact_match_search_surfaces_visibility_load_warning(
 ) -> None:
     (tmp_path / "entity_visibility.json").write_text(_CORRUPT)
     monkeypatch.setattr(resolver, "get_data_dir", lambda: tmp_path)
-    res = await search_entities._exact_match_search(
-        core_client,
-        query="a",
-        domain_filter=None,
-        limit=10,
-    )
+    tools = SearchTools(core_client, SmartSearchTools(client=core_client))
+    res = await tools.ha_search(query="a", exact_match=True)
     assert any(_LOAD_FAIL in w for w in res.get("warnings", []))
 
 
@@ -88,7 +84,7 @@ async def test_system_overview_surfaces_visibility_load_warning(
 ) -> None:
     (tmp_path / "entity_visibility.json").write_text(_CORRUPT)
     monkeypatch.setattr(resolver, "get_data_dir", lambda: tmp_path)
-    mixin = SystemOverviewMixin()
-    mixin.client = core_client
-    res = await mixin.get_system_overview(detail_level="full")
+    res = await SmartSearchTools(client=core_client).get_system_overview(
+        detail_level="full"
+    )
     assert any(_LOAD_FAIL in w for w in res.get("warnings", []))
