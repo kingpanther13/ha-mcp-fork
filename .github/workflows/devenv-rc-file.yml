@@ -1,0 +1,54 @@
+name: Dev check (test files on real Core)
+
+# Throwaway fork-only workflow. Never ships in an upstream PR.
+# Runs the files named in .github/devenv/target.txt (one per line) with each
+# taken off every list of exempt tests, so each check reports what the files
+# still need.
+on:
+  push:
+    branches: ["devenv/rc-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  files:
+    if: github.ref_name != 'devenv/rc-base'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --all-extras --dev
+      - name: JS test deps (jsdom, esbuild)
+        run: cd tests/js && corepack npm ci
+      - name: targets
+        id: targets
+        run: |
+          files=$(tr -d '\r' < .github/devenv/target.txt | grep -v '^\s*$' | tr '\n' ' ')
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          for file in $files; do uv run python .github/devenv/delist.py "$file"; done
+      - name: ruff (lint, format, SLF001 private access)
+        if: success() || failure()
+        run: |
+          status=0
+          uv run ruff check ${{ steps.targets.outputs.files }} || status=1
+          uv run ruff format --check ${{ steps.targets.outputs.files }} || status=1
+          exit "$status"
+      - name: ast-grep rules
+        if: success() || failure()
+        run: uv run ast-grep scan ${{ steps.targets.outputs.files }}
+      - name: mypy
+        if: success() || failure()
+        run: uv run mypy ${{ steps.targets.outputs.files }}
+      - name: pytest
+        if: success() || failure()
+        run: uv run pytest ${{ steps.targets.outputs.files }} -q -p no:cacheprovider --tb=short --maxfail=1000 -rs
+      - name: modules that import from these files still import
+        if: success() || failure()
+        run: uv run python .github/devenv/importers.py ${{ steps.targets.outputs.files }}
