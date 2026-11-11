@@ -1,0 +1,52 @@
+name: Dev check (core reply guard)
+
+# Throwaway fork-only workflow. Never ships in an upstream PR.
+on:
+  push:
+    branches: ["devenv/core-reply-guard"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --all-extras --dev
+      - name: JS test deps (jsdom, esbuild)
+        run: cd tests/js && corepack npm ci
+      - name: measure the lists
+        if: success() || failure()
+        run: uv run python .github/devenv/measure.py
+      - name: ruff
+        if: success() || failure()
+        run: |
+          uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/ scripts/
+          uv run ruff format --check src/ tests/ custom_components/ scripts/
+      - name: ast-grep
+        if: success() || failure()
+        run: uv run ast-grep scan
+      - name: mypy on the tests
+        if: success() || failure()
+        run: uv run python scripts/mypy_tests_exact.py
+      - name: ratchets against upstream master
+        if: success() || failure()
+        run: |
+          git fetch --depth=1 https://github.com/homeassistant-ai/ha-mcp.git master
+          status=0
+          uv run python scripts/module_size_ratchet.py --base FETCH_HEAD || status=1
+          uv run python scripts/duplicate_code_ratchet.py --base FETCH_HEAD || status=1
+          uv run python scripts/stand_in_lists_ratchet.py --base FETCH_HEAD || status=1
+          exit "$status"
+      - name: unit and app suites
+        if: success() || failure()
+        run: uv run pytest tests/src/unit/ tests/addon/ -n auto -q -p no:cacheprovider --tb=short --maxfail=1000 --deselect tests/src/unit/test_fast_checks_workflow_shape.py::test_every_setup_uv_site_pins_a_full_version --deselect tests/src/unit/test_fast_checks_workflow_shape.py::test_renovate_matchstrings_actually_match_the_setup_uv_pins
