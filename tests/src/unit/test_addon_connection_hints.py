@@ -1,5 +1,7 @@
 """A refused app port must explain listener setup before blaming routing."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -37,6 +39,7 @@ async def test_refused_app_port_explains_listener_setup(
         patch("ha_mcp.tools.tools_addons.httpx.AsyncClient") as mock_httpx,
         patch("ha_mcp.tools.tools_addons.websockets.connect") as mock_ws_connect,
     ):
+        call: Callable[..., Awaitable[dict[str, Any]]]
         if websocket:
             mock_ws_connect.return_value.__aenter__ = AsyncMock(
                 side_effect=OSError("Connection refused")
@@ -129,6 +132,7 @@ async def test_app_timeout_does_not_change_listener_auth(
         patch("ha_mcp.tools.tools_addons.httpx.AsyncClient") as mock_httpx,
         patch("ha_mcp.tools.tools_addons.websockets.connect") as mock_ws_connect,
     ):
+        call: Callable[..., Awaitable[dict[str, Any]]]
         if websocket:
             ws = AsyncMock()
             ws.send.side_effect = TimeoutError("send timed out")

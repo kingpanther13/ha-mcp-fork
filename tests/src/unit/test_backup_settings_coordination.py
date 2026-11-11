@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import label_registry as lr
+from homeassistant.setup import async_setup_component
 
 from ha_mcp import backup_manager as bm
 from ha_mcp.backup_manager import DomainHandler, get_backup_manager
@@ -16,11 +18,12 @@ from ha_mcp.config import Settings
 
 def _settings(directory: Path | str = "", **values: Any) -> Settings:
     """The server's settings, independent of the developer's env and dotenv files."""
-    return Settings(
-        _env_file=None,
-        HAMCP_BACKUP_DIR=str(directory),
-        AUTO_BACKUP_THROTTLE_MINUTES=0,
-        **values,
+    return Settings.model_validate(
+        {
+            "HAMCP_BACKUP_DIR": str(directory),
+            "AUTO_BACKUP_THROTTLE_MINUTES": 0,
+            **values,
+        }
     )
 
 
@@ -69,10 +72,13 @@ async def test_settings_reload_preserves_restore_admission(
 
 
 async def test_settings_reload_keeps_source_pinned_during_rotation(
+    hass: HomeAssistant,
     core_client: HomeAssistantClient,
     label_registry: lr.LabelRegistry,
     tmp_path: Path,
 ) -> None:
+    # The config integration answers the label registry commands.
+    assert await async_setup_component(hass, "config", {})
     label = label_registry.async_create("Original")
     settings = _settings(tmp_path, AUTO_BACKUP_RETAIN_PER_ENTITY=1)
     manager = get_backup_manager(core_client, settings)
@@ -121,11 +127,13 @@ async def test_disabled_write_guard_does_not_create_backup_directory(
 
 
 async def test_forced_capture_creates_directory_off_event_loop(
+    hass: HomeAssistant,
     core_client: HomeAssistantClient,
     label_registry: lr.LabelRegistry,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    assert await async_setup_component(hass, "config", {})
     label = label_registry.async_create("Saved")
     directory = tmp_path / "first-capture"
     loop_thread = threading.get_ident()
