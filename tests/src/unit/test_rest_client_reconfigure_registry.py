@@ -3,6 +3,11 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant.common import MockConfigEntry
 
 from ha_mcp.client.rest_client import HomeAssistantAPIError, HomeAssistantClient
 
@@ -19,46 +24,48 @@ def client() -> HomeAssistantClient:
         return value
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "method_name", ["list_entity_registry", "list_device_registry"]
-)
-async def test_registry_list_accepts_valid_result_envelope(
-    client: HomeAssistantClient, method_name: str
+async def test_entity_registry_list_returns_cores_rows(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    core_client: HomeAssistantClient,
 ) -> None:
-    """Registry methods return dictionaries from a valid WebSocket result."""
-    with patch.object(
-        client,
-        "send_websocket_message",
-        new=AsyncMock(return_value={"success": True, "result": [{"id": "device-1"}]}),
-    ):
-        result = await getattr(client, method_name)()
+    """The entity list is the rows Core's registry holds."""
+    assert await async_setup_component(hass, "config", {})
+    entry = entity_registry.async_get_or_create("light", "demo", "uid-1")
 
-    assert result == [{"id": "device-1"}]
+    result = await core_client.list_entity_registry()
+
+    assert [row["entity_id"] for row in result] == [entry.entity_id]
 
 
-@pytest.mark.asyncio
+async def test_device_registry_list_returns_cores_rows(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    core_client: HomeAssistantClient,
+) -> None:
+    """The device list is the rows Core's registry holds."""
+    assert await async_setup_component(hass, "config", {})
+    config_entry = MockConfigEntry(domain="demo")
+    config_entry.add_to_hass(hass)
+    device = device_registry.async_get_or_create(
+        config_entry_id=config_entry.entry_id, identifiers={("demo", "dev-1")}
+    )
+
+    result = await core_client.list_device_registry()
+
+    assert [row["id"] for row in result] == [device.id]
+
+
 @pytest.mark.parametrize(
     "method_name", ["list_entity_registry", "list_device_registry"]
 )
 async def test_registry_list_rejects_error_envelope(
-    client: HomeAssistantClient, method_name: str
+    core_client: HomeAssistantClient, method_name: str
 ) -> None:
-    """A WebSocket error envelope is not silently converted to an empty list."""
-    with (
-        patch.object(
-            client,
-            "send_websocket_message",
-            new=AsyncMock(
-                return_value={
-                    "success": False,
-                    "error": {"code": "not_loaded", "message": "registry unavailable"},
-                }
-            ),
-        ),
-        pytest.raises(HomeAssistantAPIError, match="registry unavailable"),
-    ):
-        await getattr(client, method_name)()
+    """Core's error reply is not silently converted to an empty list."""
+    # The "config" integration is not set up, so Core rejects the command.
+    with pytest.raises(HomeAssistantAPIError, match="unknown_command"):
+        await getattr(core_client, method_name)()
 
 
 @pytest.mark.asyncio
