@@ -1,0 +1,5 @@
+tests/src/unit/test_radio_zigbee_component_routing.py
+tests/src/unit/test_rest_client_states.py
+tests/src/unit/test_ha_search_response_contract.py
+tests/src/unit/test_backup_restore_preflight.py
+tests/src/unit/test_component_dashboards_docs.py
