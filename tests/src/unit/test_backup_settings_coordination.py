@@ -20,6 +20,7 @@ def _settings(directory: Path | str = "", **values: Any) -> Settings:
     """The server's settings, independent of the developer's env and dotenv files."""
     return Settings.model_validate(
         {
+            "ENABLE_AUTO_BACKUP": True,
             "HAMCP_BACKUP_DIR": str(directory),
             "AUTO_BACKUP_THROTTLE_MINUTES": 0,
             **values,
