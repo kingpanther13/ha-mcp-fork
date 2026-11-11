@@ -72,12 +72,8 @@ def _element(el_id: str) -> str:
 def min_dom(settings_script: str) -> str:
     """Every element the settings script looks up by a literal id."""
     ids = dict.fromkeys(re.findall(r"getElementById\('([^']+)'\)", settings_script))
-    body = "
-".join(_element(i) for i in ids)
-    return f"<!DOCTYPE html>
-<html><body>
-{body}
-</body></html>"
+    body = "\n".join(_element(i) for i in ids)
+    return f"<!DOCTYPE html>\n<html><body>\n{body}\n</body></html>"
 
 
 def _assert_clean_init(result: HarnessResult) -> None:
@@ -163,7 +159,9 @@ def test_key_list_is_editable_only_while_redact_secrets_is_on(
     ]
 
 
-def test_turning_redact_secrets_on_unlocks_the_key_list(settings_script: str, min_dom: str) -> None:
+def test_turning_redact_secrets_on_unlocks_the_key_list(
+    settings_script: str, min_dom: str
+) -> None:
     result = run_script(
         settings_script,
         initial_html=min_dom,
