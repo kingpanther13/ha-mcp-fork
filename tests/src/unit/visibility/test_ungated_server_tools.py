@@ -25,9 +25,7 @@ from ha_mcp.visibility.enforcement import (
 )
 from ha_mcp.visibility.model import VisibilityConfig
 
-_TEXT = "action: light.turn_on
-target:
-  entity_id: light.kitchen"
+_TEXT = "action: light.turn_on\ntarget:\n  entity_id: light.kitchen"
 _GUIDE_ARGS = {"file": "references/automation-actions.md"}
 
 
