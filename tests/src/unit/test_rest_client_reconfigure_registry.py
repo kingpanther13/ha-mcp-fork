@@ -64,7 +64,7 @@ async def test_registry_list_rejects_error_envelope(
 ) -> None:
     """Core's error reply is not silently converted to an empty list."""
     # The "config" integration is not set up, so Core rejects the command.
-    with pytest.raises(HomeAssistantAPIError, match="unknown_command"):
+    with pytest.raises(HomeAssistantAPIError, match="Unknown command"):
         await getattr(core_client, method_name)()
 
 
