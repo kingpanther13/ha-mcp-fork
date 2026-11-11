@@ -113,6 +113,13 @@ def _tool(ran: list[str], client: Any, domain: str) -> Any:
     return tool
 
 
+# Core closes a socket whose token it refused; the client's close reply then
+# re-arms aiohttp's heartbeat timer on that closed server socket, which nothing
+# cancels (as in test_component_todo_items.py).
+_REFUSED_SOCKET_TIMER = pytest.mark.parametrize("expected_lingering_timers", [True])
+
+
+@_REFUSED_SOCKET_TIMER
 @pytest.mark.usefixtures("settings")
 async def test_mandatory_write_reports_the_failure_and_stays_blocked(
     refusal: tuple[HomeAssistantClient, str, tuple[str, str]],
@@ -140,6 +147,7 @@ async def test_on_demand_capture_reports_a_missing_tools_entry(
     assert _code(exc) == "COMPONENT_NOT_INSTALLED"
 
 
+@_REFUSED_SOCKET_TIMER
 async def test_on_demand_capture_reports_the_failure(
     refusal: tuple[HomeAssistantClient, str, tuple[str, str]],
     settings: SimpleNamespace,

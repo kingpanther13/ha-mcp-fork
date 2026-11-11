@@ -15,6 +15,7 @@ import os
 import socket
 import sys
 from contextlib import asynccontextmanager
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -147,6 +148,9 @@ def _worker(
     _clear_worker_env(monkeypatch)
     _install_helpers(monkeypatch)  # before the stub uvicorn: the guard imports it
     _stub_ha_mcp_surface(monkeypatch, mcp=_FakeMcp())
+    # An imported package has a spec; the post-start version check looks it up.
+    spec = ModuleSpec("ha_mcp", None, is_package=True)
+    monkeypatch.setattr(sys.modules["ha_mcp"], "__spec__", spec)
     sys.modules["ha_mcp.config"].get_global_settings().ipv6_allowed_networks = ""
     uvicorn = _Uvicorn(monkeypatch, starts=starts)
     manager = es.EmbeddedServerManager(hass, add_server_entry(hass, options=options))
@@ -206,7 +210,10 @@ async def test_readiness_ignores_another_process_on_the_port(
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as other:
         other.bind(("127.0.0.1", 0))
         other.listen()
-        options = {OPT_SERVER_PORT: other.getsockname()[1]}
+        options = {
+            OPT_BIND_HOST: BIND_HOST_LOOPBACK,
+            OPT_SERVER_PORT: other.getsockname()[1],
+        }
 
         never_started, _ = _worker(hass, monkeypatch, options, starts=False)
         with pytest.raises(es.EmbeddedServerError, match="did not become reachable"):
