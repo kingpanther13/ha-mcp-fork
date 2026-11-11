@@ -8,7 +8,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
 import ha_mcp.backup_manager as bm
-import ha_mcp.tools.tools_config_dashboards as dash
 from ha_mcp.client.rest_client import HomeAssistantClient
 
 _CONFIG = {"views": [{"title": "Overview"}]}
@@ -48,8 +47,6 @@ async def test_legacy_read_of_lovelace_leaves_core_to_pick_the_store(
     )
     assert saved["success"] is True
 
-    config, _config_hash = await dash._get_dashboard_config_internal(
-        core_client, "lovelace"
-    )
+    got = await bm.fetch_dashboard(core_client, "lovelace")
 
-    assert config == _CONFIG
+    assert got == {"dashboard": None, "config": _CONFIG}
