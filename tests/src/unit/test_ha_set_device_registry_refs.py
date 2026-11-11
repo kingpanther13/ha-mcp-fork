@@ -10,6 +10,7 @@ cannot be read — a degraded lookup must not let a dangling reference through.
 from __future__ import annotations
 
 import json
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -94,14 +95,18 @@ class TestSetDeviceRegistryReferences:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         area_registry.async_create("Living Room")
-        send = AsyncMock(side_effect=HomeAssistantConnectionError("no answer"))
-        monkeypatch.setattr(core_client, "send_websocket_message", send)
+        monkeypatch.setattr(
+            core_client,
+            "send_websocket_message",
+            AsyncMock(side_effect=HomeAssistantConnectionError("no answer")),
+        )
 
         with pytest.raises(ToolError) as exc_info:
             await tools.ha_set_device(device_id=device.id, area_id="living_room")
 
         error_data = json.loads(str(exc_info.value))
         assert error_data["error"]["code"] == "CONNECTION_FAILED"
+        send = cast(AsyncMock, core_client.send_websocket_message)
         assert [c.args[0]["type"] for c in send.call_args_list] == [
             "config/area_registry/list"
         ]
