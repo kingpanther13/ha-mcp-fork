@@ -1,0 +1,5 @@
+tests/src/unit/test_entity_expose_changed.py
+tests/src/unit/test_remove_entity_error_code.py
+tests/src/unit/test_script_run.py
+tests/src/unit/test_integration_log_level.py
+tests/src/unit/test_catalog_webhook.py
