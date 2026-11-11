@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -133,7 +134,7 @@ def test_sigkilled_sidecar_url_is_hidden_while_its_parent_runs(
     monkeypatch.delenv("HA_MCP_DISABLE_SETTINGS_UI", raising=False)
     real_popen = subprocess.Popen
 
-    def spawn(_cmd: list[str], **kwargs: object) -> subprocess.Popen[bytes]:
+    def spawn(_cmd: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
         proc = real_popen(
             [sys.executable, "-c", "import time; time.sleep(60)"], **kwargs
         )

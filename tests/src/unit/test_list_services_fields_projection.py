@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.service import async_set_service_schema
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantClient
@@ -18,13 +19,23 @@ from ha_mcp.tools.tools_services import ServiceDiscoveryTools
 async def list_services_tool(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> Any:
-    """``ha_list_services`` on a ``hass`` with light.turn_on and light.turn_off."""
+    """``ha_list_services`` on a ``hass`` with light.turn_on and light.turn_off.
+
+    Each service is described the way an integration describes a service it
+    defines at runtime, so Core reads no services.yaml for it.
+    """
 
     async def _noop(call: ServiceCall) -> None:
         return None
 
-    hass.services.async_register("light", "turn_on", _noop)
-    hass.services.async_register("light", "turn_off", _noop)
+    for service, description in (
+        ("turn_on", "Turn on a light"),
+        ("turn_off", "Turn off a light"),
+    ):
+        hass.services.async_register("light", service, _noop)
+        async_set_service_schema(
+            hass, "light", service, {"description": description, "fields": {}}
+        )
     return ServiceDiscoveryTools(component_core_client).ha_list_services
 
 
