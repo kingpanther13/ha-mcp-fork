@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 
 from ha_mcp import server_lifespan
 from ha_mcp.client.rest_client import HomeAssistantClient, HomeAssistantConnectionError
@@ -22,10 +23,13 @@ NON_ADMIN_WARNING = "belongs to a non-admin user"
 
 
 @pytest.fixture
-def point_server_at(
-    core_client: HomeAssistantClient, monkeypatch: pytest.MonkeyPatch
+async def point_server_at(
+    hass: HomeAssistant,
+    core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[str, str | None], None]:
     """Configure the server's settings to talk to the real ``hass`` with a token."""
+    assert await async_setup_component(hass, "auth", {})
 
     def configure(token: str, url: str | None = None) -> None:
         monkeypatch.setenv("HOMEASSISTANT_URL", url or core_client.base_url)
