@@ -119,9 +119,19 @@ class _ProbeConfigFlow(ConfigFlow):
             return self.async_abort(reason="released")
         return self.async_create_entry(title=user_input["name"], data={})
 
+    async def async_step_private_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return self.async_abort(reason="not_reached")
 
-async def _set_up_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    return True
+    async def async_step_private_step(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return self.async_abort(reason="not_reached")
+
+
+async def _set_up_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    return None
 
 
 @pytest.fixture

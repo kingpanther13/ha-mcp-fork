@@ -16,6 +16,7 @@ import pytest
 import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.setup import async_setup_component
 
 from ha_mcp import backup_manager as bm
 from ha_mcp.client.rest_client import HomeAssistantClient
@@ -36,6 +37,7 @@ def settings(tmp_path: Path) -> SimpleNamespace:
 @pytest.fixture
 async def entry_id(hass: HomeAssistant) -> str:
     """The entry id of a Template sensor helper made by Core's config flow."""
+    assert await async_setup_component(hass, "config", {})
     result = await hass.config_entries.flow.async_init(
         "template", context={"source": "user"}
     )
