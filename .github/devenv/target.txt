@@ -1,0 +1,2 @@
+tests/src/unit/test_settings_ui_fs_custom_paths_js.py
+tests/src/unit/test_statistics_resets.py
