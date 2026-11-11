@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.config import Settings, reset_global_settings
+from ha_mcp.config import get_global_settings, reset_global_settings
 from ha_mcp.tools.bug_report_config import collect_config_toggles
 from ha_mcp.tools.tools_dev import FEATURE_FLAG, DevTools
 from ha_mcp.utils.data_paths import get_data_dir
@@ -70,6 +70,6 @@ def test_issue_reports_say_whether_owner_text_is_active_but_not_what_it_says(
     value: str, is_set: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HAMCP_CUSTOM_INSTRUCTIONS", value)
-    toggles = collect_config_toggles(Settings())
+    toggles = collect_config_toggles(get_global_settings())
     assert toggles["custom_instructions_set"] is is_set
     assert value not in [v for v in toggles.values() if isinstance(v, str) and v]
