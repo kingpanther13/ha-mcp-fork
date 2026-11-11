@@ -1,0 +1,1 @@
+tests/src/unit/test_component_automation_client.py
