@@ -1,0 +1,1 @@
+tests/src/unit/test_dashboard_screenshot_no_config.py
