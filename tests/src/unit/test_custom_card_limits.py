@@ -154,6 +154,7 @@ async def test_linkedom_download_stops_before_buffering_an_oversized_response(
     aiohttp_client: ClientSessionGenerator,
     socket_enabled: None,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     chunk = b"x" * 64 * 1024
     total = 1024  # 64 MiB, far past the download limit
@@ -190,4 +191,11 @@ async def test_linkedom_download_stops_before_buffering_an_oversized_response(
     assert status["state"] == "unavailable"
     assert "linkedom" in status["reason"]
     transform.assert_not_called()
-    assert len(sent) < total
+    # The download ran and was cut off by its size limit, well before the end.
+    assert any(
+        isinstance(record.exc_info[1], ValueError)
+        and "size limit" in str(record.exc_info[1])
+        for record in caplog.records
+        if record.exc_info
+    )
+    assert 0 < len(sent) < total
