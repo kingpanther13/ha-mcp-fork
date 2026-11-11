@@ -46,6 +46,7 @@ async def _register_relay(
 
 async def test_relay_never_reuses_a_connection_the_server_has_closed(
     hass: HomeAssistant,
+    socket_enabled: None,
 ) -> None:
     """A pooled connection the in-process server had already timed out made
     the next request fail with a connection reset and a 502."""
@@ -59,6 +60,7 @@ async def test_relay_never_reuses_a_connection_the_server_has_closed(
     app.router.add_get("/private_x", peer_port)
     server = TestServer(app)
     await server.start_server()
+    assert server.port is not None
     try:
         session = await _register_relay(hass, server.port, "/private_x")
         url = f"http://127.0.0.1:{server.port}/private_x"
@@ -98,6 +100,7 @@ async def test_a_full_pool_logs_no_secret_path(
     app.router.add_route("*", "/p_s3cr3t", hang)
     server = TestServer(app)
     await server.start_server()
+    assert server.port is not None
     held: asyncio.Task[None] | None = None
     try:
         await _register_relay(hass, server.port, "/p_s3cr3t")
