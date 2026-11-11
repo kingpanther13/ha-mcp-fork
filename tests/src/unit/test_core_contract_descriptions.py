@@ -7,7 +7,6 @@ own registry.
 
 from typing import Any
 
-import pytest
 from homeassistant.components import websocket_api
 from homeassistant.components.websocket_api.messages import (
     BASE_COMMAND_MESSAGE_SCHEMA,
