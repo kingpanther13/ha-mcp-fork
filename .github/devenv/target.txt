@@ -1,0 +1,5 @@
+tests/src/unit/test_stdio_sidecar_disable.py
+tests/src/unit/test_backup_bulk_delete_outcomes.py
+tests/src/unit/test_operation_register_before_dispatch.py
+tests/src/unit/test_list_services_fields_projection.py
+tests/src/unit/test_custom_component_volume_writes.py
