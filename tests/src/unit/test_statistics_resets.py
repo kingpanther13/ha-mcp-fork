@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from homeassistant.components.recorder import Recorder
 from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.core import HomeAssistant
@@ -27,8 +28,8 @@ QUERY: dict[str, Any] = {
 @pytest.mark.parametrize("failure", ["not_asked", "rejected", "timeout", "empty"])
 async def test_unrecoverable_timestamp_is_omitted_without_losing_values(
     failure: str,
+    recorder_mock: Recorder,
     hass: HomeAssistant,
-    recorder_mock: Any,
     core_client: HomeAssistantClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
