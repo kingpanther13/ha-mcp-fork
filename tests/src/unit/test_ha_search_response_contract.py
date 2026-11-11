@@ -117,8 +117,10 @@ async def test_component_search_without_warnings_has_no_warnings_key(
 ) -> None:
     """An empty list is omitted, not returned as ``"warnings": []``."""
     _setup_visibility_disabled(tmp_path, monkeypatch)
-    assert await async_setup_component(hass, "automation", {})
-    assert await async_setup_component(hass, "lovelace", {})
+    # Every config surface the component reads is loaded, so none is reported
+    # as inaccessible.
+    for domain in ("automation", "script", "scene", "lovelace"):
+        assert await async_setup_component(hass, domain, {})
     entity_registry.async_get_or_create(
         "light", "test", "kitchen-light", suggested_object_id="kitchen"
     )
@@ -127,4 +129,4 @@ async def test_component_search_without_warnings_has_no_warnings_key(
     resp = await _build_ha_search(component_core_client)(query="kitchen")
 
     assert resp["entities"][0]["entity_id"] == "light.kitchen"
-    assert "warnings" not in resp
+    assert "warnings" not in resp, resp.get("warnings")
