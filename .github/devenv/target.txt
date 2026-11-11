@@ -1,0 +1,5 @@
+tests/src/unit/test_ha_timezone_component_routing.py
+tests/src/unit/test_tools_calendar_delete.py
+tests/src/unit/test_remove_entity_storage_helper.py
+tests/src/unit/test_supervisor_write_no_answer.py
+tests/src/unit/test_dashboard_write_not_sent.py
