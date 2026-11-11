@@ -6,18 +6,15 @@ revoked, refuses a rejected token on the next connect, and an unreachable
 address refuses the connection.
 """
 
-import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
-from homeassistant.components.websocket_api.const import SIGNAL_WEBSOCKET_DISCONNECTED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.setup import async_setup_component
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -68,23 +65,6 @@ async def on_removal(
         unsubscribe()
 
 
-@pytest.fixture
-async def core_closed(hass: HomeAssistant) -> AsyncIterator[asyncio.Event]:
-    """Set once Core has closed a WebSocket connection on its side, so a test
-    that has Core drop or refuse one ends after Core's cleanup."""
-    closed = asyncio.Event()
-
-    @callback
-    def disconnected() -> None:
-        closed.set()
-
-    unsubscribe = async_dispatcher_connect(
-        hass, SIGNAL_WEBSOCKET_DISCONNECTED, disconnected
-    )
-    yield closed
-    unsubscribe()
-
-
 def _revoke(hass: HomeAssistant, access_token: str) -> None:
     """Revoke the client's token; Core drops every connection it opened."""
     refresh_token = hass.auth.async_validate_access_token(access_token)
@@ -124,12 +104,15 @@ async def test_bulk_failure_mentioning_not_found_is_an_error_not_a_skip(
     assert [e["entity_id"] for e in result["errors"]] == ["sensor.a"]
 
 
+# Core closes the socket itself (a revoked or refused token); the client's
+# close reply then re-arms aiohttp's heartbeat timer on that closed server
+# socket (web_ws.py _on_data_received -> _reset_heartbeat), which nothing cancels.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_lost_connection_keeps_what_the_bulk_run_already_removed(
     hass: HomeAssistant,
     tools: EntityTools,
     hass_access_token: str,
     on_removal: Callable[[str, Callable[[], object]], None],
-    core_closed: asyncio.Event,
 ) -> None:
     """The removals that went through are reported, and the ids never reached
     are named so the caller can retry them."""
@@ -139,7 +122,6 @@ async def test_lost_connection_keeps_what_the_bulk_run_already_removed(
     result = await tools.ha_remove_entity(
         entity_id=["sensor.a", "sensor.b", "sensor.c"]
     )
-    await asyncio.wait_for(core_closed.wait(), 10)
 
     assert result["success"] is False
     assert result["removed"] == ["sensor.a"]
@@ -148,11 +130,12 @@ async def test_lost_connection_keeps_what_the_bulk_run_already_removed(
     assert result["not_attempted"] == ["sensor.c"]
 
 
+# The same closed server socket as the test above.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_token_rejected_on_reconnect_is_reported_as_auth(
     hass: HomeAssistant,
     tools: EntityTools,
     hass_access_token: str,
-    core_closed: asyncio.Event,
 ) -> None:
     """A token rejected on connect arrives as a command that was never sent,
     raised from the auth error: the per-id error names the auth failure, and
@@ -160,17 +143,18 @@ async def test_token_rejected_on_reconnect_is_reported_as_auth(
     _revoke(hass, hass_access_token)
 
     result = await tools.ha_remove_entity(entity_id=["sensor.a", "sensor.b"])
-    await asyncio.wait_for(core_closed.wait(), 10)
 
     assert result["errors"][0]["code"] == "AUTH_INVALID_TOKEN"
     assert result["not_attempted"] == ["sensor.a", "sensor.b"]
 
 
+# The same closed server socket for a rejected token.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 @pytest.mark.parametrize(
-    ("attribute", "value", "code", "core_refuses"),
+    ("attribute", "value", "code"),
     [
-        ("token", "rejected-token", "AUTH_INVALID_TOKEN", True),
-        ("base_url", UNREACHABLE_URL, "CONNECTION_FAILED", False),
+        ("token", "rejected-token", "AUTH_INVALID_TOKEN"),
+        ("base_url", UNREACHABLE_URL, "CONNECTION_FAILED"),
     ],
     ids=["rejected_token", "refused"],
 )
@@ -178,11 +162,9 @@ async def test_unsent_removal_mid_run_lists_only_the_ids_not_removed(
     tools: EntityTools,
     core_client: HomeAssistantClient,
     on_removal: Callable[[str, Callable[[], object]], None],
-    core_closed: asyncio.Event,
     attribute: str,
     value: str,
     code: str,
-    core_refuses: bool,
 ) -> None:
     """After sensor.a is removed the client needs a new connection, which Core
     refuses (a rejected token) or nothing accepts (a refused address)."""
@@ -194,8 +176,6 @@ async def test_unsent_removal_mid_run_lists_only_the_ids_not_removed(
         result = await tools.ha_remove_entity(
             entity_id=["sensor.a", "sensor.b", "sensor.c"]
         )
-    if core_refuses:
-        await asyncio.wait_for(core_closed.wait(), 10)
 
     assert result["removed"] == ["sensor.a"]
     assert result["errors"][0]["entity_id"] == "sensor.b"
