@@ -1,0 +1,45 @@
+name: Dev check (one test file on real Core)
+
+# Throwaway fork-only workflow. Never ships in an upstream PR.
+# Runs the file named in .github/devenv/target.txt with that file taken off
+# every list of exempt tests, so each check reports what the file still needs.
+on:
+  push:
+    branches: ["devenv/rc-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  file:
+    if: github.ref_name != 'devenv/rc-base'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --all-extras --dev
+      - name: target
+        id: target
+        run: |
+          file=$(tr -d '\r\n' < .github/devenv/target.txt)
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          uv run python .github/devenv/delist.py "$file"
+      - name: ruff (lint, format, SLF001 private access)
+        if: success() || failure()
+        run: |
+          status=0
+          uv run ruff check "${{ steps.target.outputs.file }}" || status=1
+          uv run ruff format --check "${{ steps.target.outputs.file }}" || status=1
+          exit "$status"
+      - name: ast-grep rules
+        if: success() || failure()
+        run: uv run ast-grep scan "${{ steps.target.outputs.file }}"
+      - name: mypy
+        if: success() || failure()
+        run: uv run mypy "${{ steps.target.outputs.file }}"
+      - name: pytest
+        if: success() || failure()
+        run: uv run pytest "${{ steps.target.outputs.file }}" -q -p no:cacheprovider --tb=short
