@@ -70,6 +70,7 @@ def test_issue_reports_say_whether_owner_text_is_active_but_not_what_it_says(
     value: str, is_set: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HAMCP_CUSTOM_INSTRUCTIONS", value)
+    reset_global_settings()
     toggles = collect_config_toggles(get_global_settings())
     assert toggles["custom_instructions_set"] is is_set
     assert value not in [v for v in toggles.values() if isinstance(v, str) and v]
