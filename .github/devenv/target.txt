@@ -1,0 +1,1 @@
+tests/src/unit/test_component_info_timezone_contract.py
