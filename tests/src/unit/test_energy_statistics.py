@@ -20,8 +20,8 @@ from ha_mcp.tools.tools_energy import EnergyTools
 
 
 async def test_energy_inspection_resolves_all_referenced_statistics_without_writes(
-    hass: HomeAssistant,
     recorder_mock: Recorder,
+    hass: HomeAssistant,
     core_client: HomeAssistantClient,
 ) -> None:
     assert await async_setup_component(hass, "energy", {})
@@ -89,8 +89,8 @@ async def test_energy_inspection_resolves_all_referenced_statistics_without_writ
 
 
 async def test_empty_energy_config_does_not_request_all_recorder_metadata(
-    hass: HomeAssistant,
     recorder_mock: Recorder,
+    hass: HomeAssistant,
     core_client: HomeAssistantClient,
 ) -> None:
     assert await async_setup_component(hass, "energy", {})
