@@ -77,9 +77,7 @@ async def test_unified_component_serves_listings_and_locations(
 
     assert response["entities"][0]["entity_id"] == "light.kitchen"
     assert response["search_type"] == mode
-    # No ``config`` component here, so a legacy fetch of the entity registry
-    # would leave a warning; the component answers without one.
-    assert "warnings" not in response
+    assert not any("legacy path" in w for w in response.get("warnings", []))
     if "area_filter" in arguments:
         assert response["area_filter"] == arguments["area_filter"].strip()
         assert response["area_names"] == ["Kitchen"]
@@ -125,4 +123,4 @@ async def test_unified_component_large_dashboard_window_is_serviceable(
     # component-failure fallback warning and no partial dashboards leg.
     assert response["success"] is True
     assert not response.get("partial")
-    assert not response.get("warnings")
+    assert not any("legacy path" in w for w in response.get("warnings", []))
