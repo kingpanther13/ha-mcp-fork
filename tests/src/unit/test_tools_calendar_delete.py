@@ -90,7 +90,7 @@ async def test_delete_routes_via_pooled_websocket(
         )
 
     send.assert_awaited_once()
-    message = send.await_args.args[0]
+    message = send.await_args_list[0].args[0]
     assert message["type"] == "calendar/event/delete"
     assert message["entity_id"] == "calendar.test"
     assert message["uid"] == "evt-123"
@@ -116,7 +116,7 @@ async def test_delete_forwards_recurrence_params(
             recurrence_range="THISANDFUTURE",
         )
 
-    message = send.await_args.args[0]
+    message = send.await_args_list[0].args[0]
     assert message["recurrence_id"] == "20260101T100000"
     assert message["recurrence_range"] == "THISANDFUTURE"
     assert calendar.deleted == [("evt-123", "20260101T100000", "THISANDFUTURE")]

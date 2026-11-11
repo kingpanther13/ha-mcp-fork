@@ -92,6 +92,10 @@ def test_unsent_save_is_reported_by_its_cause(
     assert error["write_committed"] is False
 
 
+# Core closes a socket whose token it refused; the client's close reply then
+# re-arms aiohttp's heartbeat timer on that closed server socket, which nothing
+# cancels.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_legacy_save_with_a_rejected_token_is_an_auth_error(
     hass: HomeAssistant,
     core_client: HomeAssistantClient,
@@ -155,6 +159,8 @@ async def test_component_edit_connect_failure_is_reported_by_its_type(
     messages.assert_not_called()
 
 
+# The refused socket's heartbeat timer, as above.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_component_edit_token_rejected_on_connect_is_an_auth_error(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> None:
@@ -185,6 +191,8 @@ async def test_component_edit_token_rejected_on_connect_is_an_auth_error(
     messages.assert_not_called()
 
 
+# The refused socket's heartbeat timer, as above.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_component_edit_token_rejected_on_the_probe_is_an_auth_error(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> None:

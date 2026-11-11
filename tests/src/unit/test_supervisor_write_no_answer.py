@@ -169,20 +169,29 @@ async def _call(
     return json.loads(str(exc_info.value))
 
 
+# Core closes a socket whose token it refused; the client's close reply then
+# re-arms aiohttp's heartbeat timer on that closed server socket, which nothing
+# cancels, so the cases whose connect Core refuses expect a lingering timer.
 @pytest.mark.parametrize(
-    ("scenario", "method", "code", "outcome"),
+    ("scenario", "method", "code", "outcome", "expected_lingering_timers"),
     [
         pytest.param(
-            _rejected_token, "POST", "AUTH_INVALID_TOKEN", None, id="unsent-rejected"
+            _rejected_token,
+            "POST",
+            "AUTH_INVALID_TOKEN",
+            None,
+            True,
+            id="unsent-rejected",
         ),
         pytest.param(
-            _core_down, "POST", "CONNECTION_FAILED", None, id="unsent-core-down"
+            _core_down, "POST", "CONNECTION_FAILED", None, False, id="unsent-core-down"
         ),
         pytest.param(
             _socket_not_ready,
             "POST",
             "CONNECTION_FAILED",
             None,
+            False,
             id="unsent-socket-not-ready",
         ),
         # A 403 retry after an attempt that got a client keeps a plain
@@ -193,6 +202,7 @@ async def _call(
             "POST",
             "CONNECTION_FAILED",
             "unknown",
+            True,
             id="rejected-after-a-sent-attempt",
         ),
         pytest.param(
@@ -200,6 +210,7 @@ async def _call(
             "POST",
             "TIMEOUT_OPERATION",
             "unknown",
+            False,
             id="timeout",
         ),
         pytest.param(
@@ -207,6 +218,7 @@ async def _call(
             "GET",
             "CONNECTION_FAILED",
             None,
+            False,
             id="read-connection-drop",
         ),
     ],
@@ -232,6 +244,8 @@ async def test_unknown_outcome_only_when_a_write_may_have_been_sent(
         assert payload["method"] == method
 
 
+# The refused socket's heartbeat timer, as in the table above.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_rejected_token_does_not_suggest_checking_app_support(
     monkeypatch: pytest.MonkeyPatch,
     hass: HomeAssistant,
