@@ -6,11 +6,11 @@ import httpx
 import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.tools_addons import _call_addon_api, _call_addon_ws
 
 from .test_tools_addons import (
     _RUNNING_ADDON_INFO,
-    _make_mock_client,
     _parse_tool_error,
 )
 
@@ -20,11 +20,14 @@ from .test_tools_addons import (
 @pytest.mark.parametrize("slug", ["test_addon", "5c53de3b_esphome"])
 @pytest.mark.parametrize("port", [6052, 9999])
 async def test_refused_app_port_explains_listener_setup(
-    monkeypatch: pytest.MonkeyPatch, websocket: bool, slug: str, port: int
+    core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
+    websocket: bool,
+    slug: str,
+    port: int,
 ) -> None:
     """Both proxy transports must return actionable setup and auth guidance."""
     monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-test-token")
-    client = _make_mock_client()
     with (
         patch(
             "ha_mcp.tools.tools_addons.get_addon_info",
@@ -50,7 +53,7 @@ async def test_refused_app_port_explains_listener_setup(
             call = _call_addon_api
 
         with pytest.raises(ToolError) as exc_info:
-            await call(client, slug, "/", port=port)
+            await call(core_client, slug, "/", port=port)
 
     result = _parse_tool_error(exc_info)
     assert result["error"]["code"] == "CONNECTION_FAILED"
@@ -69,11 +72,12 @@ async def test_refused_app_port_explains_listener_setup(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("port", [None, 6052])
 async def test_connect_timeout_preserves_route_guidance(
-    monkeypatch: pytest.MonkeyPatch, port: int | None
+    core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
+    port: int | None,
 ) -> None:
     """A request that never connected needs connectivity advice, not status checks."""
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
-    client = _make_mock_client()
     with (
         patch(
             "ha_mcp.tools.tools_addons.get_addon_info",
@@ -91,7 +95,7 @@ async def test_connect_timeout_preserves_route_guidance(
         http_client.request.side_effect = httpx.ConnectTimeout("connect timed out")
         mock_httpx.return_value.__aenter__ = AsyncMock(return_value=http_client)
         with pytest.raises(ToolError) as exc_info:
-            await _call_addon_api(client, "test_addon", "/", port=port)
+            await _call_addon_api(core_client, "test_addon", "/", port=port)
 
     result = _parse_tool_error(exc_info)
     guidance = " ".join(
@@ -102,18 +106,20 @@ async def test_connect_timeout_preserves_route_guidance(
     if port:
         assert "'port' parameter" in guidance and "Ingress" in guidance
     else:
-        assert client.base_url in guidance and "connectivity" in guidance
+        assert core_client.base_url in guidance and "connectivity" in guidance
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("websocket", [False, True])
 @pytest.mark.parametrize("port", [None, 6052])
 async def test_app_timeout_does_not_change_listener_auth(
-    monkeypatch: pytest.MonkeyPatch, websocket: bool, port: int | None
+    core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
+    websocket: bool,
+    port: int | None,
 ) -> None:
     """A connected app timing out must not prompt disabling authentication."""
     monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-test-token")
-    client = _make_mock_client()
     with (
         patch(
             "ha_mcp.tools.tools_addons.get_addon_info",
@@ -138,7 +144,7 @@ async def test_app_timeout_does_not_change_listener_auth(
 
         with pytest.raises(ToolError) as exc_info:
             await call(
-                client, "5c53de3b_esphome", "/", port=port, body={"command": "run"}
+                core_client, "5c53de3b_esphome", "/", port=port, body={"command": "run"}
             )
 
     result = _parse_tool_error(exc_info)

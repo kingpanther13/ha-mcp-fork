@@ -1,0 +1,5 @@
+tests/src/unit/test_helper_core_payload.py
+tests/src/unit/test_backup_settings_coordination.py
+tests/src/unit/test_statistics_units.py
+tests/src/unit/test_addon_connection_hints.py
+tests/src/unit/test_options_restore_review.py
