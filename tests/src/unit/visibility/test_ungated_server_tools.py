@@ -8,7 +8,7 @@ entity_ids that collide with a user's hidden set.
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -84,8 +84,11 @@ async def test_server_text_naming_hidden_entity_is_not_refused(
     context: SimpleNamespace,
 ) -> None:
     hass.states.async_set("light.kitchen", "on")
-    get_states = AsyncMock(side_effect=HomeAssistantConnectionError("ha down"))
-    monkeypatch.setattr(core_client, "get_states", get_states)
+    monkeypatch.setattr(
+        core_client,
+        "get_states",
+        AsyncMock(side_effect=HomeAssistantConnectionError("ha down")),
+    )
     set_config(enabled=True, enforce=True, deny_entity_ids=["light.kitchen"])
 
     result = await _ChainedEnforcement(core_client).on_call_tool(
@@ -93,7 +96,7 @@ async def test_server_text_naming_hidden_entity_is_not_refused(
     )
 
     assert result.content[0].text == _TEXT
-    get_states.assert_not_called()
+    cast(AsyncMock, core_client.get_states).assert_not_called()
 
 
 async def test_skill_guide_is_served_when_visibility_config_cannot_load(
