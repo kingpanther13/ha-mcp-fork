@@ -30,13 +30,16 @@ async def test_a_payload_warning_reaches_the_top_level_not_data(
 @pytest.mark.asyncio
 async def test_payload_and_timezone_warnings_come_back_as_one_list(
     core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Payload warnings and the wrapper's own fetch warning share one list.
 
     Without conversion the wrapper hands the caller's own dict through as
     ``data``, so this path also shows the lift leaves that dict untouched.
     """
-    core_client.get_config = AsyncMock(side_effect=OSError("connection refused"))
+    monkeypatch.setattr(
+        core_client, "get_config", AsyncMock(side_effect=OSError("connection refused"))
+    )
     data = {"success": True, "warnings": ["payload note"]}
     result = await add_timezone_metadata(core_client, data, convert_timestamps=False)
     payload_note, tz_warning = result["warnings"]
@@ -70,11 +73,16 @@ async def test_history_warnings_are_one_top_level_list_in_order(
     recorder_mock: Recorder,
     hass: HomeAssistant,
     core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``ha_get_history`` returns payload, timezone and ``fields`` warnings as
     one top-level list, in the order they arise, with none left in ``data``."""
     assert await async_setup_component(hass, "history", {})
-    core_client.get_config = AsyncMock(side_effect=HomeAssistantConnectionError("down"))
+    monkeypatch.setattr(
+        core_client,
+        "get_config",
+        AsyncMock(side_effect=HomeAssistantConnectionError("down")),
+    )
     result = await HistoryTools(core_client).ha_get_history(
         entity_ids="sensor.temp", summary=True, fields=["nonexistent"]
     )
