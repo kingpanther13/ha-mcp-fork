@@ -18,7 +18,10 @@ from ._component_core import ws_result
 def _register(hass: HomeAssistant, command: str, **fields: Any) -> None:
     """Register ``command`` with the given request fields, as an integration does."""
 
-    @websocket_api.websocket_command({"type": command, **fields})
+    schema: dict[Any, Any] = {"type": command}
+    schema.update(fields)
+
+    @websocket_api.websocket_command(schema)
     @callback
     def handler(
         hass: HomeAssistant,
