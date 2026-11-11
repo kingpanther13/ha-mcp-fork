@@ -65,9 +65,8 @@ async def test_nested_unsupported_validator_cannot_be_marked_complete(
     inner = BASE_COMMAND_MESSAGE_SCHEMA.extend({"type": "energy/save_prefs"}).extend(
         {"future": opaque}
     )
-    validator = cv.key_value_schemas(
-        "kind", {"outer": cv.key_value_schemas("sub", {"inner": inner})}
-    )
+    nested: Any = cv.key_value_schemas("sub", {"inner": inner})
+    validator = cv.key_value_schemas("kind", {"outer": nested})
     assert await async_setup_component(hass, "websocket_api", {})
     _register(hass, "energy/save_prefs", validator)
     result = module.describe_contract(hass, "energy/save_prefs")
