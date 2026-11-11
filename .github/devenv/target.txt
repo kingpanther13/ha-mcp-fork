@@ -1,0 +1,1 @@
+tests/src/unit/test_core_contract_descriptions.py
