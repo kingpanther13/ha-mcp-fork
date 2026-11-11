@@ -1,0 +1,1 @@
+tests/src/unit/test_ha_set_device_registry_refs.py
