@@ -14,7 +14,6 @@ import pytest
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import (
     MockConfigEntry,
@@ -53,7 +52,7 @@ _DOMAIN = "ignored_flow_test"
 class _OptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> config_entries.ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(
                 step_id="init", data_schema=vol.Schema({vol.Optional("host"): str})
