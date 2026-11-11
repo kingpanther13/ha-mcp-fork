@@ -77,10 +77,9 @@ async def test_unified_component_serves_listings_and_locations(
 
     assert response["entities"][0]["entity_id"] == "light.kitchen"
     assert response["search_type"] == mode
-    # Only the component labels a listing "match_all"; the legacy listing
-    # modes label their records with the mode name.
-    if "query" not in arguments:
-        assert response["entities"][0]["match_type"] == "match_all"
+    # No ``config`` component here, so a legacy fetch of the entity registry
+    # would leave a warning; the component answers without one.
+    assert "warnings" not in response
     if "area_filter" in arguments:
         assert response["area_filter"] == arguments["area_filter"].strip()
         assert response["area_names"] == ["Kitchen"]
