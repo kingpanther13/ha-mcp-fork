@@ -137,7 +137,7 @@ class TestSetDeviceRegistryReferences:
         device_registry: dr.DeviceRegistry,
         label_registry: lr.LabelRegistry,
     ) -> None:
-        """An empty list is the documented clear sentinel — nothing to validate."""
+        """An empty list is the documented clear sentinel â€” nothing to validate."""
         label = label_registry.async_create("Important")
         device_registry.async_update_device(device.id, labels={label.label_id})
 
