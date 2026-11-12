@@ -620,9 +620,12 @@ jobs:
         python3 - <<'PY'
         import json, os, re, tomllib, urllib.request
 
-        with urllib.request.urlopen(
-            "https://version.home-assistant.io/beta.json", timeout=30
-        ) as reply:
+        # The endpoint refuses urllib's default User-Agent with a 403.
+        request = urllib.request.Request(
+            "https://version.home-assistant.io/beta.json",
+            headers={"User-Agent": "ha-mcp-ci"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as reply:
             beta = json.load(reply)["homeassistant"]["default"]
         if not re.fullmatch(r"\d{4}\.\d{1,2}\.\d+([.]dev\d+|b\d+)?", beta):
             print(f"::error::Unexpected beta Core version: {beta}")

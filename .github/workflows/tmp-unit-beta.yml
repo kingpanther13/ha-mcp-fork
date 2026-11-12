@@ -32,12 +32,13 @@ jobs:
         submodules: true
     - name: Resolve the beta Core version
       id: beta
-      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\nwith urllib.request.urlopen(\n    \"https://version.home-assistant.io/beta.json\", timeout=30\n) as reply:\n    beta = json.load(reply)[\"\
-        homeassistant\"][\"default\"]\nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\")\n    raise SystemExit(1)\n\
-        with open(\"pyproject.toml\", \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry in dev\n    if isinstance(entry,\
-        \ str) and entry.startswith(\"homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\")\n    raise SystemExit(1)\nsuperfluous\
-        \ = beta == pins[0]\nif superfluous:\n    print(f\"::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"GITHUB_OUTPUT\"], \"a\") as out:\n  \
-        \  out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\n\")\nPY\n"
+      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\n# The endpoint refuses urllib's default User-Agent with a 403.\nrequest = urllib.request.Request(\n    \"https://version.home-assistant.io/beta.json\"\
+        ,\n    headers={\"User-Agent\": \"ha-mcp-ci\"},\n)\nwith urllib.request.urlopen(request, timeout=30) as reply:\n    beta = json.load(reply)[\"homeassistant\"][\"default\"]\nif not re.fullmatch(r\"\
+        \\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\")\n    raise SystemExit(1)\nwith open(\"pyproject.toml\", \"rb\") as project:\n\
+        \    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry in dev\n    if isinstance(entry, str) and entry.startswith(\"homeassistant==\"\
+        )\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\")\n    raise SystemExit(1)\nsuperfluous = beta == pins[0]\nif superfluous:\n    print(f\"\
+        ::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"GITHUB_OUTPUT\"], \"a\") as out:\n    out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\\
+        n\")\nPY\n"
     - name: Install Python dependencies with the beta Core
       id: install
       if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
@@ -73,12 +74,13 @@ jobs:
         submodules: true
     - name: Resolve the beta Core version
       id: beta
-      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\nwith urllib.request.urlopen(\n    \"https://version.home-assistant.io/beta.json\", timeout=30\n) as reply:\n    beta = json.load(reply)[\"\
-        homeassistant\"][\"default\"]\n    beta = \"2026.11.0b6\"\nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\"\
-        )\n    raise SystemExit(1)\nwith open(\"pyproject.toml\", \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry\
-        \ in dev\n    if isinstance(entry, str) and entry.startswith(\"homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\"\
-        )\n    raise SystemExit(1)\nsuperfluous = beta == pins[0]\nif superfluous:\n    print(f\"::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"\
-        GITHUB_OUTPUT\"], \"a\") as out:\n    out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\n\")\nPY\n"
+      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\n# The endpoint refuses urllib's default User-Agent with a 403.\nrequest = urllib.request.Request(\n    \"https://version.home-assistant.io/beta.json\"\
+        ,\n    headers={\"User-Agent\": \"ha-mcp-ci\"},\n)\nwith urllib.request.urlopen(request, timeout=30) as reply:\n    beta = json.load(reply)[\"homeassistant\"][\"default\"]\n    beta = \"2026.11.0b6\"\
+        \nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\")\n    raise SystemExit(1)\nwith open(\"pyproject.toml\"\
+        , \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry in dev\n    if isinstance(entry, str) and entry.startswith(\"\
+        homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\")\n    raise SystemExit(1)\nsuperfluous = beta == pins[0]\nif superfluous:\n\
+        \    print(f\"::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"GITHUB_OUTPUT\"], \"a\") as out:\n    out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\\
+        n\")\nPY\n"
     - name: Install Python dependencies with the beta Core
       id: install
       if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
