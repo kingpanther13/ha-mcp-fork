@@ -1,0 +1,95 @@
+name: tmp unit beta
+'on':
+  push:
+    branches:
+    - ci/tmp-unit-beta
+permissions:
+  contents: read
+env:
+  PYTHON_VERSION: '3.14'
+  UV_CACHE_DIR: /tmp/.uv-cache
+  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.11.1
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+jobs:
+  as-written:
+    name: as written
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.7-python3.14-trixie-slim
+    timeout-minutes: 15
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-v1
+    - name: Install git and jq for workflow contract tests
+      run: "rm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\napt-get install -y -qq git\
+        \ jq >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Resolve the beta Core version
+      id: beta
+      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\nwith urllib.request.urlopen(\n    \"https://version.home-assistant.io/beta.json\", timeout=30\n) as reply:\n    beta = json.load(reply)[\"\
+        homeassistant\"][\"default\"]\nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\")\n    raise SystemExit(1)\n\
+        with open(\"pyproject.toml\", \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry in dev\n    if isinstance(entry,\
+        \ str) and entry.startswith(\"homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\")\n    raise SystemExit(1)\nsuperfluous\
+        \ = beta == pins[0]\nif superfluous:\n    print(f\"::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"GITHUB_OUTPUT\"], \"a\") as out:\n  \
+        \  out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\n\")\nPY\n"
+    - name: Install Python dependencies with the beta Core
+      id: install
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      env:
+        BETA_CORE: ${{ steps.beta.outputs.version }}
+      run: "uv sync --all-extras --dev\n# The lock holds the stable Core. Core's test plugin is built from the\n# same Core release, so both move to the beta together.\nif ! uv pip install \"homeassistant==$BETA_CORE\"\
+        \ \"pytest-homeassistant==$BETA_CORE\"; then\n  echo \"::error::PyPI has no installable homeassistant and pytest-homeassistant $BETA_CORE\"\n  exit 1\nfi\nuv run --no-sync python -c \\\n  'import\
+        \ os; from homeassistant.const import __version__ as v; assert v == os.environ[\"BETA_CORE\"], v'\n"
+    - name: Run unit tests on the beta Core
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      run: uv run --no-sync pytest tests/src/unit/ -n auto --tb=short -q -rf
+    - name: Run app tests on the beta Core
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      run: uv run --no-sync pytest tests/addon/ -n auto --tb=short -q -rf --ignore=tests/addon/test_addon_startup.py
+  forced-beta:
+    name: forced to 2026.11.0b6
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.7-python3.14-trixie-slim
+    timeout-minutes: 15
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-v1
+    - name: Install git and jq for workflow contract tests
+      run: "rm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\napt-get install -y -qq git\
+        \ jq >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Resolve the beta Core version
+      id: beta
+      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\nwith urllib.request.urlopen(\n    \"https://version.home-assistant.io/beta.json\", timeout=30\n) as reply:\n    beta = json.load(reply)[\"\
+        homeassistant\"][\"default\"]\n    beta = \"2026.11.0b6\"\nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\"\
+        )\n    raise SystemExit(1)\nwith open(\"pyproject.toml\", \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry\
+        \ in dev\n    if isinstance(entry, str) and entry.startswith(\"homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev group, found {pins}\"\
+        )\n    raise SystemExit(1)\nsuperfluous = beta == pins[0]\nif superfluous:\n    print(f\"::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"\
+        GITHUB_OUTPUT\"], \"a\") as out:\n    out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\n\")\nPY\n"
+    - name: Install Python dependencies with the beta Core
+      id: install
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      env:
+        BETA_CORE: ${{ steps.beta.outputs.version }}
+      run: "uv sync --all-extras --dev\n# The lock holds the stable Core. Core's test plugin is built from the\n# same Core release, so both move to the beta together.\nif ! uv pip install \"homeassistant==$BETA_CORE\"\
+        \ \"pytest-homeassistant==$BETA_CORE\"; then\n  echo \"::error::PyPI has no installable homeassistant and pytest-homeassistant $BETA_CORE\"\n  exit 1\nfi\nuv run --no-sync python -c \\\n  'import\
+        \ os; from homeassistant.const import __version__ as v; assert v == os.environ[\"BETA_CORE\"], v'\n"
+    - name: Run unit tests on the beta Core
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      run: uv run --no-sync pytest tests/src/unit/ -n auto --tb=short -q -rf
+    - name: Run app tests on the beta Core
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      run: uv run --no-sync pytest tests/addon/ -n auto --tb=short -q -rf --ignore=tests/addon/test_addon_startup.py
