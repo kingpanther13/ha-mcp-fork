@@ -1,0 +1,26 @@
+name: tmp race repro
+on:
+  push:
+    branches: [ci/tmp-3067-race]
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.7-python3.14-trixie-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: true
+      - run: uv sync --all-extras --dev
+      - name: Repeat the two flagged tests, oversubscribed
+        run: >
+          uv run --with pytest-repeat pytest
+          "tests/addon/webhook_proxy/test_start_probe.py::test_check_outlasts_the_down_verdict_left_by_a_stopped_app"
+          "tests/addon/webhook_proxy/test_relay_logging.py::test_inbound_lines_are_mirrored_for_the_app_log"
+          --count 150 -n 8 -q -rf -p no:cacheprovider -p no:randomly
+      - name: Same tests inside the full app suite, three times
+        if: always()
+        run: for i in 1 2 3; do uv run pytest tests/addon/ -n auto -q -rf -p no:cacheprovider --ignore=tests/addon/test_addon_startup.py | tail -15; done
