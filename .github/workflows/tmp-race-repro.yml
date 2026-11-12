@@ -15,12 +15,25 @@ jobs:
           persist-credentials: false
           submodules: true
       - run: uv sync --all-extras --dev
-      - name: Repeat the two flagged tests, oversubscribed
+      - name: New checks on the real code
         run: >
-          uv run --with pytest-repeat pytest
-          "tests/addon/webhook_proxy/test_start_probe.py::test_check_outlasts_the_down_verdict_left_by_a_stopped_app"
-          "tests/addon/webhook_proxy/test_relay_logging.py::test_inbound_lines_are_mirrored_for_the_app_log"
-          --count 150 -n 8 -q -rf -p no:cacheprovider -p no:randomly
-      - name: Same tests inside the full app suite, three times
-        if: always()
-        run: for i in 1 2 3; do uv run pytest tests/addon/ -n auto -q -rf -p no:cacheprovider --ignore=tests/addon/test_addon_startup.py | tail -15; done
+          uv run pytest tests/addon/webhook_proxy/test_legacy_oauth_authorize.py
+          tests/addon/webhook_proxy/test_start_main.py tests/addon/webhook_proxy/test_start_install.py
+          -k "safe_redirect or updated_component or first_install or same_version or corrupt_deployed"
+          -q -rA -p no:cacheprovider
+      - name: Remove the hostname check and change the banner
+        run: |
+          uv run python - <<'PY'
+          for p in ("homeassistant-addon-webhook-proxy/mcp_proxy/oauth.py", "homeassistant-addon-webhook-proxy-dev/mcp_proxy_dev/oauth.py"):
+              t = open(p).read(); s = "    if not parsed.hostname:\n        return False\n"
+              assert t.count(s) == 1, p; open(p, "w").write(t.replace(s, ""))
+          for p in ("homeassistant-addon-webhook-proxy/start.py", "homeassistant-addon-webhook-proxy-dev/start.py"):
+              t = open(p).read(); assert t.count("INTEGRATION UPDATED") == 1, p
+              open(p, "w").write(t.replace("INTEGRATION UPDATED", "INTEGRATION REFRESHED"))
+          PY
+      - name: Same checks against the mutated code (expected to fail)
+        run: >
+          uv run pytest tests/addon/webhook_proxy/test_legacy_oauth_authorize.py
+          tests/addon/webhook_proxy/test_start_main.py tests/addon/webhook_proxy/test_start_install.py
+          -k "safe_redirect or updated_component or first_install or same_version or corrupt_deployed"
+          -q -rA -p no:cacheprovider || true
