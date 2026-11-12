@@ -663,6 +663,19 @@ jobs:
         uv run --no-sync python -c \
           'import os; from homeassistant.const import __version__ as v; assert v == os.environ["BETA_CORE"], v'
 
+    - name: Set up Node.js
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        # Corepack is bundled only through Node 24; `corepack npm ci` enforces packageManager.
+        node-version: "24"
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+
+    - name: Install JS test dependencies (jsdom, esbuild)
+      if: github.event_name == 'workflow_dispatch' || steps.beta.outputs.superfluous != 'true'
+      run: cd tests/js && corepack npm ci
+
     # --no-sync throughout: a plain `uv run` re-syncs the venv to the lock and
     # would quietly test the stable Core again.
     - name: Run unit tests on the beta Core
