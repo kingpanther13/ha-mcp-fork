@@ -15,5 +15,5 @@ jobs:
           persist-credentials: false
           submodules: true
       - run: uv sync --all-extras --dev
-      - name: Trace test files
-        run: uv run pytest tests/src/unit/test_tools_traces.py tests/src/unit/test_tools_traces_detail.py tests/src/unit/test_tools_traces_diagnostics.py tests/src/unit/test_trace_lookup_component_fallbacks.py -n 4 -q -rf -p no:cacheprovider
+      - name: Private-import rule tests
+        run: uv run pytest tests/src/unit/test_core_reply_rules.py -k "private" -q -rf -p no:cacheprovider
