@@ -15,5 +15,5 @@ jobs:
           persist-credentials: false
           submodules: true
       - run: uv sync --all-extras --dev
-      - name: Probe ran-without-traces
-        run: uv run pytest tests/src/unit/test_tmp_ran_without_traces.py -s -q -p no:cacheprovider
+      - name: Trace test files
+        run: uv run pytest tests/src/unit/test_tools_traces.py tests/src/unit/test_tools_traces_detail.py tests/src/unit/test_tools_traces_diagnostics.py tests/src/unit/test_trace_lookup_component_fallbacks.py -n 4 -q -rf -p no:cacheprovider
