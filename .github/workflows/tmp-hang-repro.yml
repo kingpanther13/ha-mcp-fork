@@ -15,9 +15,5 @@ jobs:
           persist-credentials: false
           submodules: true
       - run: uv sync --all-extras --dev
-      - name: Repeat the frozen-clock trace tests
-        run: >
-          uv run --with pytest-repeat pytest tests/src/unit/test_tools_traces.py
-          -k "pages_traces or mixed_not_triggered" --count 40 -n 4
-          --timeout=30 --timeout-method=signal -o timeout_func_only=true
-          -p no:cacheprovider --tb=long -q -rf
+      - name: Probe ran-without-traces
+        run: uv run pytest tests/src/unit/test_tmp_ran_without_traces.py -s -q -p no:cacheprovider
