@@ -151,13 +151,8 @@ async def _call_service_prep(
     dispatched = False
     result: dict[str, Any]
     try:
-        response = await hass.services.async_call(
-            domain,
-            service,
-            dict(service_data),
-            blocking=True,
-            return_response=return_response,
-            context=msg.get("ha_mcp_context"),
+        response, response_error = await _dispatch(
+            hass, domain, service, dict(service_data), return_response, msg
         )
         dispatched = True
         # ``evt`` is None when nothing was worth waiting on (should_confirm was
@@ -180,6 +175,8 @@ async def _call_service_prep(
             return_response=return_response,
             response=response,
         )
+        if response_error is not None:
+            result["response_error"] = response_error
     except Exception:
         # PRE-confirmation ``async_call`` failure (never dispatched) → re-raise so the
         # server maps it (D7/D9 MID-dispatch residual). Any POST-dispatch failure →
@@ -368,6 +365,37 @@ async def _await_confirmation(
         await asyncio.wait_for(evt.wait(), timeout)
     except TimeoutError:
         pass  # partial confirmation, not a failure (D4)
+
+
+# Core refuses a requested response that is no mapping only after the service
+# ran (``ServiceRegistry.async_call``), so the write has landed.
+_RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
+
+
+async def _dispatch(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    service_data: dict[str, Any],
+    return_response: bool,
+    msg: dict[str, Any],
+) -> tuple[Any, dict[str, Any] | None]:
+    """Fire the one ``async_call``: ``(response, None)``, or ``(None, error)`` when
+    the service ran and Core rejected its response."""
+    try:
+        response = await hass.services.async_call(
+            domain,
+            service,
+            service_data,
+            blocking=True,
+            return_response=return_response,
+            context=msg.get("ha_mcp_context"),
+        )
+    except HomeAssistantError as err:
+        if (err.translation_domain, err.translation_key) != _RESPONSE_REJECTED:
+            raise
+        return None, {"translation_key": err.translation_key, "message": str(err)}
+    return response, None
 
 
 def _build_call_service_result(

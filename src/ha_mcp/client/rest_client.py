@@ -199,9 +199,20 @@ class HomeAssistantCommandError(HomeAssistantError):
     keeps the single-positional-argument constructor backward-compatible.
     """
 
-    def __init__(self, message: str, code: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        *,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+    ):
         super().__init__(message)
         self.code = code
+        # Core's own name for the error (``translation_domain`` /
+        # ``translation_key`` of the HomeAssistantError it raised), when it sent one.
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
 
 
 class HomeAssistantCommandTimeout(HomeAssistantError):
@@ -2014,6 +2025,8 @@ class HomeAssistantClient:
                     "success": False,
                     "error": str(e),
                     "error_code": getattr(e, "code", None),
+                    "translation_domain": getattr(e, "translation_domain", None),
+                    "translation_key": getattr(e, "translation_key", None),
                 }
 
         # Unreachable: every attempt either returns, raises, or ``continue``s,
