@@ -172,8 +172,9 @@ def integrations(
 async def core(
     hass: HomeAssistant, core_client: HomeAssistantClient, integrations: None
 ) -> None:
-    """Core's config API and flow strings, without the component."""
+    """Core's config API, log levels and flow strings, without the component."""
     assert await async_setup_component(hass, "config", {})
+    assert await async_setup_component(hass, "logger", {})
     answer_translations(hass)
 
 
