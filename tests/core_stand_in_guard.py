@@ -28,7 +28,6 @@ _CORE_ROOTS = frozenset({"homeassistant", "aiohttp", "voluptuous", "probatio", "
 _GRANDFATHERED = frozenset(
     {
         "tests/src/unit/test_component_config_entries_contract.py",
-        "tests/src/unit/test_component_template_diagnose.py",
         "tests/src/unit/test_component_ws_phase2_async.py",
         "tests/src/unit/test_config_flow.py",
     }
