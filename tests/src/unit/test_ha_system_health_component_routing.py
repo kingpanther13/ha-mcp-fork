@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.components import websocket_api
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import category_registry as cr
@@ -123,9 +123,9 @@ class Home(NamedTuple):
 @pytest.fixture
 async def home(hass: HomeAssistant, client: HomeAssistantClient) -> Home:
     zwave = MockConfigEntry(domain="zwave_js", title="Z-Wave JS")
-    matter = MockConfigEntry(
-        domain="matter", title="Matter Hub", state=ConfigEntryState.LOADED
-    )
+    # Neither is set up: their libraries are not installed here, and the
+    # sections read only the entries themselves (and the Z-Wave status call).
+    matter = MockConfigEntry(domain="matter", title="Matter Hub")
     zwave.add_to_hass(hass)
     matter.add_to_hass(hass)
     registry = er.async_get(hass)
@@ -194,7 +194,20 @@ async def test_the_snapshot_and_cores_own_reads_give_the_same_sections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A field the snapshot carries differently from Core's own reads would
-    change these four sections for every install with the component."""
+    change these four sections for every install with the component. The
+    repairs include one with no placeholders and one Core hides because its
+    config entry is disabled."""
+    disabled = MockConfigEntry(domain="hue", disabled_by=ConfigEntryDisabler.USER)
+    disabled.add_to_hass(hass)
+    ir.async_create_issue(
+        hass,
+        "hue",
+        "iss-disabled-entry",
+        config_entry_id=disabled.entry_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="tk",
+    )
     tools = SystemTools(client)
     with monkeypatch.context() as older:
         older_component(older, "system_snapshot")
@@ -205,6 +218,7 @@ async def test_the_snapshot_and_cores_own_reads_give_the_same_sections(
         snapshot = await tools.ha_get_system_health(include=INCLUDE_ALL)
 
     assert len(frames) == 1
+    assert snapshot["repairs"] == core["repairs"]
     assert {key: snapshot[key] for key in SECTIONS} == {
         key: core[key] for key in SECTIONS
     }
@@ -273,7 +287,7 @@ async def test_one_snapshot_replaces_every_read_it_covers(
     assert _issue_ids(resp) == {"iss-mqtt"}
     assert resp["matter_network"] == {
         "config_entry_id": home.matter_entry,
-        "state": "loaded",
+        "state": "not_loaded",
         "title": "Matter Hub",
     }
     assert _orphans(resp) == {ORPHAN}
