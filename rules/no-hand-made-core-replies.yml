@@ -61,7 +61,6 @@ files:
   - "tests/addon/**"
 ignores:
   - "tests/src/unit/_backup_snapshot_fakes.py"
-  - "tests/src/unit/_component_routing_helpers.py"
   - "tests/src/unit/_error_log_test_helpers.py"
   - "tests/src/unit/_logbook_fallback.py"
   - "tests/src/unit/conftest.py"
