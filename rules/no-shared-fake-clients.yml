@@ -70,8 +70,6 @@ ignores:
   - "tests/src/unit/test_ha_get_state_component_routing.py"
   - "tests/src/unit/test_ha_get_zone_component_routing.py"
   - "tests/src/unit/test_ha_remove_helpers_component_routing.py"
-  - "tests/src/unit/test_ha_search_component_routing.py"
-  - "tests/src/unit/test_ha_search_dashboard_split.py"
   - "tests/src/unit/test_ha_search_visibility_component_routing.py"
   - "tests/src/unit/test_ha_system_health_component_routing.py"
   - "tests/src/unit/test_helper_flows.py"
