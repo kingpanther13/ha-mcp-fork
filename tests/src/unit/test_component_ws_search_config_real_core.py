@@ -383,7 +383,9 @@ async def test_a_stored_helper_is_searched_by_its_stored_config(
 
 
 async def test_a_yaml_helpers_config_is_searched(
-    hass: HomeAssistant, component_ws: MockHAClientWebSocket
+    hass: HomeAssistant,
+    component_ws: MockHAClientWebSocket,
+    entity_registry: er.EntityRegistry,
 ) -> None:
     """A YAML schedule's weekday blocks are only in the config its entity was
     built from, not in its state attributes."""
@@ -396,6 +398,9 @@ async def test_a_yaml_helpers_config_is_searched(
     result = await _search(
         component_ws, query="07:07:07", search_types=["helper"], include_config=True
     )
+    # Removing the entity cancels the timer it set for its next block.
+    entity_registry.async_remove("schedule.work")
+    await hass.async_block_till_done()
 
     assert [hit["entity_id"] for hit in result["helpers"]] == ["schedule.work"]
     assert result["helpers"][0]["match_in_config"] is True
@@ -497,7 +502,7 @@ async def test_an_entity_only_search_never_reads_secrets_yaml(
     _write_secrets(hass, f"api_password: {_SECRET}\n")
     hass.states.async_set("light.k", "on", {"friendly_name": "Kitchen"})
 
-    with executor_jobs() as spy:
+    with executor_jobs(hass) as spy:
         result = await _search(component_ws, query="kitchen", search_types=["entity"])
 
     assert result["entities"]
@@ -509,7 +514,7 @@ async def test_a_config_search_reads_secrets_yaml_off_the_event_loop(
 ) -> None:
     _write_secrets(hass, f"api_password: {_SECRET}\n")
 
-    with executor_jobs() as spy:
+    with executor_jobs(hass) as spy:
         result = await _search(component_ws, query=_SECRET, search_types=["automation"])
 
     assert jobs_from(spy, "secrets") == 1

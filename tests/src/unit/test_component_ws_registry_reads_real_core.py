@@ -283,7 +283,7 @@ async def test_config_entries_read_secrets_yaml_off_the_event_loop(
     _write_secrets(hass, "api_password: sekret\n")
     _mosquitto(hass, options={"token": "sekret"})
 
-    with executor_jobs() as spy:
+    with executor_jobs(hass) as spy:
         (row,) = await _entries(component_ws)
 
     assert jobs_from(spy, "secrets") == 1
