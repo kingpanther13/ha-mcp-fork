@@ -99,7 +99,6 @@ ignores:
   - "tests/src/unit/test_component_services_list_contract.py"
   - "tests/src/unit/test_component_system_snapshot_contract.py"
   - "tests/src/unit/test_component_todo_items.py"
-  - "tests/src/unit/test_component_ws_config_references.py"
   - "tests/src/unit/test_config_entry_reload_watch.py"
   - "tests/src/unit/test_config_get_component_routing.py"
   - "tests/src/unit/test_config_subentries_folded.py"
