@@ -44,6 +44,7 @@ from .bulk_selector import (
 )
 from .coercion import JSON_STRING_COERCION, parse_json_param, parse_string_list_param
 from .component_api import (
+    COMPONENT_INSTALL_HINT,
     component_supports,
     get_component_caps,
     invalidate_caps,
@@ -53,8 +54,10 @@ from .config_entry_flow import is_component_domain
 from .event_call import EventCallMixin
 from .helpers import (
     _parse_json_dict_param,
+    core_error_message,
     exception_to_structured_error,
     log_tool_usage,
+    raise_core_refusal,
     raise_tool_error,
     register_tool_methods,
 )
@@ -660,12 +663,42 @@ _NON_ENVELOPE_WARNING = (
     "mean nothing changed — the whole reply is reported under 'service_response'."
 )
 
+
 #: Emitted when the component served a ``return_response`` call but returned no
 #: ``service_response`` key. The component only sets that key for a non-null
 #: response, so an absent key is ambiguous server-side: the service may genuinely
 #: have returned nothing, or the component may have discarded the response on its
 #: dispatched-but-unconfirmed path. Only raised alongside ``partial`` — the case
 #: where the discard is actually possible — so a plain null response stays quiet.
+# Core's name for a requested response it refused because it was no mapping;
+# Core checks it only after the service ran (``ServiceRegistry.async_call``).
+_RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
+
+_STATES_NOT_LISTED_WARNING = (
+    "The states this call changed are not listed: Home Assistant's WebSocket "
+    "call_service, which a call asking for a response goes through, does not "
+    "return them."
+)
+
+
+def _note_rejected_response(
+    response: dict[str, Any], error: dict[str, Any] | None
+) -> None:
+    """The service ran and Home Assistant refused the response it returned.
+
+    Core checks the response only after the service ran, so the call is no
+    failure and must not be repeated to get its response. No-op without one.
+    """
+    if error is None:
+        return
+    response["service_response"] = None
+    response["response_error"] = error
+    response.setdefault("warnings", []).append(
+        "The service ran, but Home Assistant rejected the response it returned "
+        f"({error.get('message')}). Do not call it again to get a response."
+    )
+
+
 _COMPONENT_RESPONSE_UNCONFIRMED_WARNING = (
     "The service was dispatched but its confirmation did not arrive, and no "
     "response data came back with it. A null 'service_response' here does NOT "
@@ -1007,6 +1040,69 @@ class ServiceTools(EventCallMixin):
             )
             return False
         return isinstance(current, dict) and current.get("state") == "unavailable"
+
+    async def _legacy_call(
+        self,
+        domain: str,
+        service: str,
+        service_data: dict[str, Any],
+        return_response: bool,
+        should_wait: bool,
+    ) -> tuple[Any, dict[str, Any] | None, list[str]]:
+        """The call without the component: REST, or Core's WebSocket
+        ``call_service`` when it asks for a response. Returns Core's reply, a
+        rejected response, and the warnings the transport adds."""
+        if not return_response:
+            return (
+                await self._client.call_service(domain, service, service_data),
+                None,
+                [],
+            )
+        result, rejected = await self._call_service_for_response(
+            domain, service, service_data
+        )
+        # The component lists the target's new state for a call it confirms.
+        warning = (
+            f"{_STATES_NOT_LISTED_WARNING} {COMPONENT_INSTALL_HINT}"
+            if should_wait
+            else _STATES_NOT_LISTED_WARNING
+        )
+        return result, rejected, [warning]
+
+    async def _call_service_for_response(
+        self, domain: str, service: str, service_data: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """A call asking for its response, through Core's WebSocket ``call_service``.
+
+        REST words a response Core rejected after the service ran only in its
+        500 text; the WebSocket error names it. Returns REST's envelope (Core's
+        WebSocket answer carries no changed states) and the rejection, if any.
+        """
+        reply = await self._client.send_websocket_message(
+            {
+                "type": "call_service",
+                "domain": domain,
+                "service": service,
+                "service_data": service_data,
+                "return_response": True,
+            }
+        )
+        if reply.get("success"):
+            answer = reply.get("result") or {}
+            response = answer.get("response") if isinstance(answer, dict) else None
+            return {"changed_states": [], "service_response": response}, None
+        if (reply.get("translation_domain"), reply.get("translation_key")) == (
+            _RESPONSE_REJECTED
+        ):
+            return {"changed_states": [], "service_response": None}, {
+                "translation_key": reply["translation_key"],
+                "message": core_error_message(reply.get("error")),
+            }
+        raise_core_refusal(
+            f"Failed to call {domain}.{service}",
+            reply,
+            {"domain": domain, "service": service},
+        )
 
     @staticmethod
     def _split_return_response_envelope(
@@ -1643,7 +1739,10 @@ class ServiceTools(EventCallMixin):
             # one the component produced and dropped with the confirmation on its
             # dispatched-unconfirmed path. Only the latter is possible when
             # ``partial``, so warn there rather than on every null.
-            if "service_response" not in component_result and component_result.get(
+            rejected = component_result.get("response_error")
+            if isinstance(rejected, dict):
+                _note_rejected_response(response, rejected)
+            elif "service_response" not in component_result and component_result.get(
                 "partial"
             ):
                 response.setdefault("warnings", []).append(
@@ -1983,8 +2082,8 @@ class ServiceTools(EventCallMixin):
             if should_wait:
                 initial_state = await self._validate_entity_before_wait(entity_id)
 
-            result = await self._client.call_service(
-                domain, service, service_data, return_response=return_response_bool
+            result, rejected, ws_warnings = await self._legacy_call(
+                domain, service, service_data, return_response_bool, should_wait
             )
 
             # Peel the return_response envelope apart BEFORE projection so the
@@ -2013,12 +2112,13 @@ class ServiceTools(EventCallMixin):
                 "result": projected_result,
                 "message": f"Successfully executed {domain}.{service}",
             }
-            call_warnings = [*projection_warnings, *envelope_warnings]
+            call_warnings = [*projection_warnings, *envelope_warnings, *ws_warnings]
             if call_warnings:
                 response.setdefault("warnings", []).extend(call_warnings)
 
             if has_response_envelope:
                 response["service_response"] = service_response
+            _note_rejected_response(response, rejected)
 
             # Wait for entity state to change
             if should_wait and entity_id is not None:
