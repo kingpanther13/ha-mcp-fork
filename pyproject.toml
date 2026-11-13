@@ -221,7 +221,6 @@ module = [
     "tests.src.unit.test_component_search_locations",
     "tests.src.unit.test_component_template_diagnose",
     "tests.src.unit.test_component_ws_phase2_async",
-    "tests.src.unit.test_component_ws_search",
     "tests.src.unit.test_config",
     "tests.src.unit.test_config_flow",
     "tests.src.unit.test_config_flow_server",
