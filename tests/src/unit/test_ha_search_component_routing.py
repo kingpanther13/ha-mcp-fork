@@ -38,8 +38,6 @@ from ._component_frames import drop_connection_on, frames, held, older_component
 from ._search_routing import SEARCH, bridge_types, fell_back, routes
 from ._search_tool import _build_ha_search, _setup_visibility_disabled
 
-_ENRICHMENT_KEYS = {"area", "floor", "labels", "aliases"}
-
 
 @pytest.fixture(autouse=True)
 def _visibility_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,16 +176,6 @@ class TestComponentPath:
             "floor": "Main",
         }
         spies.bridge.assert_not_called()
-
-    async def test_component_default_shape_unchanged(
-        self, client: HomeAssistantClient
-    ) -> None:
-        """No result_fields → the default record, without the enrichment keys."""
-        resp = await _search(client, query="kitchen")
-
-        record = resp["entities"][0]
-        assert record["entity_id"] in {"light.kitchen", "sensor.kitchen_temp"}
-        assert not _ENRICHMENT_KEYS & set(record)
 
     async def test_unknown_result_field_rejected(
         self, client: HomeAssistantClient, socket: HomeAssistantWebSocketClient

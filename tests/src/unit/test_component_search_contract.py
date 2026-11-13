@@ -325,23 +325,6 @@ async def test_the_default_entity_record_is_the_base_keys_plus_the_name(
     assert set(await _entity(search)) == COMPONENT_ENTITY_KEYS
 
 
-@pytest.mark.usefixtures("enrich_marker")
-async def test_requested_enrichment_fields_carry_the_real_join(
-    search: Callable[..., Any],
-) -> None:
-    record = await _entity(
-        search, result_fields=["entity_id", "area", "floor", "labels", "aliases"]
-    )
-
-    assert record == {
-        "entity_id": "light.enrichmarker",
-        "area": "Office",
-        "floor": "Upstairs",
-        "labels": ["Favorites"],
-        "aliases": ["desk"],
-    }
-
-
 @pytest.fixture
 def sensor_on_a_device(
     hass: HomeAssistant,
