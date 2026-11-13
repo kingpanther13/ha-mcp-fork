@@ -115,6 +115,27 @@ async def test_the_component_lists_a_confirmed_calls_changed_state_once(
     assert "warnings" not in response, response
 
 
+@pytest.mark.parametrize("verbose", [False, True], ids=["compact", "verbose"])
+async def test_the_component_lists_an_unconfirmed_calls_changed_states(
+    hass: HomeAssistant, component_core_client: HomeAssistantClient, verbose: bool
+) -> None:
+    """A call with no target to confirm still lists, through the component,
+    the states written under its context, with no install hint."""
+    _register_echo(hass, "light.x", "light.y")
+
+    response = await ServiceTools(component_core_client, None).ha_call_service(
+        domain="test", service="echo", return_response=True, verbose=verbose
+    )
+
+    assert response["service_response"] == SHELL_RESPONSE
+    assert sorted(r["entity_id"] for r in response["result"]) == [
+        "light.x",
+        "light.y",
+    ]
+    assert _occurrences(response, "stdout") == 1, response
+    assert "warnings" not in response, response
+
+
 async def test_return_response_false_has_no_service_response_key(
     hass: HomeAssistant, tools: ServiceTools
 ) -> None:
