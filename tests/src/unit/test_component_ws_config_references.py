@@ -4,7 +4,7 @@ The command validates a proposed automation, script or scene with Core,
 collects its references with Core's helpers, checks them against Core's
 registries and puts each entity target to Core's target lookups (#940, #2989).
 Every part of that is Core's own here: its validators, its input_select,
-select and light integrations, their services, triggers and conditions, and
+select and switch integrations, their services, triggers and conditions, and
 its registries. The command runs through Core's WebSocket API
 (``component_ws``).
 """
@@ -43,7 +43,7 @@ async def home(
     floor_registry: fr.FloorRegistry,
     label_registry: lr.LabelRegistry,
 ) -> str:
-    """input_select.mode_of_travel, light.kitchen, binary_sensor.hall, the
+    """input_select.mode_of_travel, switch.kitchen, binary_sensor.hall, the
     services of their integrations and a ``custom.do_it`` without a target,
     one device, area ``kitchen``, floor ``up`` and label ``x``. Returns the
     device's id."""
@@ -52,9 +52,9 @@ async def home(
         "input_select",
         {"input_select": {"mode_of_travel": {"options": ["car", "bike"]}}},
     )
-    for domain in ("select", "light"):
+    for domain in ("select", "switch"):
         assert await async_setup_component(hass, domain, {})
-    hass.states.async_set("light.kitchen", "on")
+    hass.states.async_set("switch.kitchen", "on")
     hass.states.async_set("binary_sensor.hall", "off")
 
     async def do_it(call: ServiceCall) -> None:
@@ -72,10 +72,22 @@ async def home(
     return device.id
 
 
+# Core refuses an automation without triggers.
+_PROBE_TRIGGER = {"trigger": "event", "event_type": "probe"}
+
+
+def _proposed(config: dict[str, Any], kind: str) -> dict[str, Any]:
+    if kind != "automation" or "triggers" in config:
+        return config
+    return {"triggers": [_PROBE_TRIGGER], **config}
+
+
 async def _check(
     ws: MockHAClientWebSocket, config: dict[str, Any], kind: str = "automation"
 ) -> Any:
-    return await ws_result(ws, WS_CONFIG_REFERENCES, kind=kind, config=config)
+    return await ws_result(
+        ws, WS_CONFIG_REFERENCES, kind=kind, config=_proposed(config, kind)
+    )
 
 
 def _action(action: str, entity_id: str) -> dict[str, Any]:
@@ -84,7 +96,7 @@ def _action(action: str, entity_id: str) -> dict[str, Any]:
 
 _MISMATCHED_STEP = _action("select.select_option", "input_select.mode_of_travel")
 _MISMATCHED_CONDITION = {
-    "condition": "light.is_on",
+    "condition": "switch.is_on",
     "target": {"entity_id": "binary_sensor.hall"},
 }
 
@@ -132,12 +144,12 @@ async def test_references_core_does_not_have_are_missing_and_sentinels_are_not(
         "triggers": [{"trigger": "state", "entity_id": "sensor.ghost"}],
         "actions": [
             {"action": "notify.mobile_app_andrew_phone"},
-            {"action": "light.turn_on", "target": {"device_id": ["d2", home]}},
+            {"action": "switch.turn_on", "target": {"device_id": ["d2", home]}},
             {
-                "action": "light.turn_on",
+                "action": "switch.turn_on",
                 "target": {"area_id": "attic", "floor_id": "up", "label_id": "y"},
             },
-            {"action": "light.turn_on", "target": {"entity_id": "all"}},
+            {"action": "switch.turn_on", "target": {"entity_id": "all"}},
         ],
     }
 
@@ -167,8 +179,8 @@ async def test_action_lookalikes_in_event_and_service_data_are_not_services(
         ],
         "actions": [
             {
-                "action": "light.turn_on",
-                "target": {"entity_id": "light.kitchen"},
+                "action": "switch.turn_on",
+                "target": {"entity_id": "switch.kitchen"},
                 "data": {"actions": [{"action": "DISMISS"}]},
             }
         ],
@@ -274,7 +286,7 @@ async def test_a_scene_entities_list_reaches_cores_schema_unchanged(
             {
                 "wait_for_trigger": [
                     {
-                        "trigger": "light.turned_on",
+                        "trigger": "switch.turned_on",
                         "target": {"entity_id": "binary_sensor.hall"},
                     }
                 ]
@@ -305,14 +317,14 @@ async def test_trigger_and_condition_targets_are_put_to_their_own_lookups(
 ) -> None:
     config = {
         "triggers": [
-            {"trigger": "light.turned_on", "target": {"entity_id": "light.kitchen"}},
+            {"trigger": "switch.turned_on", "target": {"entity_id": "switch.kitchen"}},
             {
-                "trigger": "light.turned_on",
+                "trigger": "switch.turned_on",
                 "target": {"entity_id": "binary_sensor.hall"},
             },
         ],
         "conditions": [
-            {"condition": "light.is_on", "target": {"entity_id": "binary_sensor.hall"}}
+            {"condition": "switch.is_on", "target": {"entity_id": "binary_sensor.hall"}}
         ],
     }
 
@@ -356,13 +368,13 @@ async def test_a_scene_entity_core_does_not_have_is_missing(
 ) -> None:
     result = await _check(
         component_ws,
-        {"entities": {"light.kitchen": {"state": "on"}, "light.ghost": {}}},
+        {"entities": {"switch.kitchen": "on", "switch.ghost": "off"}},
         "scene",
     )
 
     assert result == {
         "status": "ok",
-        "missing": [{"kind": "entity", "value": "light.ghost"}],
+        "missing": [{"kind": "entity", "value": "switch.ghost"}],
         "mismatches": [],
     }
 
@@ -423,7 +435,9 @@ async def test_the_server_reads_the_components_answer(
     """The server's reading of the answer and the component's answer agree."""
     meta = await validate_config_references(
         component_core_client,
-        {"actions": [{"action": "notify.ghost"}, _MISMATCHED_STEP]},
+        _proposed(
+            {"actions": [{"action": "notify.ghost"}, _MISMATCHED_STEP]}, "automation"
+        ),
         "automation",
     )
 
