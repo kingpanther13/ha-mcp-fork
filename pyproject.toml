@@ -255,7 +255,6 @@ module = [
     "tests.src.unit.test_ha_get_integration_component_routing",
     "tests.src.unit.test_ha_manage_blueprints_component_routing",
     "tests.src.unit.test_ha_mcp_server_entry",
-    "tests.src.unit.test_ha_search_component_routing",
     "tests.src.unit.test_ha_search_merge",
     "tests.src.unit.test_hacs_actions",
     "tests.src.unit.test_hacs_repo_registration",
