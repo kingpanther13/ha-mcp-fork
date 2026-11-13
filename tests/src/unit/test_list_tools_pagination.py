@@ -33,6 +33,7 @@ from ._routing_core import (
     pooled_socket,
     sent_types,
     setup_every_simple_type,
+    setup_storage_booleans,
 )
 
 _PAGINATION_KEYS = {
@@ -90,8 +91,8 @@ def _ours(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 
 @pytest.fixture
 async def helpers_core(hass: HomeAssistant, core_client: HomeAssistantClient) -> None:
-    assert await async_setup_component(hass, "config", {})
-    assert await async_setup_component(hass, "input_boolean", {})
+    """Core's registry API and storage input_booleans."""
+    await setup_storage_booleans(hass)
 
 
 # --- groups ------------------------------------------------------------------------

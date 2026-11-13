@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -219,8 +219,9 @@ def _spies(client: HomeAssistantClient) -> Iterator[Spies]:
 
 
 async def _get(client: HomeAssistantClient, **kwargs: Any) -> dict[str, Any]:
-    result: dict[str, Any] = await IntegrationTools(client).ha_get_integration(**kwargs)
-    return result
+    return cast(
+        "dict[str, Any]", await IntegrationTools(client).ha_get_integration(**kwargs)
+    )
 
 
 def _without_capability(monkeypatch: pytest.MonkeyPatch, capability: str) -> None:

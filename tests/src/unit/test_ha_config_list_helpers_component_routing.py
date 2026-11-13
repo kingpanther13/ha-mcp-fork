@@ -43,6 +43,7 @@ from ._routing_core import (
     sent_frames,
     sent_types,
     setup_every_simple_type,
+    setup_storage_booleans,
 )
 from ._tool_errors import error_body, error_of
 
@@ -59,8 +60,7 @@ class Renamed(NamedTuple):
 @pytest.fixture
 async def core(hass: HomeAssistant, core_client: HomeAssistantClient) -> None:
     """Core's registry API and storage input_booleans, without the component."""
-    assert await async_setup_component(hass, "config", {})
-    assert await async_setup_component(hass, "input_boolean", {})
+    await setup_storage_booleans(hass)
 
 
 @pytest.fixture
