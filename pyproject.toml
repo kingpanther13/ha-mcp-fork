@@ -212,8 +212,6 @@ module = [
     "tests.src.unit.test_codex_workflow_contracts",
     "tests.src.unit.test_component_api",
     "tests.src.unit.test_component_bulk_call_service_contract",
-    "tests.src.unit.test_component_call_service_contract",
-    "tests.src.unit.test_component_dashboards_contract",
     "tests.src.unit.test_component_ws_phase2_async",
     "tests.src.unit.test_config",
     "tests.src.unit.test_config_flow",
