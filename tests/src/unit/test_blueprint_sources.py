@@ -99,8 +99,10 @@ async def _tools_entry(hass: HomeAssistant) -> None:
 async def importer(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> AiohttpClientMocker:
-    """Core's blueprint importer; the URLs it downloads are served here."""
-    assert await async_setup_component(hass, "blueprint", {})
+    """Core's blueprint importer, with the automation and script blueprint
+    domains it imports into; the URLs it downloads are served here."""
+    for domain in ("blueprint", "automation", "script"):
+        assert await async_setup_component(hass, domain, {})
     return aioclient_mock
 
 
