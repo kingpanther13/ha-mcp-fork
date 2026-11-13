@@ -30,7 +30,7 @@ from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.reference_validator import validate_config_references
 
 from ._component_core import ws_call, ws_result
-from ._core_setup import add_test_entry
+from ._core_setup import add_test_entry, set_up_domain
 
 OK = {"status": "ok", "missing": [], "mismatches": []}
 
@@ -43,7 +43,7 @@ async def home(
     floor_registry: fr.FloorRegistry,
     label_registry: lr.LabelRegistry,
 ) -> str:
-    """input_select.mode_of_travel, switch.kitchen, binary_sensor.hall, the
+    """input_select.mode_of_travel, a template switch.kitchen, binary_sensor.hall, the
     services of their integrations and a ``custom.do_it`` without a target,
     one device, area ``kitchen``, floor ``up`` and label ``x``. Returns the
     device's id."""
@@ -52,9 +52,24 @@ async def home(
         "input_select",
         {"input_select": {"mode_of_travel": {"options": ["car", "bike"]}}},
     )
-    for domain in ("select", "switch"):
-        assert await async_setup_component(hass, domain, {})
-    hass.states.async_set("switch.kitchen", "on")
+    assert await async_setup_component(hass, "select", {})
+    # A real switch entity: Core offers targets only for entities a platform added.
+    await set_up_domain(
+        hass,
+        "template",
+        [
+            {
+                "switch": [
+                    {
+                        "name": "Kitchen",
+                        "state": "{{ true }}",
+                        "turn_on": [],
+                        "turn_off": [],
+                    }
+                ]
+            }
+        ],
+    )
     hass.states.async_set("binary_sensor.hall", "off")
 
     async def do_it(call: ServiceCall) -> None:
@@ -326,6 +341,7 @@ async def test_trigger_and_condition_targets_are_put_to_their_own_lookups(
         "conditions": [
             {"condition": "switch.is_on", "target": {"entity_id": "binary_sensor.hall"}}
         ],
+        "actions": [],
     }
 
     result = await _check(component_ws, config)
