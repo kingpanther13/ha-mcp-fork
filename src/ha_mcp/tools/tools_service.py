@@ -676,9 +676,8 @@ _NON_ENVELOPE_WARNING = (
 _RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
 
 _STATES_NOT_LISTED_WARNING = (
-    "The states this call changed are not listed: Home Assistant's WebSocket "
-    "call_service, which a call asking for a response goes through, does not "
-    "return them."
+    "The states this call changed are not listed: for a call that asks for a "
+    f"response, that list needs the ha_mcp_tools component. {COMPONENT_INSTALL_HINT}"
 )
 
 
@@ -1048,7 +1047,6 @@ class ServiceTools(EventCallMixin):
         service: str,
         service_data: dict[str, Any],
         return_response: bool,
-        should_wait: bool,
     ) -> tuple[Any, dict[str, Any] | None, list[str]]:
         """The call without the component: REST, or Core's WebSocket
         ``call_service`` when it asks for a response. Returns Core's reply, a
@@ -1062,13 +1060,7 @@ class ServiceTools(EventCallMixin):
         result, rejected = await self._call_service_for_response(
             domain, service, service_data
         )
-        # The component lists the target's new state for a call it confirms.
-        warning = (
-            f"{_STATES_NOT_LISTED_WARNING} {COMPONENT_INSTALL_HINT}"
-            if should_wait
-            else _STATES_NOT_LISTED_WARNING
-        )
-        return result, rejected, [warning]
+        return result, rejected, [_STATES_NOT_LISTED_WARNING]
 
     async def _call_service_for_response(
         self, domain: str, service: str, service_data: dict[str, Any]
@@ -2088,7 +2080,7 @@ class ServiceTools(EventCallMixin):
                 initial_state = await self._validate_entity_before_wait(entity_id)
 
             result, rejected, ws_warnings = await self._legacy_call(
-                domain, service, service_data, return_response_bool, should_wait
+                domain, service, service_data, return_response_bool
             )
 
             # Peel the return_response envelope apart BEFORE projection so the
