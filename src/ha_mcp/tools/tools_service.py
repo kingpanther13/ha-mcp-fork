@@ -19,6 +19,7 @@ from ..client.rest_client import (
     HomeAssistantClient,
     HomeAssistantCommandError,
     HomeAssistantCommandNotSent,
+    HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
 )
 from ..client.websocket_client import get_websocket_client
@@ -1085,6 +1086,8 @@ class ServiceTools(EventCallMixin):
                 "service": service,
                 "service_data": service_data,
                 "return_response": True,
+                # The client's own request timeout, as on the REST POST.
+                "_wait_timeout": self._client.timeout,
             }
         )
         if reply.get("success"):
@@ -1229,7 +1232,9 @@ class ServiceTools(EventCallMixin):
         # Check if this is a timeout - for service calls, timeouts typically
         # mean the service was dispatched but HA didn't respond in time.
         # The operation is likely still running (e.g., update.install, long automations).
-        if isinstance(error.__cause__, httpx.TimeoutException):
+        if isinstance(
+            error.__cause__, (httpx.TimeoutException, HomeAssistantCommandTimeout)
+        ):
             return self._build_timeout_response(
                 domain, service, entity_id, data, return_response=return_response
             )
