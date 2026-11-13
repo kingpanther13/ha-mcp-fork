@@ -16,7 +16,6 @@ ignores:
   - "tests/src/unit/test_component_dashboard_edit.py"
   - "tests/src/unit/test_component_dashboards_contract.py"
   - "tests/src/unit/test_component_entity_lookup_contract.py"
-  - "tests/src/unit/test_component_flow_helper_domains.py"
   - "tests/src/unit/test_component_helper_collections.py"
   - "tests/src/unit/test_component_helpers_list.py"
   - "tests/src/unit/test_component_info_report_contract.py"
