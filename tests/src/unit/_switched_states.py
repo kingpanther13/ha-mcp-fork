@@ -9,6 +9,7 @@ follows.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from homeassistant.core import (
@@ -78,3 +79,13 @@ class SwitchedStates:
             self._apply(call, entity_id)
         changed: list[JsonValueType] = list(targets)
         return {"changed": changed} if call.return_response else None
+
+
+def set_later(hass: HomeAssistant, entity_id: str, state: str) -> asyncio.Task[None]:
+    """Move an entity to ``state`` shortly after its service call returned."""
+
+    async def _set() -> None:
+        await asyncio.sleep(0.05)
+        hass.states.async_set(entity_id, state)
+
+    return hass.async_create_task(_set())

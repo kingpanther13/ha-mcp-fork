@@ -21,7 +21,6 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers import label_registry as lr
-from homeassistant.setup import async_setup_component
 
 from ha_mcp.client.rest_client import HomeAssistantClient, HomeAssistantConnectionError
 from ha_mcp.tools import tools_entities
@@ -33,6 +32,7 @@ from ha_mcp.tools.tools_entities import (
 )
 
 from ._component_frames import held, observed, older_component
+from ._core_setup import with_config_component
 
 ENRICHMENT_KEYS = ("area", "floor", "label_names")
 
@@ -50,8 +50,7 @@ class Lamp(NamedTuple):
 async def client(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
-    assert await async_setup_component(hass, "config", {})
-    return component_core_client
+    return await with_config_component(hass, component_core_client)
 
 
 def _lamp(hass: HomeAssistant) -> Lamp:

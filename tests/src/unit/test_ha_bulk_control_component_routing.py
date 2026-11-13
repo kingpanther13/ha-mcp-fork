@@ -32,9 +32,9 @@ from ha_mcp.client.websocket_client import (
 from ha_mcp.tools import device_control
 from ha_mcp.tools.component_api import get_component_caps, invalidate_caps
 from ha_mcp.tools.device_control import DeviceControlTools
-from ha_mcp.utils.operation_manager import get_operation_manager
 
 from ._command_faults import dropped_on, pooled_socket, received
+from ._operations import operations_without_listener
 from ._switched_states import SwitchedStates
 
 BULK = "ha_mcp_tools/bulk_call_service"
@@ -48,12 +48,8 @@ TWO_OPS = [
 def _per_op_dispatch(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """The legacy ops' state listener is this server's own service; no test
     here reads what it would deliver."""
-    monkeypatch.setattr(
-        device_control, "start_websocket_listener", AsyncMock(return_value=False)
-    )
-    get_operation_manager().operations.clear()
-    yield
-    get_operation_manager().operations.clear()
+    with operations_without_listener(monkeypatch):
+        yield
 
 
 @pytest.fixture

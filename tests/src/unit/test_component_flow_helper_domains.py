@@ -33,6 +33,7 @@ from ha_mcp.tools.smart_search import SmartSearchTools
 from ha_mcp.tools.tools_search import SearchTools
 
 from ._component_core import ws_result
+from ._core_setup import install_custom_helper
 from ._search_tool import _setup_visibility_disabled
 
 _CUSTOM = "my_helper"
@@ -51,20 +52,7 @@ def custom_helper_integration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enable_custom_integrations: None
 ) -> None:
     """A custom helper integration installed where Core's loader looks."""
-    integration = tmp_path / "extra" / "custom_components" / _CUSTOM
-    integration.mkdir(parents=True)
-    manifest = {
-        "domain": _CUSTOM,
-        "name": "My Helper",
-        "config_flow": True,
-        "integration_type": "helper",
-        "version": "1.0.0",
-        "documentation": "https://example.invalid",
-        "codeowners": [],
-        "requirements": [],
-    }
-    (integration / "manifest.json").write_text(json.dumps(manifest))
-    monkeypatch.syspath_prepend(str(tmp_path / "extra"))
+    install_custom_helper(tmp_path, monkeypatch, _CUSTOM)
 
 
 def _entry(hass: HomeAssistant, domain: str, **kwargs: Any) -> MockConfigEntry:

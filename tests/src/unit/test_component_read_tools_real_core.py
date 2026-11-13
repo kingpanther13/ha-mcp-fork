@@ -29,13 +29,13 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import MockConfigEntry
 
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.tools.smart_search import SmartSearchTools
 from ha_mcp.tools.tools_config_helpers import HelperConfigTools
 from ha_mcp.tools.tools_entities import EntityTools
 from ha_mcp.tools.tools_search import SearchTools
 from ha_mcp.tools.tools_voice_assistant import VoiceAssistantTools
 
-from ._search_tool import _setup_visibility_disabled
+from ._core_setup import with_config_component
+from ._search_tool import search_tools_on
 
 
 @pytest.fixture
@@ -43,16 +43,14 @@ async def client(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
     """The component-served client on a ``hass`` that answers registry commands."""
-    assert await async_setup_component(hass, "config", {})
-    return component_core_client
+    return await with_config_component(hass, component_core_client)
 
 
 @pytest.fixture
 def search_tools(
     client: HomeAssistantClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> SearchTools:
-    _setup_visibility_disabled(tmp_path, monkeypatch)
-    return SearchTools(client, SmartSearchTools(client=client))
+    return search_tools_on(client, tmp_path, monkeypatch)
 
 
 @contextmanager

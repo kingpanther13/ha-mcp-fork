@@ -21,11 +21,8 @@ from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.typing import MockHAClientWebSocket
 
 from custom_components.ha_mcp_tools import mcp_webhook
-from custom_components.ha_mcp_tools.config_flow import HaMcpToolsConfigFlow
 from custom_components.ha_mcp_tools.const import (
     COMPONENT_VERSION,
-    DOMAIN,
-    TOOLS_ENTRY_TITLE,
 )
 from custom_components.ha_mcp_tools.websocket_api import system
 from custom_components.ha_mcp_tools.websocket_api.constants import WS_INFO
@@ -36,6 +33,7 @@ from ha_mcp.tools.tools_bug_report import BugReportTools
 
 from ._component_core import ws_result
 from ._core_client import free_port
+from ._core_setup import set_up_tools_entry
 from ._server_entry import add_server_entry, replace_server, set_up
 
 
@@ -44,19 +42,6 @@ def _server(hass: HomeAssistant, **options: Any) -> MockConfigEntry:
     entry = add_server_entry(hass, options=options)
     entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry
-
-
-async def _tools_entry(hass: HomeAssistant) -> None:
-    """The File & YAML Tools entry, set up: it registers the bootstrap service."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=TOOLS_ENTRY_TITLE,
-        version=HaMcpToolsConfigFlow.VERSION,
-        minor_version=HaMcpToolsConfigFlow.MINOR_VERSION,
-        data={},
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
 
 
 @pytest.fixture
@@ -154,7 +139,7 @@ async def test_a_downgraded_component_reports_its_running_version(
     stale snapshot is dropped and the version comes from the bootstrap
     service, not from the component that was running before."""
     _server(hass)
-    await _tools_entry(hass)
+    await set_up_tools_entry(hass)
     monkeypatch.setattr(system, "COMPONENT_VERSION", "2.1.0")
     await get_component_caps(component_core_client)
     del hass.data["websocket_api"][WS_INFO]
@@ -202,7 +187,7 @@ async def test_the_webhook_mode_reaches_the_report(
     options: dict[str, Any],
     line: str,
 ) -> None:
-    await _tools_entry(hass)
+    await set_up_tools_entry(hass)
     await _registered(hass, _server(hass, **options))
 
     info = await _report(component_core_client)
@@ -273,6 +258,6 @@ async def test_without_a_server_entry_no_mode_is_reported(
 ) -> None:
     """Only the tools entry is set up (an external server): there is no
     in-process webhook."""
-    await _tools_entry(hass)
+    await set_up_tools_entry(hass)
 
     assert (await ws_result(component_ws, WS_INFO))["webhook_auth"] is None

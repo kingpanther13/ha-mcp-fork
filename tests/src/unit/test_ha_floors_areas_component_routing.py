@@ -30,7 +30,6 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import category_registry as cr
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers import label_registry as lr
-from homeassistant.setup import async_setup_component
 
 from ha_mcp import backup_manager as bm
 from ha_mcp.client.rest_client import (
@@ -48,6 +47,7 @@ from ha_mcp.tools.tools_areas import AreaTools
 
 from ._client_spies import sent_commands, sent_messages
 from ._component_frames import drop_connection_on
+from ._core_setup import with_config_component
 
 _LEGACY_LISTS = ("config/area_registry/list", "config/floor_registry/list")
 
@@ -57,8 +57,7 @@ async def client(
     hass: HomeAssistant, core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
     """``core_client`` with Core's registry commands (``config``)."""
-    assert await async_setup_component(hass, "config", {})
-    return core_client
+    return await with_config_component(hass, core_client)
 
 
 @pytest.fixture

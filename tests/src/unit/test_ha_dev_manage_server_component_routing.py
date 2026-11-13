@@ -33,6 +33,7 @@ from ha_mcp.tools import tools_dev
 
 from ._client_spies import sent_commands
 from ._component_frames import drop_connection_on, frames, pooled
+from ._core_setup import with_config_component
 from ._server_update import (
     EMBEDDED_TARGET,
     PIP_SPEC,
@@ -60,8 +61,7 @@ async def client(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
     """The server's client with the component; ``config`` serves the flows."""
-    assert await async_setup_component(hass, "config", {})
-    return component_core_client
+    return await with_config_component(hass, component_core_client)
 
 
 @pytest.fixture

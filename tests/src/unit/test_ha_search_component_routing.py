@@ -14,7 +14,6 @@ each route show which one served it. The dashboard routes are in
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -484,20 +483,6 @@ class TestLegacyEnrichment:
         assert (
             bridge_types(spies.bridge).count("config/entity_registry/get_entries") == 1
         )
-
-
-@pytest.fixture
-async def second_client(
-    client: HomeAssistantClient,
-) -> AsyncIterator[HomeAssistantClient]:
-    """Another server client on the same Core, with its own capability cache."""
-    other = HomeAssistantClient(
-        base_url=client.base_url, token=client.token, verify_ssl=False
-    )
-    try:
-        yield other
-    finally:
-        await other.close()
 
 
 async def test_component_and_legacy_response_shape_parity(

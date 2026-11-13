@@ -47,6 +47,7 @@ from ha_mcp.visibility.persistence import save_visibility_config
 
 from ._client_spies import sent_messages
 from ._search_tool import _build_ha_search
+from ._visibility_config import visibility_config as _cfg
 
 _QUERY = "vismark"
 
@@ -77,13 +78,6 @@ class _Scenario:
     # False: Core has no Assist exposure (``homeassistant`` not set up), so the
     # Assist dimension is skipped and both filters warn.
     assist_available: bool = True
-
-
-def _cfg(**kw: Any) -> VisibilityConfig:
-    """An enabled config with the default category exclude cleared, so each
-    scenario activates exactly the one dimension it names."""
-    kw.setdefault("exclude_categories", [])
-    return VisibilityConfig(enabled=True, **kw)
 
 
 _SCENARIOS = [

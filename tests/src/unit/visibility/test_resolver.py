@@ -40,10 +40,7 @@ from ha_mcp.visibility.resolver import (
     visibility_filter_active,
 )
 
-
-def _cfg(**kw: Any) -> VisibilityConfig:
-    kw.setdefault("exclude_categories", [])
-    return VisibilityConfig(enabled=True, **kw)
+from .._visibility_config import visibility_config as _cfg
 
 
 class Core:

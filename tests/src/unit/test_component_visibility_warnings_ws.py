@@ -27,6 +27,7 @@ from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.typing import MockHAClientWebSocket
 
 from ._component_core import ws_result
+from ._core_setup import add_test_entry
 
 _SEARCH = "ha_mcp_tools/search"
 _ASSIST_UNAVAILABLE = "Assist exposure data was unavailable"
@@ -36,9 +37,7 @@ _REGISTRY_EMPTY = "entity registry returned no entries"
 @pytest.fixture
 def entry(hass: HomeAssistant) -> MockConfigEntry:
     """The config entry every registered entity belongs to."""
-    config_entry = MockConfigEntry(domain="test")
-    config_entry.add_to_hass(hass)
-    return config_entry
+    return add_test_entry(hass)
 
 
 def _register(

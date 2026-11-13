@@ -29,6 +29,7 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_call, ws_result
+from ._switched_states import set_later
 
 # Long enough for a handler's state change to arrive, short enough that a test
 # expecting the wait to lapse stays fast.
@@ -74,16 +75,6 @@ def _register(
         domain, service, _handler, supports_response=supports_response
     )
     return calls
-
-
-def _set_later(hass: HomeAssistant, entity_id: str, state: str) -> asyncio.Task[None]:
-    """Move an entity to ``state`` shortly after the service call returned."""
-
-    async def _set() -> None:
-        await asyncio.sleep(0.05)
-        hass.states.async_set(entity_id, state)
-
-    return hass.async_create_task(_set())
 
 
 async def _call(client: Any, **params: Any) -> dict[str, Any]:
@@ -310,7 +301,7 @@ class TestExpectedState:
 
         def _lock(call: ServiceCall) -> None:
             hass.states.async_set("lock.front", "locking")
-            later.append(_set_later(hass, "lock.front", "locked"))
+            later.append(set_later(hass, "lock.front", "locked"))
 
         _register(hass, "lock", "lock", _lock)
 
@@ -340,7 +331,7 @@ class TestExpectedState:
 
         def _pause(call: ServiceCall) -> None:
             hass.states.async_set("media_player.a", "playing", {"media_position": 5})
-            later.append(_set_later(hass, "media_player.a", "paused"))
+            later.append(set_later(hass, "media_player.a", "paused"))
 
         _register(hass, "media_player", "media_pause", _pause)
 

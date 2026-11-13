@@ -17,7 +17,7 @@ the client's legacy reads let a test assert none ran on the component path.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -341,20 +341,6 @@ class TestVisibility:
 
         assert _overview_frames(sent) == 1
         assert _total(spies) == 0
-
-
-@pytest.fixture
-async def second_client(
-    client: HomeAssistantClient,
-) -> AsyncIterator[HomeAssistantClient]:
-    """Another server client on the same Core, with its own capability cache."""
-    other = HomeAssistantClient(
-        base_url=client.base_url, token=client.token, verify_ssl=False
-    )
-    try:
-        yield other
-    finally:
-        await other.close()
 
 
 @pytest.mark.parametrize(

@@ -72,7 +72,9 @@ async def _save(client: HomeAssistantClient, url_path: str, body: Any) -> None:
         assert reply["success"], reply
 
 
-async def _lovelace(hass: HomeAssistant, client: HomeAssistantClient) -> None:
+async def _lovelace(
+    hass: HomeAssistant, client: HomeAssistantClient
+) -> HomeAssistantClient:
     await write_config_files(hass, {f"{YAML}.yaml": dump(YAML_BODY)})
     assert await async_setup_component(
         hass,
@@ -86,22 +88,21 @@ async def _lovelace(hass: HomeAssistant, client: HomeAssistantClient) -> None:
         },
     )
     await _save(client, HOME, HOME_BODY)
+    return client
 
 
 @pytest.fixture
 async def component(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
-    await _lovelace(hass, component_core_client)
-    return component_core_client
+    return await _lovelace(hass, component_core_client)
 
 
 @pytest.fixture
 async def legacy(
     hass: HomeAssistant, core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
-    await _lovelace(hass, core_client)
-    return core_client
+    return await _lovelace(hass, core_client)
 
 
 @pytest.fixture

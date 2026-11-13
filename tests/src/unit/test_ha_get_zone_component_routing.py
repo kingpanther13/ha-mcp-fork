@@ -32,6 +32,15 @@ REGISTRY_LIST = "config/entity_registry/list"
 LEGACY_WARNING = "served via legacy path"
 
 
+async def _zone_client(
+    hass: HomeAssistant, client: HomeAssistantClient
+) -> HomeAssistantClient:
+    """``client`` on a Core with the three zones and its registry commands."""
+    assert await async_setup_component(hass, "config", {})
+    await _zones(hass, client)
+    return client
+
+
 async def _zones(hass: HomeAssistant, client: HomeAssistantClient) -> None:
     assert await async_setup_component(
         hass,
@@ -56,9 +65,7 @@ async def client(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
     """The component on a Core with the three zones and its registry commands."""
-    assert await async_setup_component(hass, "config", {})
-    await _zones(hass, component_core_client)
-    return component_core_client
+    return await _zone_client(hass, component_core_client)
 
 
 @pytest.fixture
@@ -66,9 +73,7 @@ async def legacy_client(
     hass: HomeAssistant, core_client: HomeAssistantClient
 ) -> HomeAssistantClient:
     """The same Core without the component."""
-    assert await async_setup_component(hass, "config", {})
-    await _zones(hass, core_client)
-    return core_client
+    return await _zone_client(hass, core_client)
 
 
 def _by_id(resp: dict[str, Any]) -> dict[str, dict[str, Any]]:

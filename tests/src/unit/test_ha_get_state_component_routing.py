@@ -22,11 +22,10 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.component_api import get_component_caps, invalidate_caps
 from ha_mcp.tools.search import state as search_state
-from ha_mcp.tools.smart_search import SmartSearchTools
 from ha_mcp.tools.tools_search import SearchTools
 
 from ._command_faults import dropped_on, pooled_socket, received, unanswered
-from ._search_tool import _setup_visibility_disabled
+from ._search_tool import search_tools_on
 from ._tool_errors import error_of
 
 STATES = "ha_mcp_tools/states"
@@ -41,8 +40,7 @@ def _states(hass: HomeAssistant) -> None:
 def _tools(
     client: HomeAssistantClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> SearchTools:
-    _setup_visibility_disabled(tmp_path, monkeypatch)
-    return SearchTools(client, SmartSearchTools(client=client))
+    return search_tools_on(client, tmp_path, monkeypatch)
 
 
 @contextmanager

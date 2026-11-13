@@ -23,6 +23,7 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_call, ws_result
+from ._switched_states import set_later
 
 # Long enough for a handler's state change to arrive, short enough that a test
 # expecting the shared wait to lapse stays fast.
@@ -73,16 +74,6 @@ def _to_state(
         hass.states.async_set(entity_id, state, dict(call.data))
 
     return _effect
-
-
-def _set_later(hass: HomeAssistant, entity_id: str, state: str) -> asyncio.Task[None]:
-    """Move an entity to ``state`` shortly after its service call returned."""
-
-    async def _set() -> None:
-        await asyncio.sleep(0.05)
-        hass.states.async_set(entity_id, state)
-
-    return hass.async_create_task(_set())
 
 
 def _overlap_probe(hass: HomeAssistant) -> list[str]:
@@ -233,7 +224,7 @@ class TestConfirmedBatch:
 
         def _lock(call: ServiceCall) -> None:
             hass.states.async_set("lock.front", "locking")
-            later.append(_set_later(hass, "lock.front", "locked"))
+            later.append(set_later(hass, "lock.front", "locked"))
 
         _register(hass, "lock", "lock", _lock)
         _register(hass, "light", "turn_on", _to_state(hass, "light.a", "on"))

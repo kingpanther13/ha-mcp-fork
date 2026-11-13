@@ -29,11 +29,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.test_util.aiohttp import AiohttpClientMocker
 
-from custom_components.ha_mcp_tools.config_flow import HaMcpToolsConfigFlow
-from custom_components.ha_mcp_tools.const import DOMAIN, TOOLS_ENTRY_TITLE
 from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.client.websocket_client import HomeAssistantWebSocketClient
 from ha_mcp.tools import blueprint_sources
@@ -43,6 +40,7 @@ from ha_mcp.tools.blueprint_sources import (
 )
 
 from ._component_frames import drop_connection_on, held, older_component, pooled
+from ._core_setup import set_up_tools_entry
 
 _PATH = "user/motion.yaml"
 _BLUEPRINT_GET = "ha_mcp_tools/blueprint_get"
@@ -78,20 +76,6 @@ def _write_blueprint(config_dir: Path, domain: str, path: str, text: str) -> Pat
 def _installed(hass: HomeAssistant, text: str, path: str = _PATH) -> None:
     """``text`` as an installed automation blueprint in Core's config directory."""
     _write_blueprint(Path(hass.config.config_dir), "automation", path, text)
-
-
-async def _tools_entry(hass: HomeAssistant) -> None:
-    """Core sets the File & YAML Tools entry up: its ``read_file`` service and
-    the component's ``ha_mcp_tools/*`` commands."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=TOOLS_ENTRY_TITLE,
-        version=HaMcpToolsConfigFlow.VERSION,
-        minor_version=HaMcpToolsConfigFlow.MINOR_VERSION,
-        data={},
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
 
 
 @pytest.fixture
@@ -369,7 +353,7 @@ class TestComponentTier:
         """A component without ``blueprint_text`` (2.1.1) serves the parsed
         body only: it is kept while the ladder finds the text somewhere else."""
         older_component(monkeypatch, "blueprint_text")
-        await _tools_entry(hass)
+        await set_up_tools_entry(hass)
         _installed(hass, _FILE_YAML)
 
         with _calls(core_client, socket) as calls:
@@ -485,7 +469,7 @@ class TestComponentTier:
         parse. A body-only component cannot parse this file, so it returns no
         body; the tools entry then reads its text."""
         older_component(monkeypatch, "blueprint_text")
-        await _tools_entry(hass)
+        await set_up_tools_entry(hass)
         _installed(hass, "key: [unclosed")
 
         found = await _resolve(core_client)
@@ -614,7 +598,7 @@ class TestTierOrder:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The file on disk is the authoritative copy."""
-        await _tools_entry(hass)
+        await set_up_tools_entry(hass)
         _installed(hass, _FILE_YAML, _URL_PATH)
         _embed(monkeypatch, Path(hass.config.config_dir))
         importer.get(_SOURCE_URL, text=_URL_YAML)
@@ -635,7 +619,7 @@ class TestTierOrder:
         socket: HomeAssistantWebSocketClient,
         importer: AiohttpClientMocker,
     ) -> None:
-        await _tools_entry(hass)
+        await set_up_tools_entry(hass)
         _installed(hass, _FILE_YAML, _URL_PATH)
         importer.get(_SOURCE_URL, text=_URL_YAML)
 
@@ -656,7 +640,7 @@ class TestTierOrder:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         older_component(monkeypatch, "blueprint_get", "blueprint_text")
-        await _tools_entry(hass)
+        await set_up_tools_entry(hass)
         _installed(hass, _FILE_YAML, _URL_PATH)
         importer.get(_SOURCE_URL, text=_URL_YAML)
 
