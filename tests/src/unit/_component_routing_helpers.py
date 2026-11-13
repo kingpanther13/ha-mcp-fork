@@ -2,8 +2,8 @@
 
 The four routing suites (``test_ha_search_component_routing`` /
 ``test_ha_overview_component_routing`` / ``test_config_get_component_routing`` /
-``test_ha_config_list_helpers_component_routing``) and the cross-seam
-``test_component_readapi_contract`` all mock the same two moving parts: a WS
+``test_ha_config_list_helpers_component_routing``) all mock the same two
+moving parts: a WS
 client whose ``send_command`` dispatches on the command type (``ha_mcp_tools/info``
 for the caps probe plus one read command), and the ``get_websocket_client``
 factory each tool resolves that WS through. This module owns both so the shape of

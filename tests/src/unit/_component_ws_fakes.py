@@ -1,11 +1,8 @@
 """Shared test doubles for the component WebSocket command surface.
 
-Extracted from ``test_component_ws_search.py`` and
-``test_component_ws_phase2_async.py``: both are over the module size ratchet's
-limit and cannot grow, and these doubles were already shared across five test
-modules. Those two modules re-export the names they previously defined, so
-existing ``from .test_component_ws_search import _FakeConnection`` imports keep
-working.
+Extracted from ``test_component_ws_phase2_async.py``, which is over the module
+size ratchet's limit and cannot grow; the test files not yet on real Core still
+use them.
 
 ``_FakeWSApi`` is a FUNCTIONAL stand-in for
 ``homeassistant.components.websocket_api`` — its decorators really wrap, so a
