@@ -33,16 +33,8 @@ from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.client.websocket_client import HomeAssistantWebSocketClient
 from ha_mcp.tools.smart_search import SmartSearchTools
 
-from ._search_routing import (
-    DASHBOARDS,
-    SEARCH,
-    bridge_types,
-    fell_back,
-    frames,
-    older_component,
-    pooled_socket,
-    routes,
-)
+from ._component_frames import frames, older_component, pooled
+from ._search_routing import DASHBOARDS, SEARCH, bridge_types, fell_back, routes
 from ._search_tool import _build_ha_search, _setup_visibility_disabled
 
 _KITCHEN_VIEW = {"views": [{"title": "Kitchen"}]}
@@ -64,7 +56,7 @@ def client(
 
 @pytest.fixture
 async def socket(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    return await pooled_socket(client)
+    return await pooled(client)
 
 
 async def _lovelace(hass: HomeAssistant, yaml: dict[str, str] | None = None) -> None:

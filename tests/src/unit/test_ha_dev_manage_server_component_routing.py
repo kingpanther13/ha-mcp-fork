@@ -32,15 +32,13 @@ from ha_mcp.client.websocket_client import HomeAssistantWebSocketClient
 from ha_mcp.tools import tools_dev
 
 from ._client_spies import sent_commands
-from ._held_commands import drop_connection_on
+from ._component_frames import drop_connection_on, frames, pooled
 from ._server_update import (
     EMBEDDED_TARGET,
     PIP_SPEC,
     SERVER_URL,
     applied,
-    pooled_socket,
     server_entry,
-    update_frames,
     update_source,
 )
 
@@ -68,7 +66,7 @@ async def client(
 
 @pytest.fixture
 async def socket(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    return await pooled_socket(client)
+    return await pooled(client)
 
 
 @contextmanager
@@ -113,7 +111,7 @@ async def test_embedded_component_present_routes_to_component_write(
     submitted.assert_not_awaited()
     assert hass.config_entries.options.async_progress() == []
     # The frame carried EXACTLY the pip_spec delta.
-    assert update_frames(sent) == [{"pip_spec": PIP_SPEC}]
+    assert frames(sent, tools_dev.WS_SERVER_ENTRY_UPDATE) == [{"pip_spec": PIP_SPEC}]
     await applied(entry, PIP_SPEC)
 
 
@@ -145,7 +143,7 @@ async def test_embedded_component_absent_falls_back_to_options_flow(
     preserved server_url override alongside the pip_spec change."""
     assert await async_setup_component(hass, "config", {})
     entry = server_entry(hass, pip_spec="", server_url=SERVER_URL)
-    socket = await pooled_socket(core_client)
+    socket = await pooled(core_client)
 
     with _flow_calls(core_client) as (_, submitted), sent_commands(socket) as sent:
         result = await update_source(core_client, PIP_SPEC)
@@ -156,7 +154,7 @@ async def test_embedded_component_absent_falls_back_to_options_flow(
     submitted.assert_awaited_once()
     assert submitted.await_args.args[1]["server_url"] == SERVER_URL
     assert entry.options["server_url"] == SERVER_URL
-    assert update_frames(sent) == []
+    assert frames(sent, tools_dev.WS_SERVER_ENTRY_UPDATE) == []
 
 
 async def test_embedded_unknown_command_invalidates_caps_and_falls_back(
@@ -227,4 +225,4 @@ async def test_non_embedded_never_routes_to_component_write(
     # update would clear it.
     assert entry.options["pip_spec"] == PIP_SPEC
     assert entry.options["server_url"] == SERVER_URL
-    assert update_frames(sent) == []
+    assert frames(sent, tools_dev.WS_SERVER_ENTRY_UPDATE) == []

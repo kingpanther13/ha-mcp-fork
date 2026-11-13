@@ -3,7 +3,9 @@
 Each helper re-registers the command's own handler with its own schema: to
 record the messages Core received, to hold it until the client stopped
 waiting, or to drop the connection once Core has it. Core's handler answers
-every message it is handed; nothing here answers for it.
+every message it is handed; nothing here answers for it. ``pooled`` and
+``frames`` read the client side: the socket the component commands share and
+the frames a spy on it saw.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.components import websocket_api
@@ -45,6 +48,11 @@ async def pooled(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
     )
 
 
+def frames(spy: AsyncMock, command: str) -> list[dict[str, Any]]:
+    """The kwargs of every ``command`` frame a spy on the pooled socket saw."""
+    return [c.kwargs for c in spy.call_args_list if c.args[0] == command]
+
+
 @contextmanager
 def observed(hass: HomeAssistant, command: str) -> Iterator[list[dict[str, Any]]]:
     """Every ``command`` message Core receives meanwhile, in order."""
@@ -66,9 +74,18 @@ def observed(hass: HomeAssistant, command: str) -> Iterator[list[dict[str, Any]]
 
 @asynccontextmanager
 async def held(
-    hass: HomeAssistant, command: str, monkeypatch: pytest.MonkeyPatch
+    hass: HomeAssistant,
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    client: HomeAssistantClient | None = None,
 ) -> AsyncIterator[None]:
-    """Core answers ``command`` only after the client's wait (cut to 1 s) ran out."""
+    """Core answers ``command`` only after the client's wait (cut to 1 s) ran out.
+
+    With ``client``, its socket opens under the normal wait first, and the
+    block ends once the held reply has reached it: Core writes replies in
+    order, so the pong after it means it is out.
+    """
     core_handler, schema = hass.data[websocket_api.DOMAIN][command]
     released = asyncio.Event()
 
@@ -78,6 +95,8 @@ async def held(
         await released.wait()
         core_handler(core, connection, msg)
 
+    if client is not None:
+        await client.send_websocket_message({"type": "ping"})
     monkeypatch.setattr(websocket_client, "DEFAULT_COMMAND_WAIT_TIMEOUT", 1.0)
     websocket_api.async_register_command(
         hass, command, websocket_api.async_response(wait_then_answer), schema
@@ -88,14 +107,15 @@ async def held(
         released.set()
         websocket_api.async_register_command(hass, command, core_handler, schema)
         await hass.async_block_till_done(wait_background_tasks=True)
+        if client is not None:
+            await client.send_websocket_message({"type": "ping"})
 
 
-@contextmanager
-def dropped(
+def drop_connection_on(
     hass: HomeAssistant, command: str, socket: HomeAssistantWebSocketClient
-) -> Iterator[None]:
+) -> None:
     """``socket`` loses its connection, with no close frame, on ``command``."""
-    core_handler, schema = hass.data[websocket_api.DOMAIN][command]
+    _, schema = hass.data[websocket_api.DOMAIN][command]
 
     def drop(
         core: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
@@ -103,6 +123,15 @@ def dropped(
         abort_transport(socket)
 
     websocket_api.async_register_command(hass, command, drop, schema)
+
+
+@contextmanager
+def dropped(
+    hass: HomeAssistant, command: str, socket: HomeAssistantWebSocketClient
+) -> Iterator[None]:
+    """``drop_connection_on`` until the block ends, then Core's handler again."""
+    core_handler, schema = hass.data[websocket_api.DOMAIN][command]
+    drop_connection_on(hass, command, socket)
     try:
         yield
     finally:

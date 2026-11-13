@@ -22,16 +22,13 @@ from ha_mcp.client.rest_client import (
     HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
 )
-from ha_mcp.client.websocket_client import (
-    HomeAssistantWebSocketClient,
-    get_websocket_client,
-)
 from ha_mcp.tools import blueprint_sources
 from ha_mcp.tools.blueprint_sources import COMPONENT_BODY_WARNING
 from ha_mcp.tools.component_api import invalidate_caps
 from ha_mcp.tools.tools_blueprints import BlueprintTools
 
 from ._client_spies import sent_commands
+from ._component_frames import pooled
 
 _PATH = "user/motion.yaml"
 _BLUEPRINT_GET = "ha_mcp_tools/blueprint_get"
@@ -65,12 +62,6 @@ async def blueprint(hass: HomeAssistant) -> Path:
     return target
 
 
-async def _pooled(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    return await get_websocket_client(
-        url=client.base_url, token=client.token, verify_ssl=client.verify_ssl
-    )
-
-
 async def _get(client: HomeAssistantClient) -> dict[str, Any]:
     result: dict[str, Any] = await BlueprintTools(client).ha_manage_blueprints(
         action="get", path=_PATH, domain="automation"
@@ -96,7 +87,7 @@ async def _rewritten_after_core_loaded_it(
 async def test_get_adds_the_component_body_and_text_to_cores_metadata(
     component_core_client: HomeAssistantClient, blueprint: Path
 ) -> None:
-    socket = await _pooled(component_core_client)
+    socket = await pooled(component_core_client)
 
     with sent_commands(socket) as sent:
         result = await _get(component_core_client)
@@ -117,7 +108,7 @@ async def test_without_the_component_get_serves_metadata_without_a_warning(
 ) -> None:
     """No component: nothing could read the body, and that is no fault to
     report."""
-    socket = await _pooled(core_client)
+    socket = await pooled(core_client)
 
     with sent_commands(socket) as sent:
         result = await _get(core_client)
@@ -220,7 +211,7 @@ async def test_a_body_read_without_a_socket_serves_metadata(
 async def test_listing_blueprints_never_asks_the_component(
     component_core_client: HomeAssistantClient, blueprint: Path
 ) -> None:
-    socket = await _pooled(component_core_client)
+    socket = await pooled(component_core_client)
 
     with sent_commands(socket) as sent:
         result = await BlueprintTools(component_core_client).ha_manage_blueprints(

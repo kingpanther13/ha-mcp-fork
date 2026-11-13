@@ -36,13 +36,13 @@ from pytest_homeassistant.common import (
 )
 from pytest_homeassistant.typing import MockHAClientWebSocket
 
-from custom_components.ha_mcp_tools.websocket_api import system
 from custom_components.ha_mcp_tools.websocket_api.constants import WS_CONFIG_ENTRIES
 from ha_mcp import backup_manager as bm
 from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.config_entry_backup import helper_backup_id, removal_backup_id
 
 from ._component_core import ws_result
+from ._component_frames import older_component
 
 _DOMAIN = "subentry_planes"
 DOMAIN_KEY = "helper_config_subentry"
@@ -275,11 +275,7 @@ async def test_a_capture_by_a_component_that_cannot_read_subentries_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A component older than the subentry-data read."""
-    monkeypatch.setattr(
-        system,
-        "CAPABILITIES",
-        [cap for cap in system.CAPABILITIES if cap != "config_entries_subentry_data"],
-    )
+    older_component(monkeypatch, "config_entries_subentry_data")
     _entry(hass, s1=("Kitchen", PLANE))
 
     cause = await _refusal(_manager(component_core_client, tmp_path))

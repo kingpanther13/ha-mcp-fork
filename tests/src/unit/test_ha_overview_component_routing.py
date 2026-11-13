@@ -44,7 +44,7 @@ from ha_mcp.visibility.model import VisibilityConfig
 from ha_mcp.visibility.persistence import save_visibility_config
 
 from ._client_spies import sent_commands
-from ._held_commands import drop_connection_on, held
+from ._component_frames import drop_connection_on, held
 from ._search_tool import _setup_visibility_disabled
 
 _OVERVIEW = "ha_mcp_tools/overview"
@@ -256,7 +256,7 @@ class TestFallbacks:
     ) -> None:
         """The component's overview answering too late → legacy + a warning.
         A command error other than ``unknown_command`` takes the same branch."""
-        async with held(hass, client, _OVERVIEW, monkeypatch):
+        async with held(hass, _OVERVIEW, monkeypatch, client=client):
             resp, (states, *_) = await _overview(client)
 
         states.assert_awaited_once()

@@ -34,16 +34,8 @@ from ha_mcp.visibility import resolver
 from ha_mcp.visibility.model import VisibilityConfig
 from ha_mcp.visibility.persistence import save_visibility_config
 
-from ._held_commands import drop_connection_on, held
-from ._search_routing import (
-    SEARCH,
-    bridge_types,
-    fell_back,
-    frames,
-    older_component,
-    pooled_socket,
-    routes,
-)
+from ._component_frames import drop_connection_on, frames, held, older_component, pooled
+from ._search_routing import SEARCH, bridge_types, fell_back, routes
 from ._search_tool import _build_ha_search, _setup_visibility_disabled
 
 _ENRICHMENT_KEYS = {"area", "floor", "labels", "aliases"}
@@ -100,7 +92,7 @@ def component(
 
 @pytest.fixture
 async def socket(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    return await pooled_socket(client)
+    return await pooled(client)
 
 
 async def _search(client: HomeAssistantClient, **arguments: Any) -> dict[str, Any]:
@@ -253,7 +245,7 @@ class TestFallbacks:
         """The component search answering too late → legacy + a warning, not
         an aborted call. A command error other than ``unknown_command`` takes
         the same branch."""
-        async with held(hass, client, SEARCH, monkeypatch):
+        async with held(hass, SEARCH, monkeypatch, client=client):
             with routes(client, socket) as spies:
                 resp = await _search(client, query="kitchen")
 
@@ -457,7 +449,7 @@ class TestLegacyEnrichment:
         self, client: HomeAssistantClient
     ) -> None:
         """The registry join fills the requested enrichment fields."""
-        with routes(client, await pooled_socket(client)) as spies:
+        with routes(client, await pooled(client)) as spies:
             resp = await _search(
                 client,
                 query="kitchen",
@@ -477,7 +469,7 @@ class TestLegacyEnrichment:
         self, client: HomeAssistantClient
     ) -> None:
         """No result_fields → the legacy path issues no enrichment registry reads."""
-        with routes(client, await pooled_socket(client)) as spies:
+        with routes(client, await pooled(client)) as spies:
             await _search(client, query="kitchen")
 
         sent = bridge_types(spies.bridge)
@@ -490,7 +482,7 @@ class TestLegacyEnrichment:
         """Area+query mode threads the alias haystack's ``get_entries`` into the
         ``result_fields`` enrichment join, so the whole flow costs exactly one
         ``config/entity_registry/get_entries`` for overlapping ids."""
-        with routes(client, await pooled_socket(client)) as spies:
+        with routes(client, await pooled(client)) as spies:
             resp = await _search(
                 client,
                 query="kitchen",
@@ -531,7 +523,7 @@ async def test_component_and_legacy_response_shape_parity(
     # Probed before the component is registered: this client stays legacy.
     legacy = await _search(client, query="kitchen", domain_filter="light")
     component_ws_api.async_register_commands(hass)
-    socket = await pooled_socket(second_client)
+    socket = await pooled(second_client)
 
     with routes(second_client, socket) as spies:
         component = await _search(second_client, query="kitchen", domain_filter="light")

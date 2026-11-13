@@ -27,12 +27,12 @@ from pytest_homeassistant.typing import MockHAClientWebSocket
 from custom_components.ha_mcp_tools import helper_collections as hc
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantClient, HomeAssistantCommandNotSent
-from ha_mcp.client.websocket_client import get_websocket_client
 from ha_mcp.tools import component_helper_collections as client_mod
 from ha_mcp.tools.component_api import invalidate_caps
 from ha_mcp.tools.config_helpers.schemas import SIMPLE_HELPER_TYPES
 
 from ._component_core import ws_call, ws_result
+from ._component_frames import pooled
 
 
 async def _write(ws: MockHAClientWebSocket, **msg: Any) -> Any:
@@ -319,12 +319,6 @@ async def test_the_commands_are_admin_only(
 
 
 # --- server client --------------------------------------------------------------
-async def _pooled_ws(client: HomeAssistantClient) -> Any:
-    return await get_websocket_client(
-        url=client.base_url, token=client.token, verify_ssl=False
-    )
-
-
 async def test_a_write_returns_the_components_result(
     hass: HomeAssistant, component_core_client: HomeAssistantClient
 ) -> None:
@@ -353,7 +347,7 @@ async def test_a_write_that_was_never_sent_falls_back(
     component_core_client: HomeAssistantClient,
 ) -> None:
     await client_mod.fetch_helper_schemas(component_core_client)
-    ws = await _pooled_ws(component_core_client)
+    ws = await pooled(component_core_client)
 
     with patch.object(
         ws, "send_command", side_effect=HomeAssistantCommandNotSent("down")
@@ -384,7 +378,7 @@ async def test_a_write_lost_after_dispatch_has_an_unknown_outcome(
     component_core_client: HomeAssistantClient,
 ) -> None:
     await client_mod.fetch_helper_schemas(component_core_client)
-    ws = await _pooled_ws(component_core_client)
+    ws = await pooled(component_core_client)
 
     with (
         patch.object(ws, "send_command", side_effect=TimeoutError("lost")),
@@ -449,7 +443,7 @@ async def test_the_schemas_are_read_once_and_cached(
 ) -> None:
     assert await async_setup_component(hass, "input_boolean", {})
     await client_mod.fetch_helper_schemas(component_core_client)
-    ws = await _pooled_ws(component_core_client)
+    ws = await pooled(component_core_client)
 
     with patch.object(ws, "send_command", wraps=ws.send_command) as send:
         first = await client_mod.fetch_helper_schemas(component_core_client)

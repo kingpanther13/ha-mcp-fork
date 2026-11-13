@@ -42,8 +42,7 @@ from ha_mcp.tools.blueprint_sources import (
     resolve_blueprint_source,
 )
 
-from ._held_commands import drop_connection_on, held
-from ._search_routing import older_component, pooled_socket
+from ._component_frames import drop_connection_on, held, older_component, pooled
 
 _PATH = "user/motion.yaml"
 _BLUEPRINT_GET = "ha_mcp_tools/blueprint_get"
@@ -343,7 +342,7 @@ class TestDirectRead:
 
 @pytest.fixture
 async def socket(core_client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    return await pooled_socket(core_client)
+    return await pooled(core_client)
 
 
 class TestComponentTier:
@@ -434,7 +433,9 @@ class TestComponentTier:
         invalidated = MagicMock(wraps=blueprint_sources.invalidate_caps)
         monkeypatch.setattr(blueprint_sources, "invalidate_caps", invalidated)
 
-        async with held(hass, component_core_client, _BLUEPRINT_GET, monkeypatch):
+        async with held(
+            hass, _BLUEPRINT_GET, monkeypatch, client=component_core_client
+        ):
             found = await _resolve(component_core_client)
 
         assert found.text is None

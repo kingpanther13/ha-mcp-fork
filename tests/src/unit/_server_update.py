@@ -8,17 +8,12 @@ component's ``server_entry_update`` command answers over Core's WebSocket API.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant.common import MockConfigEntry
 
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.client.websocket_client import (
-    HomeAssistantWebSocketClient,
-    websocket_manager,
-)
-from ha_mcp.tools.tools_dev import WS_SERVER_ENTRY_UPDATE, DevTools
+from ha_mcp.tools.tools_dev import DevTools
 
 from ._server_entry import add_server_entry
 from ._ws_transport import until
@@ -38,18 +33,6 @@ async def update_source(client: HomeAssistantClient, pip_spec: str) -> dict[str,
         action="update_source", pip_spec=pip_spec
     )
     return result
-
-
-async def pooled_socket(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
-    """The pooled WebSocket client keyed by ``client``'s own ``verify_ssl``."""
-    return await websocket_manager.get_client(
-        url=client.base_url, token=client.token, verify_ssl=client.verify_ssl
-    )
-
-
-def update_frames(spy: AsyncMock) -> list[dict[str, Any]]:
-    """The kwargs of every ``server_entry_update`` frame the socket sent."""
-    return [c.kwargs for c in spy.call_args_list if c.args[0] == WS_SERVER_ENTRY_UPDATE]
 
 
 async def applied(entry: MockConfigEntry, pip_spec: str) -> None:

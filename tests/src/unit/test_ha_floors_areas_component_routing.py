@@ -47,7 +47,7 @@ from ha_mcp.tools.component_api import component_supports, get_component_caps
 from ha_mcp.tools.tools_areas import AreaTools
 
 from ._client_spies import sent_commands, sent_messages
-from ._held_commands import drop_connection_on
+from ._component_frames import drop_connection_on
 
 _LEGACY_LISTS = ("config/area_registry/list", "config/floor_registry/list")
 
