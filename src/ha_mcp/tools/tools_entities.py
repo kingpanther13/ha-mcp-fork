@@ -71,7 +71,7 @@ WS_ENTITY_ENRICH = "ha_mcp_tools/entity_enrich"
 # (extended entries, ~1KB each) so a large id list can't produce an over-cap
 # WebSocket frame. Matches the chunk size smart_search uses for the same
 # command. Typical bulk calls fit in a single chunk (one WS message).
-_GET_ENTRIES_CHUNK_SIZE = 500
+GET_ENTRIES_CHUNK_SIZE = 500
 
 # Max entity IDs accepted by the bulk-removal path of ha_remove_entity. Mirrors
 # the cap the other bulk tools use (ha_get_state's _get_bulk_entity_states).
@@ -132,7 +132,7 @@ async def fetch_entity_enrichment_via_component(
     escaping into and failing the whole ``ha_get_entity``. Follows the same
     caps-gate discipline as ``component_devices.fetch_device_via_component``.
 
-    The ids are split into ``_GET_ENTRIES_CHUNK_SIZE`` chunks (the same bound the
+    The ids are split into ``GET_ENTRIES_CHUNK_SIZE`` chunks (the same bound the
     sibling ``config/entity_registry/get_entries`` read uses) so a large bulk
     request cannot produce an over-cap WebSocket frame or stall in the optional
     enrichment step. Enrichment stays all-or-nothing: any chunk failing or drifting
@@ -148,8 +148,8 @@ async def fetch_entity_enrichment_via_component(
         return None
     ids = list(entity_ids)
     chunks = [
-        ids[i : i + _GET_ENTRIES_CHUNK_SIZE]
-        for i in range(0, len(ids), _GET_ENTRIES_CHUNK_SIZE)
+        ids[i : i + GET_ENTRIES_CHUNK_SIZE]
+        for i in range(0, len(ids), GET_ENTRIES_CHUNK_SIZE)
     ]
     merged: dict[str, dict[str, Any]] = {}
     try:
@@ -1329,8 +1329,8 @@ class EntityTools:
             return raw, errors
 
         chunks = [
-            entity_ids[i : i + _GET_ENTRIES_CHUNK_SIZE]
-            for i in range(0, len(entity_ids), _GET_ENTRIES_CHUNK_SIZE)
+            entity_ids[i : i + GET_ENTRIES_CHUNK_SIZE]
+            for i in range(0, len(entity_ids), GET_ENTRIES_CHUNK_SIZE)
         ]
         responses = await asyncio.gather(
             *(

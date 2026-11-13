@@ -239,7 +239,6 @@ module = [
     "tests.src.unit.test_ha_call_service_component_routing",
     "tests.src.unit.test_ha_config_resolvers_component_routing",
     "tests.src.unit.test_ha_dev_server_entry_component_routing",
-    "tests.src.unit.test_ha_get_entity_component_routing",
     "tests.src.unit.test_ha_get_integration_component_routing",
     "tests.src.unit.test_ha_mcp_server_entry",
     "tests.src.unit.test_ha_search_merge",
