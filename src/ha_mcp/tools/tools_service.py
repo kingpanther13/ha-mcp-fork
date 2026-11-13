@@ -71,11 +71,9 @@ from .ws_waiters import wait_for_state_change
 # The ha_mcp_tools/call_service WS command: the first WRITE capability (Phase 3,
 # issue #1813). When the component advertises ``call_service`` the consumer routes a
 # single service call through this one in-process frame, which fires exactly one
-# ``async_call`` and returns the REAL pre->post transition, replacing the legacy
-# REST POST + hardcoded ``_SERVICE_TO_STATE`` guess + WS-subscribe verification.
-# Named once so the routing helper and its tests agree on the wire string.
+# ``async_call`` and returns the REAL pre->post transition, replacing the legacy REST
+# POST + ``_SERVICE_TO_STATE`` guess + WS-subscribe verification. Named once for tests.
 WS_CALL_SERVICE = "ha_mcp_tools/call_service"
-# How long the component waits for a single call's target to confirm.
 COMPONENT_CONFIRM_TIMEOUT_SECONDS = 10.0
 
 
