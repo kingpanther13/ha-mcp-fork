@@ -9,10 +9,11 @@ client's wait for it has run out.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from types import ModuleType
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
@@ -25,6 +26,7 @@ from ha_mcp.client.websocket_client import (
     get_websocket_client,
 )
 from ha_mcp.storage_helper_types import SIMPLE_HELPER_TYPES
+from ha_mcp.tools.component_api import invalidate_caps
 from ha_mcp.tools.tools_config_helpers import HelperConfigTools
 
 
@@ -111,3 +113,10 @@ async def list_helpers(client: HomeAssistantClient, **kwargs: Any) -> dict[str, 
         **kwargs
     )
     return result
+
+
+@contextmanager
+def invalidations(module: ModuleType) -> Iterator[MagicMock]:
+    """A spy on ``module``'s capability invalidation; the real one still runs."""
+    with patch.object(module, "invalidate_caps", wraps=invalidate_caps) as spy:
+        yield spy
