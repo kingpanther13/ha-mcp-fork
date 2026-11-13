@@ -21,7 +21,6 @@ from unittest.mock import patch
 import probatio
 import pytest
 from homeassistant.config_entries import (
-    ConfigEntryState,
     ConfigFlowResult,
     ConfigSubentryData,
     OptionsFlow,
@@ -79,7 +78,6 @@ def _entry(
         options=options if options is not None else {"discovery": True},
         data={"password": "DATA_SECRET"},
         entry_id=entry_id,
-        state=ConfigEntryState.LOADED,
         **kwargs,
     )
     entry.add_to_hass(hass)
@@ -131,7 +129,7 @@ async def test_a_single_entry_is_read_without_a_legacy_read(
     assert (entry["entry_id"], entry["domain"], entry["state"]) == (
         "cfg1",
         "mqtt",
-        "loaded",
+        "not_loaded",
     )
     assert entry["options"] == {"discovery": True}
     assert resp["log_level"] == "DEFAULT"
@@ -186,7 +184,7 @@ async def test_the_list_carries_each_entrys_options(
     by_id = {e["entry_id"]: e for e in resp["entries"]}
     assert by_id["c1"]["options"] == {"discovery": True}
     assert by_id["c2"]["options"] == {"bridge": "x"}
-    assert resp["state_summary"] == {"loaded": 2}
+    assert resp["state_summary"] == {"not_loaded": 2}
     assert made == []
 
 
