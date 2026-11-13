@@ -643,6 +643,10 @@ _NON_STATE_CHANGING_DOMAINS = {
     "system_log",
 }
 
+#: How long a single service call waits for its target to confirm the change,
+#: on the component path and the legacy one alike.
+CONFIRMATION_TIMEOUT_S = 10.0
+
 #: Emitted when a ``return_response=true`` reply is not HA's
 #: ``{"changed_states": [...], "service_response": ...}`` envelope. Without it an
 #: empty ``result`` reads as an affirmative "no entity states changed" rather than
@@ -948,7 +952,7 @@ class ServiceTools(EventCallMixin):
                 entity_id,
                 expected_state=expected,
                 initial_state=initial_state,
-                timeout=10.0,
+                timeout=CONFIRMATION_TIMEOUT_S,
             )
             if new_state:
                 response["verified_state"] = new_state.get("state")
@@ -1716,7 +1720,7 @@ class ServiceTools(EventCallMixin):
             service_data=service_data,
             entity_ids=[entity_id] if entity_id else [],
             wait=True,
-            timeout=10.0,
+            timeout=CONFIRMATION_TIMEOUT_S,
             return_response=return_response,
         )
         if isinstance(component_result, _AmbiguousDispatch):
