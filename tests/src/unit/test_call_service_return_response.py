@@ -87,6 +87,34 @@ async def test_service_response_is_top_level_once(
     assert state is not None and state.state == "on"
 
 
+async def test_the_component_lists_a_confirmed_calls_changed_state_once(
+    hass: HomeAssistant, component_core_client: HomeAssistantClient
+) -> None:
+    """Where the changed states live: the component's confirmed call returns
+    the target's new state, compacted, beside the response data shipped once."""
+
+    async def turn_on(call: ServiceCall) -> ServiceResponse:
+        hass.states.async_set("light.x", "on", {"brightness": 10})
+        return dict(SHELL_RESPONSE)
+
+    hass.states.async_set("light.x", "off")
+    hass.services.async_register(
+        "light", "turn_on", turn_on, supports_response=SupportsResponse.OPTIONAL
+    )
+
+    response = await ServiceTools(component_core_client, None).ha_call_service(
+        domain="light", service="turn_on", entity_id="light.x", return_response=True
+    )
+
+    assert response["service_response"] == SHELL_RESPONSE
+    (record,) = response["result"]
+    assert (record["entity_id"], record["state"]) == ("light.x", "on")
+    assert "context" not in record
+    assert "last_changed" not in record
+    assert _occurrences(response, "stdout") == 1, response
+    assert "warnings" not in response, response
+
+
 async def test_return_response_false_has_no_service_response_key(
     hass: HomeAssistant, tools: ServiceTools
 ) -> None:
