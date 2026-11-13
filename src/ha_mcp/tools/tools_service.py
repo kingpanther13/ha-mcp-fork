@@ -45,7 +45,6 @@ from .bulk_selector import (
 )
 from .coercion import JSON_STRING_COERCION, parse_json_param, parse_string_list_param
 from .component_api import (
-    COMPONENT_INSTALL_HINT,
     component_supports,
     get_component_caps,
     invalidate_caps,
@@ -55,14 +54,18 @@ from .config_entry_flow import is_component_domain
 from .event_call import EventCallMixin
 from .helpers import (
     _parse_json_dict_param,
-    core_error_message,
     exception_to_structured_error,
     log_tool_usage,
-    raise_core_refusal,
     raise_tool_error,
     register_tool_methods,
 )
 from .response_helpers import compact_service_result, project_entity_record
+from .service_response import (
+    COMPONENT_RESPONSE_UNCONFIRMED_WARNING,
+    legacy_call,
+    note_rejected_response,
+    split_return_response_envelope,
+)
 from .tool_hints import read_only_hints, write_hints
 from .util_helpers import (
     _SERVICE_TO_STATE,
@@ -650,61 +653,6 @@ _NON_STATE_CHANGING_DOMAINS = {
 #: on the component path and the legacy one alike.
 CONFIRMATION_TIMEOUT_S = 10.0
 
-#: Emitted when a ``return_response=true`` reply is not HA's
-#: ``{"changed_states": [...], "service_response": ...}`` envelope. Without it an
-#: empty ``result`` reads as an affirmative "no entity states changed" rather than
-#: "the records could not be separated out". Module-level so the tests that
-#: pin the behaviour assert against this exact string instead of a prose fragment
-#: that goes tautologically green when the wording is edited.
-_NON_ENVELOPE_WARNING = (
-    "Home Assistant's return_response reply did not match the expected "
-    "{changed_states, service_response} envelope, so no changed-state records "
-    "could be separated from the response data. An empty 'result' here does NOT "
-    "mean nothing changed — the whole reply is reported under 'service_response'."
-)
-
-
-#: Emitted when the component served a ``return_response`` call but returned no
-#: ``service_response`` key. The component only sets that key for a non-null
-#: response, so an absent key is ambiguous server-side: the service may genuinely
-#: have returned nothing, or the component may have discarded the response on its
-#: dispatched-but-unconfirmed path. Only raised alongside ``partial`` — the case
-#: where the discard is actually possible — so a plain null response stays quiet.
-# Core's name for a requested response it refused because it was no mapping;
-# Core checks it only after the service ran (``ServiceRegistry.async_call``).
-_RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
-
-_STATES_NOT_LISTED_WARNING = (
-    "The states this call changed are not listed: for a call that asks for a "
-    f"response, that list needs the ha_mcp_tools component. {COMPONENT_INSTALL_HINT}"
-)
-
-
-def _note_rejected_response(
-    response: dict[str, Any], error: dict[str, Any] | None
-) -> None:
-    """The service ran and Home Assistant refused the response it returned.
-
-    Core checks the response only after the service ran, so the call is no
-    failure and must not be repeated to get its response. No-op without one.
-    """
-    if error is None:
-        return
-    response["service_response"] = None
-    response["response_error"] = error
-    response.setdefault("warnings", []).append(
-        "The service ran, but Home Assistant rejected the response it returned "
-        f"({error.get('message')}). Do not call it again to get a response."
-    )
-
-
-_COMPONENT_RESPONSE_UNCONFIRMED_WARNING = (
-    "The service was dispatched but its confirmation did not arrive, and no "
-    "response data came back with it. A null 'service_response' here does NOT "
-    "prove the service returned nothing — the response may have been produced "
-    "and lost with the confirmation. Re-read state to confirm the outcome."
-)
-
 # ``_SERVICE_TO_STATE`` (the service -> expected primary-state map) is the single
 # source of truth in ``util_helpers`` — imported above and shared with the bulk
 # consumer (``device_control``) so both write paths hand the component the same
@@ -896,7 +844,7 @@ class ServiceTools(EventCallMixin):
         }
         if return_response:
             response["service_response"] = None
-            response["warnings"].append(_COMPONENT_RESPONSE_UNCONFIRMED_WARNING)
+            response["warnings"].append(COMPONENT_RESPONSE_UNCONFIRMED_WARNING)
         return response
 
     async def _validate_entity_before_wait(self, entity_id: str | None) -> str | None:
@@ -1040,112 +988,6 @@ class ServiceTools(EventCallMixin):
             return False
         return isinstance(current, dict) and current.get("state") == "unavailable"
 
-    async def _legacy_call(
-        self,
-        domain: str,
-        service: str,
-        service_data: dict[str, Any],
-        return_response: bool,
-    ) -> tuple[Any, dict[str, Any] | None, list[str]]:
-        """The call without the component: REST, or Core's WebSocket
-        ``call_service`` when it asks for a response. Returns Core's reply, a
-        rejected response, and the warnings the transport adds."""
-        if not return_response:
-            return (
-                await self._client.call_service(domain, service, service_data),
-                None,
-                [],
-            )
-        result, rejected = await self._call_service_for_response(
-            domain, service, service_data
-        )
-        return result, rejected, [_STATES_NOT_LISTED_WARNING]
-
-    async def _call_service_for_response(
-        self, domain: str, service: str, service_data: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """A call asking for its response, through Core's WebSocket ``call_service``.
-
-        REST words a response Core rejected after the service ran only in its
-        500 text; the WebSocket error names it. Returns REST's envelope (Core's
-        WebSocket answer carries no changed states) and the rejection, if any.
-        """
-        reply = await self._client.send_websocket_message(
-            {
-                "type": "call_service",
-                "domain": domain,
-                "service": service,
-                "service_data": service_data,
-                "return_response": True,
-                # The client's own request timeout, as on the REST POST.
-                "_wait_timeout": self._client.timeout,
-            }
-        )
-        if reply.get("success"):
-            answer = reply.get("result") or {}
-            response = answer.get("response") if isinstance(answer, dict) else None
-            return {"changed_states": [], "service_response": response}, None
-        if (reply.get("translation_domain"), reply.get("translation_key")) == (
-            _RESPONSE_REJECTED
-        ):
-            return {"changed_states": [], "service_response": None}, {
-                "translation_key": reply["translation_key"],
-                "message": core_error_message(reply.get("error")),
-            }
-        raise_core_refusal(
-            f"Failed to call {domain}.{service}",
-            reply,
-            {"domain": domain, "service": service},
-        )
-
-    @staticmethod
-    def _split_return_response_envelope(
-        result: Any, *, return_response: bool
-    ) -> tuple[Any, Any, bool, list[str]]:
-        """Split HA's reply into (changed states, response, present, warnings).
-
-        HA answers ``return_response=true`` with an envelope
-        ``{"changed_states": [...], "service_response": ...}``. The response data
-        belongs at the top level of ha_call_service's reply exactly ONCE — the
-        placement the component path (``_build_component_call_response``) already
-        uses — so it is peeled off here, BEFORE projection, leaving only the
-        changed states to project into ``result``. Returning it in both places
-        shipped it twice, byte-identical, doubling its token cost (issue #2085).
-
-        A legitimately null ``service_response`` is still reported as present
-        (``True``) so the caller emits the key.
-
-        With ``return_response`` false there is no envelope to split: HA returns a
-        plain changed-states list, so it passes through untouched and no
-        ``service_response`` key is emitted (``present`` False). That is the
-        overwhelming majority of calls.
-
-        Anything else means a non-conforming responder (HA core always sends both
-        keys, with a list) — in practice ``_request``'s ``{}`` for a non-JSON reply
-        such as a reverse proxy's redirect. Every such shape takes ONE path: the whole
-        reply becomes the response data, ``result`` stays empty, and a warning
-        says so. Uniformity is the point — peeling a recognised key out of an
-        unrecognised envelope would silently discard whatever else it carried,
-        and an empty ``result`` would otherwise read as an affirmative "no entity
-        states changed". A caller that asked for response data must never get back
-        neither the data nor an explanation.
-        """
-        if not return_response:
-            return result, None, False, []
-        if (
-            isinstance(result, dict)
-            and "service_response" in result
-            and isinstance(result.get("changed_states"), list)
-        ):
-            return result["changed_states"], result["service_response"], True, []
-        # Any other shape is non-conforming. Hand the WHOLE reply back as the
-        # response data rather than guessing which part is which: splitting one
-        # recognised key out of an unrecognised envelope discards the rest (a
-        # non-list ``changed_states`` would vanish entirely) and would make the
-        # warning's "the whole reply is reported under 'service_response'" a lie.
-        # Projecting nothing into ``result`` keeps the records from shipping twice.
-        return [], result, True, [_NON_ENVELOPE_WARNING]
-
     @staticmethod
     def _project_service_result(
         result: list[dict[str, Any]],
@@ -1162,7 +1004,7 @@ class ServiceTools(EventCallMixin):
         - ``verbose=True``: bypass every transformation; return ``result`` as-is.
           (``result`` here is always changed-state records, never an envelope:
           the legacy path splits the envelope off before calling this — see
-          ``_split_return_response_envelope`` — and the component path passes
+          ``split_return_response_envelope`` — and the component path passes
           transition ``new_state``s, which are never enveloped to begin with.)
         - Explicit ``fields`` or ``attribute_keys``: apply per-record projection
           via ``project_entity_record`` to every record. No compaction; this is
@@ -1726,7 +1568,7 @@ class ServiceTools(EventCallMixin):
             response.setdefault("warnings", []).extend(projection_warnings)
         if return_response:
             # Emit the key whenever it was requested, even for a null response —
-            # the legacy path does the same (``_split_return_response_envelope``),
+            # the legacy path does the same (``split_return_response_envelope``),
             # and gating on ``is not None`` made the two paths answer the same
             # call with different shapes. The component only sets the key for a
             # non-null response, so a null one arrives as an absent key here.
@@ -1737,12 +1579,12 @@ class ServiceTools(EventCallMixin):
             # ``partial``, so warn there rather than on every null.
             rejected = component_result.get("response_error")
             if isinstance(rejected, dict):
-                _note_rejected_response(response, rejected)
+                note_rejected_response(response, rejected)
             elif "service_response" not in component_result and component_result.get(
                 "partial"
             ):
                 response.setdefault("warnings", []).append(
-                    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING
+                    COMPONENT_RESPONSE_UNCONFIRMED_WARNING
                 )
         if should_wait:
             if component_result.get("partial"):
@@ -2078,15 +1920,15 @@ class ServiceTools(EventCallMixin):
             if should_wait:
                 initial_state = await self._validate_entity_before_wait(entity_id)
 
-            result, rejected, ws_warnings = await self._legacy_call(
-                domain, service, service_data, return_response_bool
+            result, rejected, ws_warnings = await legacy_call(
+                self._client, domain, service, service_data, return_response_bool
             )
 
             # Peel the return_response envelope apart BEFORE projection so the
             # response data is emitted once, top-level, and only the changed
             # states reach ``result`` (issue #2085).
             result, service_response, has_response_envelope, envelope_warnings = (
-                self._split_return_response_envelope(
+                split_return_response_envelope(
                     result, return_response=return_response_bool
                 )
             )
@@ -2114,7 +1956,7 @@ class ServiceTools(EventCallMixin):
 
             if has_response_envelope:
                 response["service_response"] = service_response
-            _note_rejected_response(response, rejected)
+            note_rejected_response(response, rejected)
 
             # Wait for entity state to change
             if should_wait and entity_id is not None:
