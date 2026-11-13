@@ -265,7 +265,7 @@ async def test_the_blueprint_file_is_read_off_the_event_loop(
     source = "blueprint:\n  name: S\n  domain: script\nsequence:\n  - delay: 1\n"
     _write_blueprint(hass, "script", "user/s.yaml", source)
 
-    with executor_jobs() as spy:
+    with executor_jobs(hass) as spy:
         result = await _blueprint(component_ws, "user/s.yaml", domain="script")
 
     assert jobs_from(spy, "lookups") == 1
