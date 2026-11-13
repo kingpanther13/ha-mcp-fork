@@ -75,6 +75,8 @@ from .ws_waiters import wait_for_state_change
 # REST POST + hardcoded ``_SERVICE_TO_STATE`` guess + WS-subscribe verification.
 # Named once so the routing helper and its tests agree on the wire string.
 WS_CALL_SERVICE = "ha_mcp_tools/call_service"
+# How long the component waits for a single call's target to confirm.
+COMPONENT_CONFIRM_TIMEOUT_SECONDS = 10.0
 
 
 class BulkControlOperation(TypedDict):
@@ -1716,7 +1718,7 @@ class ServiceTools(EventCallMixin):
             service_data=service_data,
             entity_ids=[entity_id] if entity_id else [],
             wait=True,
-            timeout=10.0,
+            timeout=COMPONENT_CONFIRM_TIMEOUT_SECONDS,
             return_response=return_response,
         )
         if isinstance(component_result, _AmbiguousDispatch):
