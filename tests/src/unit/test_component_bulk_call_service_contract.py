@@ -29,7 +29,7 @@ def _service(
     hass: HomeAssistant,
     domain: str,
     service: str,
-    effect: Callable[[], None] | None = None,
+    effect: Callable[[], object] | None = None,
 ) -> list[ServiceCall]:
     """Register ``domain.service``; each call is recorded, then ``effect`` runs."""
     calls: list[ServiceCall] = []

@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components import websocket_api
@@ -97,6 +97,12 @@ async def held_command(
     assert held.is_set(), f"{command} was never sent"
 
 
+async def setup_storage_booleans(hass: HomeAssistant) -> None:
+    """Core's registry API and storage input_booleans."""
+    assert await async_setup_component(hass, "config", {})
+    assert await async_setup_component(hass, "input_boolean", {})
+
+
 async def setup_every_simple_type(hass: HomeAssistant) -> None:
     """Set up every storage helper type, as ``default_config`` does.
 
@@ -109,14 +115,16 @@ async def setup_every_simple_type(hass: HomeAssistant) -> None:
 
 async def list_helpers(client: HomeAssistantClient, **kwargs: Any) -> dict[str, Any]:
     """``ha_config_list_helpers`` on ``client``."""
-    result: dict[str, Any] = await HelperConfigTools(client).ha_config_list_helpers(
-        **kwargs
+    return cast(
+        "dict[str, Any]",
+        await HelperConfigTools(client).ha_config_list_helpers(**kwargs),
     )
-    return result
 
 
 @contextmanager
 def invalidations(module: ModuleType) -> Iterator[MagicMock]:
     """A spy on ``module``'s capability invalidation; the real one still runs."""
-    with patch.object(module, "invalidate_caps", wraps=invalidate_caps) as spy:
+    with patch.object(
+        module, "invalidate_caps", MagicMock(wraps=invalidate_caps)
+    ) as spy:
         yield spy

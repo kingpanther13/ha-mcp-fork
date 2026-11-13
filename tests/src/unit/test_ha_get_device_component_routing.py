@@ -16,7 +16,7 @@ the pooled socket records which of them the tool sent.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -99,8 +99,7 @@ async def client(
 
 
 async def _get(client: HomeAssistantClient, **kwargs: Any) -> dict[str, Any]:
-    result: dict[str, Any] = await RegistryTools(client).ha_get_device(**kwargs)
-    return result
+    return cast("dict[str, Any]", await RegistryTools(client).ha_get_device(**kwargs))
 
 
 async def test_a_single_lookup_is_one_device_get_frame_and_no_registry_dump(
