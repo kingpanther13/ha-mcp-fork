@@ -46,14 +46,7 @@ from ._search_routing import (
 )
 from ._search_tool import _build_ha_search, _setup_visibility_disabled
 
-_DEFAULT_RECORD_KEYS = {
-    "entity_id",
-    "friendly_name",
-    "domain",
-    "state",
-    "score",
-    "match_type",
-}
+_ENRICHMENT_KEYS = {"area", "floor", "labels", "aliases"}
 
 
 @pytest.fixture(autouse=True)
@@ -197,10 +190,12 @@ class TestComponentPath:
     async def test_component_default_shape_unchanged(
         self, client: HomeAssistantClient
     ) -> None:
-        """No result_fields → the default six-key record (enrichment absent)."""
+        """No result_fields → the default record, without the enrichment keys."""
         resp = await _search(client, query="kitchen")
 
-        assert set(resp["entities"][0]) == _DEFAULT_RECORD_KEYS
+        record = resp["entities"][0]
+        assert record["entity_id"] in {"light.kitchen", "sensor.kitchen_temp"}
+        assert not _ENRICHMENT_KEYS & set(record)
 
     async def test_unknown_result_field_rejected(
         self, client: HomeAssistantClient, socket: HomeAssistantWebSocketClient

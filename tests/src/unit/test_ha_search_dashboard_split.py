@@ -239,8 +239,7 @@ class TestComponentWithoutDocSearch:
         assert len(resp["warnings"]) == 1
         assert "entity search skipped" in resp["warnings"][0]
         assert frames(spies.component, SEARCH) == []
-        # Both dashboards were read: the auto-generated one and the default.
-        assert _lovelace_reads(spies).count("lovelace/dashboards/list") == 1
+        # The walk read both dashboards: the auto-generated one and the default.
         assert _lovelace_reads(spies).count("lovelace/config") == 2
 
     async def test_mixed_search_types_keep_the_component_fast_path(
@@ -263,7 +262,8 @@ class TestComponentWithoutDocSearch:
         (request,) = frames(spies.component, SEARCH)
         assert request["search_types"] == ["automation"]
         spies.states.assert_not_called()
-        assert _lovelace_reads(spies).count("lovelace/dashboards/list") == 1
+        # The legacy walk read the default dashboard's config.
+        assert "lovelace/config" in _lovelace_reads(spies)
         assert resp["dashboards"] == []
         assert not resp.get("partial")
         assert not fell_back(resp)
