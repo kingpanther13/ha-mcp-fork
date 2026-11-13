@@ -55,7 +55,6 @@ ignores:
   - "tests/src/unit/test_component_helpers_list.py"
   - "tests/src/unit/test_component_info_report_contract.py"
   - "tests/src/unit/test_component_oauth_callbacks_ws.py"
-  - "tests/src/unit/test_component_readapi_contract.py"
   - "tests/src/unit/test_component_registries_contract.py"
   - "tests/src/unit/test_component_registry_lookup_contract.py"
   - "tests/src/unit/test_component_search_contract.py"
