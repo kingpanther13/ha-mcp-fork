@@ -1,4 +1,4 @@
-"""The component's visibility filter hides what the server's own filter hides.
+"""The component's visibility filter and the server's give the same answer.
 
 Over one Core and one visibility config, the entities ``ha_search`` returns
 through the component's ``search`` (which gets the config as its
@@ -6,6 +6,9 @@ through the component's ``search`` (which gets the config as its
 own commands, where the server applies its resolver's hidden set. The two
 filters were written to one design but never run against each other; this
 file fails when they drift on any hide dimension or in the warnings they give.
+What each filter hides is tested on its own layer:
+``test_component_visibility_*_ws.py`` for the component's,
+``visibility/test_resolver.py`` for the server's.
 
 Both runs are ``ha_search(query, domain_filter="light", exact_match=True)``,
 an entity-only substring search, so only the visibility filter can make them
@@ -65,7 +68,6 @@ class _Scenario:
     id: str
     ents: tuple[_Ent, ...]
     config: VisibilityConfig
-    expected: frozenset[str]
     # device id -> (area_id, labels)
     devices: dict[str, tuple[str | None, tuple[str, ...]]] = field(default_factory=dict)
     states_only: tuple[str, ...] = ()
@@ -75,8 +77,6 @@ class _Scenario:
     # False: Core has no Assist exposure (``homeassistant`` not set up), so the
     # Assist dimension is skipped and both filters warn.
     assist_available: bool = True
-    # A phrase of each visibility warning both filters give.
-    warnings: tuple[str, ...] = ()
 
 
 def _cfg(**kw: Any) -> VisibilityConfig:
@@ -86,16 +86,12 @@ def _cfg(**kw: Any) -> VisibilityConfig:
     return VisibilityConfig(enabled=True, **kw)
 
 
-_ASSIST_UNAVAILABLE = "Assist exposure data was unavailable"
-_REGISTRY_EMPTY = "entity registry returned no entries"
-
 _SCENARIOS = [
     _Scenario(
         id="deny_incl_states_only",
         ents=(_Ent("light.vismark_keep"), _Ent("light.vismark_drop")),
         states_only=("light.vismark_ghost",),
         config=_cfg(deny_entity_ids=["light.vismark_drop", "light.vismark_ghost"]),
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="exclude_category",
@@ -107,7 +103,6 @@ _SCENARIOS = [
         config=VisibilityConfig(
             enabled=True, exclude_categories=["diagnostic", "config"]
         ),
-        expected=frozenset({"light.vismark_normal"}),
     ),
     _Scenario(
         id="exclude_hidden",
@@ -116,7 +111,6 @@ _SCENARIOS = [
             _Ent("light.vismark_hid", hidden_by="user"),
         ),
         config=_cfg(exclude_hidden=True),
-        expected=frozenset({"light.vismark_normal"}),
     ),
     _Scenario(
         id="exclude_area_direct_and_device_inherited",
@@ -127,7 +121,6 @@ _SCENARIOS = [
         ),
         devices={"d1": ("garage", ())},
         config=_cfg(exclude_areas=["garage"]),
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="exclude_label_direct_and_device_inherited",
@@ -138,7 +131,6 @@ _SCENARIOS = [
         ),
         devices={"d1": (None, ("hide",))},
         config=_cfg(exclude_labels=["hide"]),
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="allow_entity_ids_states_only_skips_unavailable_assist",
@@ -148,14 +140,12 @@ _SCENARIOS = [
             allow_entity_ids=["light.vismark_keep"], respect_assist_exposure=True
         ),
         assist_available=False,
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="allow_entity_ids_restrict",
         ents=(_Ent("light.vismark_keep"), _Ent("light.vismark_drop")),
         states_only=("light.vismark_ghost",),
         config=_cfg(allow_entity_ids=["light.vismark_keep"]),
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="allow_areas_restrict",
@@ -164,7 +154,6 @@ _SCENARIOS = [
             _Ent("light.vismark_drop", area_id="garage"),
         ),
         config=_cfg(allow_areas=["office"]),
-        expected=frozenset({"light.vismark_keep"}),
     ),
     _Scenario(
         id="allow_label_direct_and_device_inherited",
@@ -175,7 +164,6 @@ _SCENARIOS = [
         ),
         devices={"d1": (None, ("keep",))},
         config=_cfg(allow_labels=["keep"]),
-        expected=frozenset({"light.vismark_direct", "light.vismark_viadev"}),
     ),
     _Scenario(
         id="allow_area_device_inherited",
@@ -185,7 +173,6 @@ _SCENARIOS = [
         ),
         devices={"d1": ("office", ())},
         config=_cfg(allow_areas=["office"]),
-        expected=frozenset({"light.vismark_viadev"}),
     ),
     _Scenario(
         id="allow_match_overrides_category_and_assist",
@@ -201,7 +188,6 @@ _SCENARIOS = [
             allow_entity_ids=["light.vismark_allowed"],
             respect_assist_exposure=True,
         ),
-        expected=frozenset({"light.vismark_allowed"}),
     ),
     _Scenario(
         id="explicit_exclude_area_wins_over_allow",
@@ -213,14 +199,12 @@ _SCENARIOS = [
             exclude_areas=["office"],
             allow_entity_ids=["light.vismark_conflict", "light.vismark_allowed"],
         ),
-        expected=frozenset({"light.vismark_allowed"}),
     ),
     _Scenario(
         id="assist_exposure",
         ents=(_Ent("light.vismark_a"), _Ent("light.vismark_b")),
         exposed=frozenset({"light.vismark_b"}),
         config=_cfg(respect_assist_exposure=True),
-        expected=frozenset({"light.vismark_b"}),
     ),
     _Scenario(
         id="include_hidden_true_keeps_hidden",
@@ -232,7 +216,6 @@ _SCENARIOS = [
         # is the only thing acting on the hidden entity.
         config=_cfg(deny_entity_ids=["light.vismark_absent"]),
         include_hidden=True,
-        expected=frozenset({"light.vismark_normal", "light.vismark_hid"}),
     ),
     _Scenario(
         id="include_hidden_false_drops_hidden",
@@ -242,7 +225,6 @@ _SCENARIOS = [
         ),
         config=_cfg(deny_entity_ids=["light.vismark_absent"]),
         include_hidden=False,
-        expected=frozenset({"light.vismark_normal"}),
     ),
     # Each of these degrades one dimension, which both filters skip and warn about.
     _Scenario(
@@ -256,8 +238,6 @@ _SCENARIOS = [
             exclude_categories=[*(c.value for c in EntityCategory), "bogus"],
             exclude_hidden=True,
         ),
-        expected=frozenset({"light.vismark_a", "light.vismark_b"}),
-        warnings=("['bogus']",),
     ),
     _Scenario(
         id="empty_registry_allowlist_warns",
@@ -265,16 +245,12 @@ _SCENARIOS = [
         states_only=("light.vismark_g1", "light.vismark_g2"),
         exposed=frozenset({"light.vismark_g1"}),
         config=_cfg(allow_areas=["office"], respect_assist_exposure=True),
-        expected=frozenset({"light.vismark_g1"}),
-        warnings=(_REGISTRY_EMPTY,),
     ),
     _Scenario(
         id="assist_unavailable_warns",
         ents=(_Ent("light.vismark_a"), _Ent("light.vismark_b")),
         config=_cfg(respect_assist_exposure=True),
         assist_available=False,
-        expected=frozenset({"light.vismark_a", "light.vismark_b"}),
-        warnings=(_ASSIST_UNAVAILABLE,),
     ),
     _Scenario(
         id="explicit_allow_survives_empty_registry_area_degradation",
@@ -286,8 +262,6 @@ _SCENARIOS = [
             respect_assist_exposure=True,
         ),
         assist_available=False,
-        expected=frozenset({"light.vismark_keep"}),
-        warnings=(_REGISTRY_EMPTY,),
     ),
 ]
 
@@ -378,7 +352,7 @@ def _visibility_warnings(resp: dict[str, Any]) -> set[str]:
 
 
 @pytest.mark.parametrize("scenario", _SCENARIOS, ids=[s.id for s in _SCENARIOS])
-async def test_the_component_hides_what_the_server_hides(
+async def test_the_component_and_the_server_hide_the_same_entities(
     hass: HomeAssistant,
     component_core_client: HomeAssistantClient,
     scenario: _Scenario,
@@ -400,13 +374,14 @@ async def test_the_component_hides_what_the_server_hides(
     invalidate_caps(client)
     server = await _search(client, scenario)
 
-    assert _ids(component) == set(scenario.expected)
+    # Every scenario keeps at least one entity: two empty answers prove nothing.
+    assert _ids(component)
     assert _ids(component) == _ids(server)
     # Hidden entities are dropped before the count on both paths.
     assert (
         component["entity_total_matches"]
         == server["entity_total_matches"]
-        == len(scenario.expected)
+        == len(_ids(component))
     )
     # The component served the whole search: the server read nothing itself
     # and filtered nothing on top.
@@ -414,9 +389,6 @@ async def test_the_component_hides_what_the_server_hides(
     states.assert_not_awaited()
     # The two filters give the same visibility warnings, word for word.
     assert _visibility_warnings(component) == _visibility_warnings(server)
-    assert len(_visibility_warnings(component)) == len(scenario.warnings)
-    for phrase in scenario.warnings:
-        assert any(phrase in w for w in _visibility_warnings(component))
 
 
 async def test_the_component_accepts_exactly_the_visibility_keys_the_server_sends(
