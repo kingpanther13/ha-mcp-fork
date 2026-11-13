@@ -19,14 +19,20 @@ states and readable/writeable flags when supplied), and each parameter's
 `configuration_value_type`:
 
 ```python
-ha_manage_radio(radio="zwave", action="get_config_params", device_id="example_device_id")
+ha_manage_radio(
+    radio="zwave", action="get_config_params", device_id="example_device_id"
+)
 ```
 
 Read parameter 3 from the cache:
 
 ```python
-ha_manage_radio(radio="zwave", action="get_config_param",
-                device_id="example_device_id", params={"property": 3})
+ha_manage_radio(
+    radio="zwave",
+    action="get_config_param",
+    device_id="example_device_id",
+    params={"property": 3},
+)
 ```
 
 Read a partial parameter at endpoint 1. `property_key` is the bit mask advertised
@@ -34,17 +40,23 @@ by `get_config_params`, not a sub-parameter index. Values are already decoded
 by Z-Wave JS; the tool does not apply the mask again.
 
 ```python
-ha_manage_radio(radio="zwave", action="get_config_param",
-                device_id="example_device_id",
-                params={"property": 3, "endpoint": 1, "property_key": 15})
+ha_manage_radio(
+    radio="zwave",
+    action="get_config_param",
+    device_id="example_device_id",
+    params={"property": 3, "endpoint": 1, "property_key": 15},
+)
 ```
 
 Explicitly query a full root parameter, including one missing from the cache:
 
 ```python
-ha_manage_radio(radio="zwave", action="get_config_param",
-                device_id="example_device_id",
-                params={"property": 3, "refresh": True})
+ha_manage_radio(
+    radio="zwave",
+    action="get_config_param",
+    device_id="example_device_id",
+    params={"property": 3, "refresh": True},
+)
 ```
 
 ## Freshness and limits

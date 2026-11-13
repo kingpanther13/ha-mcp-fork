@@ -335,7 +335,9 @@ for i, msg in enumerate(data["messages"]):
     tok = msg.get("tokens", {})
     cached = tok.get("cached", 0)
     total = tok.get("input", 0)
-    print(f"Turn {i+1}: input={total:,} cached={cached:,} non-cached={total-cached:,}")
+    print(
+        f"Turn {i + 1}: input={total:,} cached={cached:,} non-cached={total - cached:,}"
+    )
 ```
 
 A turn with `cached=0` after a non-cold-start turn = KV-cache miss (provider-side, not a code regression).
