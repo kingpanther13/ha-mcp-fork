@@ -36,7 +36,6 @@ ignores:
   - "tests/src/unit/test_component_ws_search.py"
   - "tests/src/unit/test_config_subentry_backup.py"
   - "tests/src/unit/test_core_contract.py"
-  - "tests/src/unit/test_ha_dev_manage_server_component_contract.py"
 message: |
   These modules hold hand-written stand-ins for Home Assistant (FakeHass, fake
   registries, a fake WebSocket API) that older tests still use. Do not build
