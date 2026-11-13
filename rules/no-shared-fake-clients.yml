@@ -86,7 +86,6 @@ ignores:
   - "tests/src/unit/test_ha_config_resolvers_component_routing.py"
   - "tests/src/unit/test_ha_dashboards_component_routing.py"
   - "tests/src/unit/test_ha_dev_server_entry_component_routing.py"
-  - "tests/src/unit/test_ha_floors_areas_component_routing.py"
   - "tests/src/unit/test_ha_get_device_component_routing.py"
   - "tests/src/unit/test_ha_get_entity_component_routing.py"
   - "tests/src/unit/test_ha_get_entity_exposure_component_routing.py"
