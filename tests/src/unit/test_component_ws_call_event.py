@@ -23,7 +23,12 @@ async def test_a_fire_returns_the_events_context_and_its_audience(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     fired: list[Event] = []
-    hass.bus.async_listen("my_event", callback(fired.append))
+
+    @callback
+    def record(event: Event) -> None:
+        fired.append(event)
+
+    hass.bus.async_listen("my_event", record)
     hass.bus.async_listen("my_event", callback(lambda event: None))
     hass.bus.async_listen(MATCH_ALL, callback(lambda event: None))
     wildcards = _wildcards(hass)
@@ -51,7 +56,12 @@ async def test_a_listener_that_removes_itself_on_the_fire_still_counts(
 ) -> None:
     """The counts describe the audience the event reached."""
     heard: list[Event] = []
-    hass.bus.async_listen_once("my_event", callback(heard.append))
+
+    @callback
+    def hear(event: Event) -> None:
+        heard.append(event)
+
+    hass.bus.async_listen_once("my_event", hear)
     hass.bus.async_listen("my_event", callback(lambda event: None))
 
     result = await ws_result(
