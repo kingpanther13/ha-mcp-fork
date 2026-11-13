@@ -523,6 +523,9 @@ async def test_area_rows_are_cores_area_list_rows(
     assert await async_setup_component(hass, "config", {})
     floor = floor_registry.async_create("Upstairs")
     label = label_registry.async_create("Favorites")
+    # Core takes only a humidity and a temperature sensor it has a state for.
+    hass.states.async_set("sensor.h", "40", {"device_class": "humidity"})
+    hass.states.async_set("sensor.t", "21", {"device_class": "temperature"})
     area_registry.async_create(
         "Office",
         floor_id=floor.floor_id,

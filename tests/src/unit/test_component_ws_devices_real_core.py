@@ -30,6 +30,7 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_result
+from ._core_setup import add_test_entry
 
 
 def _as_sent(value: Any) -> Any:
@@ -39,9 +40,7 @@ def _as_sent(value: Any) -> Any:
 
 @pytest.fixture
 def config_entry(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(domain="test")
-    entry.add_to_hass(hass)
-    return entry
+    return add_test_entry(hass)
 
 
 def _device(

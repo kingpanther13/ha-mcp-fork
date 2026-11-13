@@ -22,6 +22,7 @@ from pytest_homeassistant.typing import MockHAClientWebSocket
 from custom_components.ha_mcp_tools.websocket_api.constants import WS_SEARCH
 
 from ._component_core import ws_result
+from ._core_setup import set_up_domain as _set_up
 from ._executor_spy import executor_jobs, jobs_from
 
 _SECRET = "s3cr3tprobevaluexyz"
@@ -43,11 +44,6 @@ def _automation(
     if item_id is not None:
         config["id"] = item_id
     return config
-
-
-async def _set_up(hass: HomeAssistant, domain: str, config: Any) -> None:
-    assert await async_setup_component(hass, domain, {domain: config})
-    await hass.async_block_till_done()
 
 
 async def _search(ws: MockHAClientWebSocket, **params: Any) -> Any:
