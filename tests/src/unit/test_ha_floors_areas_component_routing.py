@@ -25,7 +25,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import category_registry as cr
@@ -48,7 +47,7 @@ from ha_mcp.tools.component_api import component_supports, get_component_caps
 from ha_mcp.tools.tools_areas import AreaTools
 
 from ._client_spies import sent_commands, sent_messages
-from ._ws_transport import abort_transport
+from ._held_commands import drop_connection_on
 
 _LEGACY_LISTS = ("config/area_registry/list", "config/floor_registry/list")
 
@@ -206,21 +205,7 @@ async def test_connection_drop_falls_back_to_legacy(
     2-call gather (on a fresh connection) rather than propagating, and keeps
     the capability: a transient drop is not a downgrade."""
     _office_on_ground(hass)
-    _, schema = hass.data[websocket_api.DOMAIN][component_registries.WS_REGISTRIES]
-
-    async def drop(
-        core: HomeAssistant,
-        connection: websocket_api.ActiveConnection,
-        msg: dict[str, Any],
-    ) -> None:
-        abort_transport(socket)
-
-    websocket_api.async_register_command(
-        hass,
-        component_registries.WS_REGISTRIES,
-        websocket_api.async_response(drop),
-        schema,
-    )
+    drop_connection_on(hass, component_registries.WS_REGISTRIES, socket)
 
     resp, bridge = await _list(client)
 
