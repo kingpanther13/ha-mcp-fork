@@ -21,11 +21,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
@@ -34,6 +32,7 @@ from ha_mcp.client.websocket_client import HomeAssistantWebSocketClient
 from ha_mcp.tools import tools_dev
 
 from ._client_spies import sent_commands
+from ._held_commands import drop_connection_on
 from ._server_update import (
     EMBEDDED_TARGET,
     PIP_SPEC,
@@ -44,7 +43,6 @@ from ._server_update import (
     update_frames,
     update_source,
 )
-from ._ws_transport import abort_transport
 
 _RESTART_NOTE = (
     "The in-process server will reinstall and restart now; this "
@@ -192,21 +190,7 @@ async def test_embedded_connection_drop_falls_back(
     to the legacy submit (the write is idempotent, so a re-apply is safe) and
     keeps the capability: a lost answer is not a downgrade."""
     entry = server_entry(hass, pip_spec="")
-    _, schema = hass.data[websocket_api.DOMAIN][tools_dev.WS_SERVER_ENTRY_UPDATE]
-
-    async def drop(
-        core: HomeAssistant,
-        connection: websocket_api.ActiveConnection,
-        msg: dict[str, Any],
-    ) -> None:
-        abort_transport(socket)
-
-    websocket_api.async_register_command(
-        hass,
-        tools_dev.WS_SERVER_ENTRY_UPDATE,
-        websocket_api.async_response(drop),
-        schema,
-    )
+    drop_connection_on(hass, tools_dev.WS_SERVER_ENTRY_UPDATE, socket)
     invalidated = MagicMock(wraps=tools_dev.invalidate_caps)
     monkeypatch.setattr(tools_dev, "invalidate_caps", invalidated)
 
