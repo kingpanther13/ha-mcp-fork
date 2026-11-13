@@ -65,7 +65,7 @@ def tools(component_core_client: HomeAssistantClient) -> ServiceTools:
 @pytest.fixture
 def short_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     """A confirmation that never comes lapses at once instead of after 10 s."""
-    monkeypatch.setattr(tools_service, "COMPONENT_CONFIRM_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(tools_service, "CONFIRMATION_TIMEOUT_S", 0.05)
 
 
 async def test_a_confirmed_call_reports_the_real_transition(

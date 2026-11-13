@@ -74,7 +74,6 @@ from .ws_waiters import wait_for_state_change
 # ``async_call`` and returns the REAL pre->post transition, replacing the legacy REST
 # POST + ``_SERVICE_TO_STATE`` guess + WS-subscribe verification. Named once for tests.
 WS_CALL_SERVICE = "ha_mcp_tools/call_service"
-COMPONENT_CONFIRM_TIMEOUT_SECONDS = 10.0
 
 
 class BulkControlOperation(TypedDict):
@@ -643,6 +642,10 @@ _NON_STATE_CHANGING_DOMAINS = {
     "system_log",
 }
 
+#: How long a single service call waits for its target to confirm the change,
+#: on the component path and the legacy one alike.
+CONFIRMATION_TIMEOUT_S = 10.0
+
 #: Emitted when a ``return_response=true`` reply is not HA's
 #: ``{"changed_states": [...], "service_response": ...}`` envelope. Without it an
 #: empty ``result`` reads as an affirmative "no entity states changed" rather than
@@ -948,7 +951,7 @@ class ServiceTools(EventCallMixin):
                 entity_id,
                 expected_state=expected,
                 initial_state=initial_state,
-                timeout=10.0,
+                timeout=CONFIRMATION_TIMEOUT_S,
             )
             if new_state:
                 response["verified_state"] = new_state.get("state")
@@ -1716,7 +1719,7 @@ class ServiceTools(EventCallMixin):
             service_data=service_data,
             entity_ids=[entity_id] if entity_id else [],
             wait=True,
-            timeout=COMPONENT_CONFIRM_TIMEOUT_SECONDS,
+            timeout=CONFIRMATION_TIMEOUT_S,
             return_response=return_response,
         )
         if isinstance(component_result, _AmbiguousDispatch):
