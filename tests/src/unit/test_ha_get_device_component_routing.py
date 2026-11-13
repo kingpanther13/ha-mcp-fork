@@ -16,10 +16,8 @@ the pooled socket records which of them the tool sent.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any, NamedTuple
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -34,12 +32,17 @@ from custom_components.ha_mcp_tools.websocket_api import system
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantClient, HomeAssistantConnectionError
 from ha_mcp.tools import component_api, component_devices
-from ha_mcp.tools.component_api import invalidate_caps
 from ha_mcp.tools.tools_registry import RegistryTools
 from ha_mcp.utils.device_registry_semantics import EFFECTIVE_AREA_MARKER
 
 from ._client_spies import sent_commands
-from ._routing_core import held_command, pooled_socket, sent_frames, sent_types
+from ._routing_core import (
+    held_command,
+    invalidations,
+    pooled_socket,
+    sent_frames,
+    sent_types,
+)
 from ._tool_errors import error_of
 
 DEVICE_GET = "ha_mcp_tools/device_get"
@@ -98,14 +101,6 @@ async def client(
 async def _get(client: HomeAssistantClient, **kwargs: Any) -> dict[str, Any]:
     result: dict[str, Any] = await RegistryTools(client).ha_get_device(**kwargs)
     return result
-
-
-@contextmanager
-def _invalidations() -> Iterator[MagicMock]:
-    with patch.object(
-        component_devices, "invalidate_caps", wraps=invalidate_caps
-    ) as spy:
-        yield spy
 
 
 async def test_a_single_lookup_is_one_device_get_frame_and_no_registry_dump(
@@ -377,7 +372,7 @@ async def test_a_component_without_device_get_is_invalidated_and_falls_back(
     monkeypatch.delitem(hass.data["websocket_api"], DEVICE_GET)
     socket = await pooled_socket(client)
 
-    with sent_commands(socket) as sent, _invalidations() as invalidate:
+    with sent_commands(socket) as sent, invalidations(component_devices) as invalidate:
         resp = await _get(client, device_id=sensor.device_id)
 
     assert resp["device"]["id"] == sensor.device_id
@@ -393,7 +388,10 @@ async def test_a_timed_out_device_get_falls_back_and_keeps_the_capability(
     socket = await pooled_socket(client)
 
     async with held_command(hass, client, DEVICE_GET):
-        with sent_commands(socket) as sent, _invalidations() as invalidate:
+        with (
+            sent_commands(socket) as sent,
+            invalidations(component_devices) as invalidate,
+        ):
             resp = await _get(client, device_id=sensor.device_id)
 
     assert resp["device"]["id"] == sensor.device_id
@@ -418,7 +416,7 @@ async def test_an_unreachable_component_socket_falls_back_and_keeps_the_capabili
             AsyncMock(side_effect=HomeAssistantConnectionError("socket down")),
         ),
         sent_commands(socket) as sent,
-        _invalidations() as invalidate,
+        invalidations(component_devices) as invalidate,
     ):
         resp = await _get(client, device_id=sensor.device_id)
 
@@ -441,7 +439,7 @@ async def test_a_component_without_device_list_is_invalidated_and_falls_back(
     monkeypatch.delitem(hass.data["websocket_api"], DEVICE_LIST)
     socket = await pooled_socket(client)
 
-    with sent_commands(socket) as sent, _invalidations() as invalidate:
+    with sent_commands(socket) as sent, invalidations(component_devices) as invalidate:
         resp = await _get(client)
 
     assert resp["total_devices"] == 1
@@ -456,7 +454,10 @@ async def test_a_timed_out_device_list_falls_back_and_keeps_the_capability(
     socket = await pooled_socket(client)
 
     async with held_command(hass, client, DEVICE_LIST):
-        with sent_commands(socket) as sent, _invalidations() as invalidate:
+        with (
+            sent_commands(socket) as sent,
+            invalidations(component_devices) as invalidate,
+        ):
             resp = await _get(client)
 
     assert resp["total_devices"] == 1

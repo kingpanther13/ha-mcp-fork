@@ -81,7 +81,11 @@ def _template_helpers(hass: HomeAssistant, count: int) -> None:
 
 def _ours(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     """The warnings this server logged (Core's own setup may log too)."""
-    return [r for r in caplog.records if r.name.startswith("ha_mcp")]
+    return [
+        r
+        for r in caplog.records
+        if r.name.startswith("ha_mcp") and r.levelno >= logging.WARNING
+    ]
 
 
 @pytest.fixture
