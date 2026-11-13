@@ -1548,6 +1548,16 @@ class ServiceTools(EventCallMixin):
             if isinstance(transition, dict)
             and isinstance(transition.get("new_state"), dict)
         ]
+        # A call asking for a response also lists every state written under its
+        # context, as Core's REST call does; a target's confirmed state wins.
+        changed = component_result.get("changed_states")
+        if isinstance(changed, list):
+            targets = {state.get("entity_id") for state in new_states}
+            new_states = [
+                state
+                for state in changed
+                if isinstance(state, dict) and state.get("entity_id") not in targets
+            ] + new_states
         projected_result, projection_warnings = self._project_service_result(
             new_states,
             entity_id=entity_id,
@@ -1620,7 +1630,8 @@ class ServiceTools(EventCallMixin):
         fields: list[str] | None,
         attribute_keys: list[str] | None,
     ) -> dict[str, Any] | None:
-        """Route a confirmable single call through the component; ``None`` → do legacy.
+        """Route a confirmable single call, or any call asking for a response,
+        through the component; ``None`` → do legacy.
 
         The component route is taken ONLY when confirming a single entity
         (``should_wait``). The capability's entire value is the real confirmed
@@ -1638,10 +1649,9 @@ class ServiceTools(EventCallMixin):
         when the component was not used or provably never dispatched, so the caller
         runs the legacy REST path as a safe first fire.
 
-        ``verbose`` routes to legacy too: it promises the FULL propagation chain
-        (every downstream changed state), which the component path cannot deliver — it
-        returns only the confirmation targets' ``new_state``s — so the richer legacy
-        POST serves it instead.
+        ``verbose`` routes to legacy too unless the call asks for a response: it
+        promises every downstream changed state, which the component lists only
+        for such a call, beside its confirmation targets' ``new_state``s.
         """
         # A comma-separated entity_id ("light.a,light.b") is a valid multi-target the
         # compaction path expands, but the component confirms one LITERAL entity_id: it
@@ -1649,14 +1659,18 @@ class ServiceTools(EventCallMixin):
         # ``partial`` with an empty result even though HA changed both real entities.
         # Treat a comma as the multi-target signal → legacy REST POST (parity with the
         # verbose / non-confirmed early-outs above, which the component cannot serve).
-        if not should_wait or verbose or (entity_id and "," in entity_id):
+        # A call asking for a response always takes the component when it can:
+        # only the component lists the states such a call changed.
+        confirm = should_wait and not (entity_id and "," in entity_id)
+        if not return_response and (not confirm or verbose):
             return None
+        should_wait = bool(confirm)
         component_result = await self._call_service_via_component(
             domain=domain,
             service=service,
             service_data=service_data,
-            entity_ids=[entity_id] if entity_id else [],
-            wait=True,
+            entity_ids=[entity_id] if should_wait and entity_id else [],
+            wait=should_wait,
             timeout=CONFIRMATION_TIMEOUT_S,
             return_response=return_response,
         )
@@ -1890,7 +1904,8 @@ class ServiceTools(EventCallMixin):
                 and domain not in _NON_STATE_CHANGING_DOMAINS
             )
 
-            # Route a confirmable single call through the component capability (D8);
+            # Route a confirmable single call, or one asking for a response, through
+            # the component capability (D8);
             # a returned response means it served the call, None means fall through to
             # the legacy REST path below (a safe first fire, D9 at-most-once).
             component_response = await self._maybe_component_call_service(

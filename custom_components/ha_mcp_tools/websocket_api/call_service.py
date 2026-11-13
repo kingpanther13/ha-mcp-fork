@@ -6,7 +6,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 from ..const import DOMAIN
@@ -142,6 +143,12 @@ async def _call_service_prep(
         evt, captured, unsub = _register_transition_waiter(
             hass, set(confirmable_entity_ids), expected_by_entity
         )
+    changed: list[Any] = []
+    unsub_changed = (
+        _track_changed_states(hass, msg.get("ha_mcp_context"), changed)
+        if return_response
+        else None
+    )
 
     # 5. Dispatch exactly once. 6. Immediate-match + bounded wait. 7. Build the diff.
     # Everything after ``dispatched = True`` is inside this ONE try so no post-dispatch
@@ -177,6 +184,8 @@ async def _call_service_prep(
         )
         if response_error is not None:
             result["response_error"] = response_error
+        if return_response:
+            result["changed_states"] = changed
     except Exception:
         # PRE-confirmation ``async_call`` failure (never dispatched) → re-raise so the
         # server maps it (D7/D9 MID-dispatch residual). Any POST-dispatch failure →
@@ -193,7 +202,21 @@ async def _call_service_prep(
     finally:
         if unsub is not None:
             unsub()
+        if unsub_changed is not None:
+            unsub_changed()
     return {"result": result}
+
+
+def _track_changed_states(hass: HomeAssistant, context: Any, changed: list[Any]) -> Any:
+    """Collect the states the call changes, as Core's REST service call lists
+    them: every new state written under the call's context."""
+
+    @callback
+    def _record(event: Event[EventStateChangedData]) -> None:
+        if event.context == context and (state := event.data["new_state"]):
+            changed.append(_state_as_dict(state))
+
+    return hass.bus.async_listen(EVENT_STATE_CHANGED, _record)
 
 
 def _confirmable_entity_ids(entity_ids: list[str], pre: Mapping[str, Any]) -> list[str]:
