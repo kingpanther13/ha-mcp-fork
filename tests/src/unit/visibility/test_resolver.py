@@ -88,9 +88,10 @@ class Core:
                 identifiers={("test", name)},
                 parent_device_id=parent,
             )
-        devices.async_update_device(
-            device.id, area_id=self._area(area), labels=self._labels(labels)
-        )
+        if area or labels:
+            devices.async_update_device(
+                device.id, area_id=self._area(area), labels=self._labels(labels)
+            )
         return device.id
 
     def entity(
@@ -596,6 +597,9 @@ async def test_new_entities_follow_cores_default_exposure(
     core: Core, assist: Any, entity_id: str, device_class: str | None, hidden: bool
 ) -> None:
     core.entity(entity_id, device_class=device_class)
+    # The entity writes its device class into its state, as Core's do.
+    attributes = {"device_class": device_class} if device_class else {}
+    core.hass.states.async_set(entity_id, "on", attributes)
 
     assert (entity_id in await assist(_assist_cfg(), expose_new=True)) is hidden
 
