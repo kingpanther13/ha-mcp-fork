@@ -348,8 +348,9 @@ async def test_a_deleted_subentry_is_created_again_with_its_title(
     ((new_id, restored),) = _planes(hass).items()
     assert restored == ("Kitchen", PLANE)
     assert new_id != "s1"
-    assert result["restore_mode"] == "recreated"
-    assert (result["entity_id"], result["original_subentry_id"]) == (
+    recreated = result["result"]
+    assert recreated["restore_mode"] == "recreated"
+    assert (recreated["entity_id"], recreated["original_subentry_id"]) == (
         f"e1/{new_id}",
         "s1",
     )
@@ -426,14 +427,13 @@ async def test_a_missing_parent_entry_is_named_not_treated_as_a_deleted_subentry
     name = await _capture(manager)
     assert await hass.config_entries.async_remove("e1")
 
+    # The restore's safety capture is the first to find the parent gone.
     with (
         _spy(component_core_client, "start_config_subentry_flow") as start,
-        pytest.raises(bm.BackupRestoreError, match="e1 no longer exists") as refused,
+        pytest.raises(bm.MandatoryBackupError, match="e1 no longer exists"),
     ):
         await manager.restore_snapshot(name)
 
-    assert refused.value.outcome["reason"] == "parent_entry_missing"
-    assert refused.value.outcome["apply_status"] == "not_applied"
     start.assert_not_awaited()
 
 
