@@ -22,6 +22,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import category_registry as cr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.trigger import async_get_all_descriptions
 from homeassistant.setup import async_setup_component
@@ -333,12 +334,19 @@ class TestComponentLookup:
             ],
         )
 
-        got = await tools.ha_config_get_automation(
-            entity_id=entity_id_of(hass, "1700000000000")
-        )
+        entity_id = entity_id_of(hass, "1700000000000")
 
-        assert got["validation"]["status"] == "failed_actions"
-        assert got["validation"]["error"]
+        got = await tools.ha_config_get_automation(entity_id=entity_id)
+
+        # Core files the failed delay as a schema failure.
+        issue = ir.async_get(hass).async_get_issue(
+            "automation", f"{entity_id}_validation_failed_schema"
+        )
+        assert issue is not None and issue.translation_placeholders is not None
+        assert got["validation"] == {
+            "status": "failed_schema",
+            "error": issue.translation_placeholders["error"],
+        }
         assert got["references"] is None
         assert len(got["warnings"]) == 1
         assert "failed to load" in got["warnings"][0]
