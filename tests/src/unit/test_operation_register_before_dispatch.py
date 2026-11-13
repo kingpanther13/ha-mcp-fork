@@ -12,8 +12,6 @@ service handler stands in for the entity, and the ``state_changed`` the listener
 would deliver is applied from inside it, while the dispatch is in flight.
 """
 
-from collections.abc import Iterator
-
 import pytest
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -27,15 +25,7 @@ from ha_mcp.utils.operation_manager import (
     update_pending_operations,
 )
 
-from ._operations import operations_without_listener
-
-
-@pytest.fixture(autouse=True)
-def _clear_operations(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    # The state_changed listener is this server's own service; the tests
-    # deliver its event themselves.
-    with operations_without_listener(monkeypatch):
-        yield
+from ._operations import operations_without_listener  # noqa: F401
 
 
 @pytest.mark.asyncio

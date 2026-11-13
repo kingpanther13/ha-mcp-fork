@@ -13,7 +13,6 @@ transitions are Core's.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -34,7 +33,7 @@ from ha_mcp.tools.component_api import get_component_caps, invalidate_caps
 from ha_mcp.tools.device_control import DeviceControlTools
 
 from ._command_faults import dropped_on, pooled_socket, received
-from ._operations import operations_without_listener
+from ._operations import operations_without_listener  # noqa: F401
 from ._switched_states import SwitchedStates
 
 BULK = "ha_mcp_tools/bulk_call_service"
@@ -42,14 +41,6 @@ TWO_OPS = [
     {"entity_id": "light.a", "action": "on"},
     {"entity_id": "switch.b", "action": "on"},
 ]
-
-
-@pytest.fixture(autouse=True)
-def _per_op_dispatch(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The legacy ops' state listener is this server's own service; no test
-    here reads what it would deliver."""
-    with operations_without_listener(monkeypatch):
-        yield
 
 
 @pytest.fixture
