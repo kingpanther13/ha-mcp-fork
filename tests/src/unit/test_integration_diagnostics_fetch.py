@@ -32,8 +32,6 @@ from pytest_homeassistant.common import (
 from ha_mcp.client.rest_client import NON_ADMIN_TOKEN_WARNING, HomeAssistantClient
 from ha_mcp.tools.diagnostics_helpers import fetch_integration_diagnostics
 
-from ._core_client import refused_url
-
 DOMAIN = "diagnosed"
 
 
@@ -44,6 +42,7 @@ class Diagnosed(NamedTuple):
     entry: MockConfigEntry
     payload: dict[str, Any]
     answer: asyncio.Event
+    failure: list[Exception]
 
 
 @pytest.fixture
@@ -51,11 +50,14 @@ async def diagnosed(hass: HomeAssistant, core_client: HomeAssistantClient) -> Di
     """An integration with a diagnostics platform, set up beside Core's
     ``diagnostics``; its config-entry and device dumps return ``payload``."""
     payload: dict[str, Any] = {}
+    failure: list[Exception] = []
     answer = asyncio.Event()
     answer.set()
 
     async def entry_dump(core: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         await answer.wait()
+        if failure:
+            raise failure[0]
         return payload
 
     async def device_dump(
@@ -76,7 +78,7 @@ async def diagnosed(hass: HomeAssistant, core_client: HomeAssistantClient) -> Di
     assert await async_setup_component(hass, "diagnostics", {})
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
-    return Diagnosed(entry, payload, answer)
+    return Diagnosed(entry, payload, answer, failure)
 
 
 @pytest.fixture
@@ -85,19 +87,6 @@ async def invalid_token_client(
 ) -> AsyncIterator[HomeAssistantClient]:
     client = HomeAssistantClient(
         base_url=core_client.base_url, token="not-a-token", verify_ssl=False
-    )
-    try:
-        yield client
-    finally:
-        await client.close()
-
-
-@pytest.fixture
-async def unreachable_client(
-    hass_access_token: str, socket_enabled: None
-) -> AsyncIterator[HomeAssistantClient]:
-    client = HomeAssistantClient(
-        base_url=refused_url(), token=hass_access_token, verify_ssl=False
     )
     try:
         yield client
@@ -247,8 +236,8 @@ class TestRefusals:
     async def test_server_error_names_the_status(
         self, core_client: HomeAssistantClient, diagnosed: Diagnosed
     ) -> None:
-        """Core answers 500 for a dump it cannot serialize."""
-        diagnosed.payload["unserializable"] = object()
+        """Core answers 500 when the integration's dump fails."""
+        diagnosed.failure.append(RuntimeError("dump failed"))
 
         result = await _fetch(core_client, diagnosed)
 
