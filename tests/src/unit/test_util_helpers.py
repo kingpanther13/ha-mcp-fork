@@ -157,12 +157,12 @@ class TestParseStringListParam:
     def test_list_with_non_strings_raises_error(self):
         """List with non-string elements raises ValueError."""
         with pytest.raises(ValueError, match="must be a list of strings"):
-            parse_string_list_param([1, 2, 3])
+            parse_string_list_param([1, 2, 3])  # type: ignore[list-item]
 
     def test_mixed_list_raises_error(self):
         """Mixed list (strings and non-strings) raises ValueError."""
         with pytest.raises(ValueError, match="must be a list of strings"):
-            parse_string_list_param(["valid", 123])
+            parse_string_list_param(["valid", 123])  # type: ignore[list-item]
 
     def test_param_name_in_error(self):
         """Custom param_name appears in error messages."""
