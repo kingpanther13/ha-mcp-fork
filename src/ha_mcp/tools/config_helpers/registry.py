@@ -370,7 +370,7 @@ async def _find_collision_in_flow_helpers(
         logger.warning(
             "config_entries/get failed; skipped the %s name check: %r", helper_type, exc
         )
-        raise _NameCheckSkipped from exc
+        return None
     entries = result.get("result", []) if isinstance(result, dict) else result
     if not isinstance(entries, list):
         return None
@@ -414,7 +414,7 @@ async def _find_collision_in_simple_helpers(
         # Connectivity issue — fail open so a transient outage doesn't block legit creates;
         # HA will auto-suffix duplicates on its own.
         logger.warning("%s/list failed; skipped the name check: %r", helper_type, exc)
-        raise _NameCheckSkipped from exc
+        return None
     for item in _flatten_helper_list_result(result):
         if not isinstance(item, dict):
             continue
