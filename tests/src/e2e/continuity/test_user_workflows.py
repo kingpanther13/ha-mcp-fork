@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from ..utilities.assertions import extract_error_message
+from ..utilities.topology import component_surface_available
 from ._support import Scenario, public_scenario
 
 pytestmark = pytest.mark.asyncio
@@ -165,7 +166,9 @@ def _assert_receipt(result: dict[str, Any], target: str, value: str) -> None:
 async def test_service_response_keeps_payload_and_projected_mutation_together(
     mcp_client: Any,
 ) -> None:
-    """A mutating response service must expose its state change and full payload."""
+    """A mutating response service must expose its full payload, and its state
+    change wherever the component lists it; without the component the reply
+    says the changed states are not listed."""
     async with public_scenario(mcp_client) as case:
         target = await case.helper("input_text", "idle")
         script_id = await case.script(_responding_script())
@@ -174,8 +177,12 @@ async def test_service_response_keeps_payload_and_projected_mutation_together(
         _assert_receipt(result, target, "committed")
         records = result["result"]
         assert isinstance(records, list)
-        assert {"entity_id": target, "state": "committed"} in records
-        assert all(set(record) <= {"entity_id", "state"} for record in records)
+        if component_surface_available():
+            assert {"entity_id": target, "state": "committed"} in records
+            assert all(set(record) <= {"entity_id", "state"} for record in records)
+        else:
+            assert records == []
+            assert any("not listed" in w for w in result.get("warnings", []))
         await case.state(target, "committed")
 
 
