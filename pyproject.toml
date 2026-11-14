@@ -312,7 +312,6 @@ module = [
     "tests.src.unit.test_uat_mcp_env",
     "tests.src.unit.test_ui_panel",
     "tests.src.unit.test_usage_logger",
-    "tests.src.unit.test_util_helpers",
     "tests.src.unit.test_util_helpers_internal_strip",
     "tests.src.unit.test_validation_middleware",
     "tests.src.unit.test_vendored_fastmcp",

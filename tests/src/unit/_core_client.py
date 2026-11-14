@@ -71,6 +71,22 @@ async def core_client(
 
 
 @pytest.fixture
+async def unreachable_client(
+    hass_access_token: str, socket_enabled: None
+) -> AsyncIterator[HomeAssistantClient]:
+    """A client whose Home Assistant refuses every connection."""
+    from ha_mcp.client.rest_client import HomeAssistantClient
+
+    client = HomeAssistantClient(
+        base_url=refused_url(), token=hass_access_token, verify_ssl=False
+    )
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+@pytest.fixture
 async def read_only_client(
     core_client: HomeAssistantClient, hass_read_only_access_token: str
 ) -> AsyncIterator[HomeAssistantClient]:
