@@ -43,6 +43,7 @@ from ha_mcp.tools.config_entry_backup import helper_backup_id, removal_backup_id
 
 from ._component_core import ws_result
 from ._component_frames import older_component
+from ._core_setup import write_secrets
 
 _DOMAIN = "subentry_planes"
 DOMAIN_KEY = "helper_config_subentry"
@@ -182,10 +183,6 @@ def _edit_s1(hass: HomeAssistant, title: str, data: dict[str, Any]) -> None:
     )
 
 
-def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")
-
-
 def _spy(client: HomeAssistantClient, name: str) -> Any:
     return patch.object(client, name, wraps=getattr(client, name))
 
@@ -194,7 +191,7 @@ def _spy(client: HomeAssistantClient, name: str) -> Any:
 async def test_the_component_sends_subentry_data_only_when_a_backup_asks(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
-    _write_secrets(hass, "k: S3CRET\n")
+    write_secrets(hass, "k: S3CRET\n")
     MockConfigEntry(
         domain="ollama",
         subentries_data=[
@@ -300,7 +297,7 @@ async def test_redacted_or_unscrubbed_data_never_becomes_a_snapshot(
     expected: str,
 ) -> None:
     """Neither a placeholder nor an unscrubbed secret may become a snapshot."""
-    _write_secrets(hass, secrets)
+    write_secrets(hass, secrets)
     _entry(hass, s1=("Kitchen", {**PLANE, "api_key": "s3cr3t"}))
 
     cause = await _refusal(_manager(component_core_client, tmp_path / "backups"))

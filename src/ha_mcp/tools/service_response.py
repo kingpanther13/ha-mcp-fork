@@ -105,22 +105,22 @@ async def call_service_for_response(
             "_wait_timeout": client.timeout,
         }
     )
-    if reply.get("success"):
-        answer = reply.get("result") or {}
-        response = answer.get("response") if isinstance(answer, dict) else None
-        return {"changed_states": [], "service_response": response}, None
-    if (reply.get("translation_domain"), reply.get("translation_key")) == (
-        RESPONSE_REJECTED
-    ):
-        return {"changed_states": [], "service_response": None}, {
-            "translation_key": reply["translation_key"],
-            "message": core_error_message(reply.get("error")),
-        }
-    raise_core_refusal(
-        f"Failed to call {domain}.{service}",
-        reply,
-        {"domain": domain, "service": service},
-    )
+    if not reply.get("success"):
+        if (reply.get("translation_domain"), reply.get("translation_key")) == (
+            RESPONSE_REJECTED
+        ):
+            return {"changed_states": [], "service_response": None}, {
+                "translation_key": reply["translation_key"],
+                "message": core_error_message(reply.get("error")),
+            }
+        raise_core_refusal(
+            f"Failed to call {domain}.{service}",
+            reply,
+            {"domain": domain, "service": service},
+        )
+    answer = reply.get("result") or {}
+    response = answer.get("response") if isinstance(answer, dict) else None
+    return {"changed_states": [], "service_response": response}, None
 
 
 def split_return_response_envelope(

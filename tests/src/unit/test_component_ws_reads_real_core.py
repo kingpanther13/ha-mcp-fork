@@ -42,6 +42,7 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_call, ws_result
+from ._core_setup import write_secrets
 from ._executor_spy import executor_jobs, jobs_from
 
 
@@ -138,10 +139,6 @@ _MOTION_LIGHT = (
 )
 
 
-def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")
-
-
 def _write_blueprint(hass: HomeAssistant, domain: str, path: str, text: str) -> None:
     target = Path(hass.config.path("blueprints", domain, path))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +206,7 @@ async def test_an_input_tag_is_kept_as_a_marker(
 async def test_a_secret_tag_is_never_resolved(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
-    _write_secrets(hass, "my_api_token: hunter2\n")
+    write_secrets(hass, "my_api_token: hunter2\n")
     _write_blueprint(
         hass,
         "automation",
@@ -243,7 +240,7 @@ async def test_a_path_out_of_the_blueprint_folder_is_never_read(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket, path: str
 ) -> None:
     """Neither the parsed body nor the raw text of a file outside the jail."""
-    _write_secrets(hass, "db_pw: hunter2\n")
+    write_secrets(hass, "db_pw: hunter2\n")
 
     result = await _blueprint(component_ws, path)
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 from unittest.mock import patch
@@ -38,6 +37,7 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_call, ws_result
+from ._core_setup import write_secrets
 from ._executor_spy import executor_jobs, jobs_from
 
 _SECRET = "s3cr3toptionvalue"
@@ -47,10 +47,6 @@ _COMPONENT_LOGGER = "custom_components.ha_mcp_tools.websocket_api"
 def _as_sent(value: Any) -> Any:
     """``value`` as Core's JSON encoder puts it on the wire."""
     return json.loads(json_dumps(value))
-
-
-def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")
 
 
 def _mosquitto(
@@ -160,7 +156,7 @@ async def test_an_entry_without_subentries_lists_none(
 async def test_options_holding_a_secret_are_redacted_at_any_depth(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
     _mosquitto(
         hass,
         options={
@@ -184,7 +180,7 @@ async def test_options_inside_a_nested_mapping_proxy_are_redacted(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     """Stringified past the scrub, the secret would leave inside the repr."""
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
     _mosquitto(
         hass,
         options={"outer": MappingProxyType({"token": _SECRET, "keep": "kept"})},
@@ -202,7 +198,7 @@ async def test_an_option_holding_a_numeric_secret_is_redacted(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     """``alarm_code: 1234`` is a YAML int; an option can carry it back as one."""
-    _write_secrets(hass, "alarm_code: 1234\n")
+    write_secrets(hass, "alarm_code: 1234\n")
     _mosquitto(hass, options={"alarm_code": 1234, "port": 8123})
 
     (row,) = await _entries(component_ws)
@@ -214,7 +210,7 @@ async def test_every_string_and_number_in_secrets_yaml_is_scrubbed_but_booleans(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     """``True`` is never a credential, and redacting it would over-redact."""
-    _write_secrets(
+    write_secrets(
         hass, f"port: 8123\napi_password: {_SECRET}\nother: value2\nflag: true\n"
     )
     _mosquitto(
@@ -253,7 +249,7 @@ async def test_an_unreadable_secrets_yaml_is_signalled_as_degraded(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     """Unredacted options must not pass for redacted ones."""
-    _write_secrets(hass, "{bad: yaml: [")
+    write_secrets(hass, "{bad: yaml: [")
     _mosquitto(hass, options={"token": "unredacted"})
 
     result = await ws_result(component_ws, WS_CONFIG_ENTRIES)
@@ -267,7 +263,7 @@ async def test_an_unreadable_secrets_yaml_warns_once(
     component_ws: MockHAClientWebSocket,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _write_secrets(hass, "{not: valid: yaml: [")
+    write_secrets(hass, "{not: valid: yaml: [")
     _mosquitto(hass)
 
     with caplog.at_level(logging.WARNING, logger=_COMPONENT_LOGGER):
@@ -280,7 +276,7 @@ async def test_an_unreadable_secrets_yaml_warns_once(
 async def test_config_entries_read_secrets_yaml_off_the_event_loop(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
-    _write_secrets(hass, "api_password: sekret\n")
+    write_secrets(hass, "api_password: sekret\n")
     _mosquitto(hass, options={"token": "sekret"})
 
     with executor_jobs(hass) as spy:

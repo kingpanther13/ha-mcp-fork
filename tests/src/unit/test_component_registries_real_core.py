@@ -104,7 +104,8 @@ async def test_listed_floors_and_areas_keep_every_field_core_stores(
     assert WS_REGISTRIES in _sent_types(sent)
     assert "config/area_registry/list" not in _sent_types(sent)
     (floor,) = listed["floors"]
-    assert floor.pop("areas") == [areas[office_id]]
+    floor_areas = floor.pop("areas")
+    assert floor_areas == [areas[office_id]]
     assert floor == core_floor
     assert floor["floor_id"] == floor_id
     assert listed["unassigned_areas"] == [areas[garage_id]]

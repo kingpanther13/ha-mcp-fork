@@ -28,7 +28,7 @@ from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.config_helpers.schemas import SIMPLE_HELPER_TYPES
 from ha_mcp.tools.tools_config_helpers import HelperConfigTools
 
-from ._core_setup import install_custom_helper
+from ._core_setup import install_custom_helper, write_secrets
 
 _CUSTOM = "my_helper"
 _LOADER = (
@@ -74,7 +74,7 @@ async def tools(
 def _write_secrets(hass: HomeAssistant, world: str) -> None:
     body = {"unreadable": "key: [unclosed\n", "readable": "key: value\n"}.get(world)
     if body is not None:
-        Path(hass.config.path("secrets.yaml")).write_text(body)
+        write_secrets(hass, body)
 
 
 def _scrub_warnings(response: dict[str, object]) -> list[str]:

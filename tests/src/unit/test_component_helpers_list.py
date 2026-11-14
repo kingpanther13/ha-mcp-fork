@@ -9,7 +9,6 @@ WebSocket API (``component_ws``).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,14 +25,10 @@ from custom_components.ha_mcp_tools.websocket_api.constants import (
 )
 
 from ._component_core import ws_result
-from ._core_setup import set_up_domain
+from ._core_setup import set_up_domain, write_secrets
 from ._executor_spy import executor_jobs, jobs_from
 
 _SECRET = "s3cr3thelperopt"
-
-
-def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")
 
 
 async def _create(
@@ -191,7 +186,7 @@ async def test_flow_helper_options_holding_a_secret_are_redacted(
 ) -> None:
     """Flow-helper options share ``config_entries``' exposure, and its scrub;
     secrets.yaml is read off the event loop."""
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
     _template_helper(hass, {"token": _SECRET, "keep": "kept"})
 
     with executor_jobs(hass) as spy:
@@ -219,7 +214,7 @@ async def test_an_unreadable_secrets_yaml_is_signalled_only_with_flow_helpers(
 ) -> None:
     """Without flow helpers the scrubbed options are not sent, and
     secrets.yaml is not read at all (perf gate)."""
-    _write_secrets(hass, "{bad: yaml: [")
+    write_secrets(hass, "{bad: yaml: [")
     _template_helper(hass, {"token": "x"})
 
     with executor_jobs(hass) as spy:

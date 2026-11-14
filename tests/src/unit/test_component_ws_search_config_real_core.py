@@ -8,7 +8,6 @@ Core's WebSocket API (``component_ws``).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -23,13 +22,10 @@ from custom_components.ha_mcp_tools.websocket_api.constants import WS_SEARCH
 
 from ._component_core import ws_result
 from ._core_setup import set_up_domain as _set_up
+from ._core_setup import write_secrets
 from ._executor_spy import executor_jobs, jobs_from
 
 _SECRET = "s3cr3tprobevaluexyz"
-
-
-def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")
 
 
 def _automation(
@@ -437,7 +433,7 @@ async def test_a_resolved_secret_never_matches_but_a_plain_token_does(
 ) -> None:
     """A match on a resolved ``!secret`` would make ``ha_search`` a probe
     oracle: query a suspected secret, confirm it through ``match_in_config``."""
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
 
     by_secret = await _search(component_ws, query=_SECRET, search_types=["automation"])
     by_token = await _search(
@@ -451,7 +447,7 @@ async def test_a_resolved_secret_never_matches_but_a_plain_token_does(
 async def test_a_resolved_secret_never_matches_in_fuzzy_mode(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket, leaky_automation: None
 ) -> None:
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
 
     result = await _search(
         component_ws, query=_SECRET, search_types=["automation"], exact=False
@@ -463,7 +459,7 @@ async def test_a_resolved_secret_never_matches_in_fuzzy_mode(
 async def test_a_flow_helper_option_holding_a_secret_never_matches(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
     _template_helper(hass, {"state": _SECRET, "name": "Sun Sensor"})
 
     result = await _search(component_ws, query=_SECRET, search_types=["helper"])
@@ -484,7 +480,7 @@ async def test_the_default_search_scrubs_secrets(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket, leaky_automation: None
 ) -> None:
     """No ``search_types`` means every surface, the config ones included."""
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
 
     result = await _search(component_ws, query=_SECRET)
 
@@ -495,7 +491,7 @@ async def test_an_entity_only_search_never_reads_secrets_yaml(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket
 ) -> None:
     """The scrub only applies to config and helper bodies (perf gate)."""
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
     hass.states.async_set("light.k", "on", {"friendly_name": "Kitchen"})
 
     with executor_jobs(hass) as spy:
@@ -508,7 +504,7 @@ async def test_an_entity_only_search_never_reads_secrets_yaml(
 async def test_a_config_search_reads_secrets_yaml_off_the_event_loop(
     hass: HomeAssistant, component_ws: MockHAClientWebSocket, leaky_automation: None
 ) -> None:
-    _write_secrets(hass, f"api_password: {_SECRET}\n")
+    write_secrets(hass, f"api_password: {_SECRET}\n")
 
     with executor_jobs(hass) as spy:
         result = await _search(component_ws, query=_SECRET, search_types=["automation"])

@@ -70,3 +70,8 @@ def install_custom_helper(
     }
     (integration / "manifest.json").write_text(json.dumps(manifest))
     monkeypatch.syspath_prepend(str(tmp_path / "extra"))
+
+
+def write_secrets(hass: HomeAssistant, text: str) -> None:
+    """Core's ``secrets.yaml`` with throwaway test values."""
+    Path(hass.config.path("secrets.yaml")).write_text(text, encoding="utf-8")

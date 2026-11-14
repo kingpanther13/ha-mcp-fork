@@ -33,7 +33,7 @@ from ha_mcp.tools.smart_search import SmartSearchTools
 from ha_mcp.tools.tools_search import SearchTools
 
 from ._component_core import ws_result
-from ._core_setup import install_custom_helper
+from ._core_setup import install_custom_helper, write_secrets
 from ._search_tool import _setup_visibility_disabled
 
 _CUSTOM = "my_helper"
@@ -62,9 +62,7 @@ def _entry(hass: HomeAssistant, domain: str, **kwargs: Any) -> MockConfigEntry:
 
 
 async def _write_secrets(hass: HomeAssistant, text: str) -> None:
-    await hass.async_add_executor_job(
-        Path(hass.config.path("secrets.yaml")).write_text, text
-    )
+    await hass.async_add_executor_job(write_secrets, hass, text)
 
 
 async def _helpers_list(ws: MockHAClientWebSocket, **params: Any) -> dict[str, Any]:

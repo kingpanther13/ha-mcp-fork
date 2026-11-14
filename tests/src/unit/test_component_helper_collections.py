@@ -416,7 +416,7 @@ async def test_a_cancelled_write_stays_cancelled(
     write.cancel()
 
     with pytest.raises(asyncio.CancelledError):
-        await write
+        await asyncio.gather(write)
     release.set()
     await hass.async_block_till_done()
 

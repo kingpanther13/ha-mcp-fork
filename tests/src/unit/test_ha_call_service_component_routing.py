@@ -13,6 +13,7 @@ transitions are Core's.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
@@ -512,7 +513,7 @@ async def test_an_unavailable_target_that_changed_is_not_reported_unavailable(
         assert any(UNVERIFIED in w for w in _warnings(resp))
     else:
         with pytest.raises(ToolError) as exc:
-            await call
+            await asyncio.gather(call)
         assert error_of(exc)["code"] == code
 
 
