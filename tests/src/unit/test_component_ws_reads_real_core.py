@@ -532,7 +532,10 @@ async def test_enrich_and_search_name_an_entity_alike(
     )
 
     (hit,) = search["entities"]
-    assert {key: hit[key] for key in enriched} == enriched
+    shared = enriched.keys() - {"full_name"}
+    assert {key: hit[key] for key in shared} == {key: enriched[key] for key in shared}
+    # Both carry the name Core composes: search as name, enrich as full_name.
+    assert hit["name"] == enriched["full_name"]
 
 
 # --- exposure ---------------------------------------------------------------

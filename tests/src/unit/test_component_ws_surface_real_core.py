@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from homeassistant.components import websocket_api as core_websocket_api
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.typing import MockHAClientWebSocket
 
@@ -170,8 +171,14 @@ async def test_a_non_admin_is_refused_every_command(
 
 @pytest.mark.parametrize(("command", "params"), list(_GATED_COMMANDS.items()))
 async def test_an_admin_gets_a_result_from_every_command(
-    component_ws: MockHAClientWebSocket, command: str, params: dict[str, Any]
+    hass: HomeAssistant,
+    component_ws: MockHAClientWebSocket,
+    command: str,
+    params: dict[str, Any],
 ) -> None:
+    # Every install has Core's homeassistant integration, whose exposed-entities
+    # store the exposure read uses.
+    assert await async_setup_component(hass, "homeassistant", {})
     result = await ws_result(component_ws, command, **params)
 
     assert isinstance(result, dict)
