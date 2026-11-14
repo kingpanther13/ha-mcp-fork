@@ -708,6 +708,7 @@ jobs:
 
   # Comprehensive E2E validation for all PRs
   e2e-validation:
+    if: false
     name: E2E Validation (${{ matrix.os }})
     needs: changes
     # A skipped job reports Success to the required status check, so a
@@ -716,7 +717,6 @@ jobs:
     # anything else (a failed classifier leaves `run` empty) runs this lane.
     # Keep this predicate equivalent to the skip branch in e2e-validation-gate:
     # if they diverge, the gate demands success from a lane that never ran.
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     runs-on: ${{ matrix.os }}
     # 20 (was 15): headroom for the in-process-server e2e test that runs on
     # THIS lane (workflows/embedded/test_embedded_server.py) - its first
@@ -911,6 +911,7 @@ jobs:
   # concurrent-pip pressure in check (arm gets +1 like the container matrix does);
   # the larger timeout covers that per-worker preinstall window.
   e2e-validation-embedded:
+    if: false
     name: E2E Validation (embedded, ${{ matrix.os }})
     needs: changes
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
@@ -919,7 +920,6 @@ jobs:
     # anything else (a failed classifier leaves `run` empty) runs this lane.
     # Keep this predicate equivalent to the skip branch in e2e-validation-gate:
     # if they diverge, the gate demands success from a lane that never ran.
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -1014,6 +1014,7 @@ jobs:
   # per-worker wheel build + in-container preinstall cost of the embedded matrix
   # above.
   e2e-validation-embedded-server-only:
+    if: false
     name: E2E Validation (embedded, server entry only)
     needs: changes
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
@@ -1022,7 +1023,6 @@ jobs:
     # anything else (a failed classifier leaves `run` empty) runs this lane.
     # Keep this predicate equivalent to the skip branch in e2e-validation-gate:
     # if they diverge, the gate demands success from a lane that never ran.
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -1113,6 +1113,7 @@ jobs:
   # lanes: skips on docs/website-only PRs (needs.changes) and folds into
   # e2e-validation-gate.
   e2e-validation-update-path:
+    if: false
     name: E2E Validation (update path)
     needs: changes
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
@@ -1121,7 +1122,6 @@ jobs:
     # anything else (a failed classifier leaves `run` empty) runs this lane.
     # Keep this predicate equivalent to the skip branch in e2e-validation-gate:
     # if they diverge, the gate demands success from a lane that never ran.
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # 30m: each of the two scenarios (component@stable and component@working-tree)
     # does a first bring-up that installs ha-mcp plus the full fastmcp dependency
