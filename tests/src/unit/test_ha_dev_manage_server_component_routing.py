@@ -152,6 +152,7 @@ async def test_embedded_component_absent_falls_back_to_options_flow(
         await applied(entry, PIP_SPEC)
 
     submitted.assert_awaited_once()
+    assert submitted.await_args is not None
     assert submitted.await_args.args[1]["server_url"] == SERVER_URL
     assert entry.options["server_url"] == SERVER_URL
     assert frames(sent, tools_dev.WS_SERVER_ENTRY_UPDATE) == []

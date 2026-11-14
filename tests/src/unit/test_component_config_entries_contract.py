@@ -22,7 +22,7 @@ import probatio
 import pytest
 from homeassistant.config_entries import (
     ConfigFlowResult,
-    ConfigSubentryData,
+    ConfigSubentryDataWithId,
     OptionsFlow,
 )
 from homeassistant.core import HomeAssistant
@@ -144,7 +144,7 @@ async def test_subentries_are_their_identity_rows_without_data(
     _entry(
         hass,
         subentries_data=[
-            ConfigSubentryData(
+            ConfigSubentryDataWithId(
                 data={"k": "SUBSECRET"},
                 subentry_id="sub1",
                 subentry_type="device",

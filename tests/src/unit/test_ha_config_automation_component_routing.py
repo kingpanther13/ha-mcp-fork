@@ -212,7 +212,7 @@ async def test_the_config_is_sent_as_given(
 ) -> None:
     """Dropping the singular form wrote a different automation than the
     caller sent; Core is the one that refuses both forms together."""
-    config = {"trigger": [], "triggers": [], "actions": []}
+    config: dict[str, Any] = {"trigger": [], "triggers": [], "actions": []}
 
     with upserts(core_client) as upsert, pytest.raises(ToolError):
         await _set(tools, config=dict(config))

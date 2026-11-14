@@ -177,7 +177,7 @@ async def test_unconfigured_prefs_stay_readable_when_defaults_discovery_fails(
     assert "unavailable" in result["note"]
 
 
-_CONTRACT_COMMANDS = {
+_CONTRACT_COMMANDS: dict[str, dict[str, Any]] = {
     CONTRACT: {"command": "history/history_during_period"},
     "ha_mcp_tools/statistics_units": {
         "statistic_ids": ["sensor.energy"],

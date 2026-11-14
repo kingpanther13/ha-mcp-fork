@@ -76,20 +76,20 @@ class Core:
     ) -> str:
         devices = dr.async_get(self.hass)
         if parent is None:
-            device = devices.async_get_or_create(
+            device_id = devices.async_get_or_create(
                 config_entry_id=self.entry.entry_id, identifiers={("test", name)}
-            )
+            ).id
         else:
-            device = devices.async_get_or_create_child(
+            device_id = devices.async_get_or_create_child(
                 config_entry_id=self.entry.entry_id,
                 identifiers={("test", name)},
                 parent_device_id=parent,
-            )
+            ).id
         if area or labels:
             devices.async_update_device(
-                device.id, area_id=self._area(area), labels=self._labels(labels)
+                device_id, area_id=self._area(area), labels=self._labels(labels)
             )
-        return device.id
+        return device_id
 
     def entity(
         self,
@@ -191,7 +191,8 @@ async def test_a_registry_read_that_got_no_answer_fails_open(
         "send_websocket_message",
         AsyncMock(side_effect=HomeAssistantConnectionError("socket closed")),
     ):
-        (payload,) = await asyncio.gather(core.registry(), return_exceptions=True)
+        payloads = await asyncio.gather(core.registry(), return_exceptions=True)
+    payload = payloads[0]
 
     with caplog.at_level(logging.WARNING):
         hidden, _ = hidden_entity_ids(payload, VisibilityConfig(enabled=True))

@@ -386,6 +386,7 @@ async def test_a_component_without_the_command_is_invalidated(
     assert await component_api.get_component_caps(client) is not None
     monkeypatch.delitem(hass.data["websocket_api"], LOOKUP)
 
+    result: object
     with invalidations(component_registry_lookup) as invalidate:
         if read == "config_entry":
             result = await fetch_entities_for_config_entry_via_component(

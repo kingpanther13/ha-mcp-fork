@@ -50,7 +50,7 @@ async def pooled(client: HomeAssistantClient) -> HomeAssistantWebSocketClient:
 
 def frames(spy: AsyncMock, command: str) -> list[dict[str, Any]]:
     """The kwargs of every ``command`` frame a spy on the pooled socket saw."""
-    return [c.kwargs for c in spy.call_args_list if c.args[0] == command]
+    return [dict(c.kwargs) for c in spy.call_args_list if c.args[0] == command]
 
 
 @contextmanager
