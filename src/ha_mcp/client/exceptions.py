@@ -102,7 +102,7 @@ class HomeAssistantCommandTimeout(HomeAssistantError):
     Sibling of ``HomeAssistantCommandError`` (not a subclass) so existing
     ``except HomeAssistantCommandError`` sites — including the match
     dispatch in ``helpers._classify_exception`` — keep their original
-    semantics. Callers that specifically want to handle our 30s WS
+    semantics. Callers that specifically want to handle the WS
     round-trip timeout (e.g. short-lived waiter cleanup that should
     swallow a timeout instead of masking the real wait result) catch
     this type directly. Replaces a bare ``Exception("Command timeout")``

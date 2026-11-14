@@ -503,6 +503,7 @@ def _overview_repairs(hass: HomeAssistant) -> list[dict[str, Any]]:
     Like ``ws_list_issues``, it skips inactive entries (the stubs a restart
     reloads until the integration raises the issue again) and the ones the
     registry hides (``async_is_hidden``: its config entry is disabled).
+    ``ignored`` is derived from ``dismissed_version``, as core's list does.
     """
     registry = _safe(ir.async_get, hass)
     issues = getattr(registry, "issues", None) if registry is not None else None

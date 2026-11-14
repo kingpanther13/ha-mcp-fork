@@ -390,8 +390,10 @@ async def _await_confirmation(
         pass  # partial confirmation, not a failure (D4)
 
 
-# Core refuses a requested response that is no mapping only after the service
-# ran (``ServiceRegistry.async_call``), so the write has landed.
+# The (translation_domain, translation_key) Core raises when a requested
+# response is not a mapping, checked only after the service ran
+# (``ServiceRegistry.async_call``), so the write has landed; the key's spelling
+# is Core's.
 _RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
 
 

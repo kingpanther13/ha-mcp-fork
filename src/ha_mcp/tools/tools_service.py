@@ -1633,14 +1633,14 @@ class ServiceTools(EventCallMixin):
         """Route a confirmable single call, or any call asking for a response,
         through the component; ``None`` → do legacy.
 
-        The component route is taken ONLY when confirming a single entity
-        (``should_wait``). The capability's entire value is the real confirmed
-        pre->post transition; for a non-confirmed call (``wait=False``, no / multi
-        entity, or a non-state-changing domain) the component returns
-        ``transitions=[]`` → ``result:[]``, silently dropping the changed-states body
-        the legacy REST POST returns (e.g. a scene's member states). For those the
-        legacy single POST costs the same one round-trip and is strictly richer, so
-        this returns ``None`` and the caller stays on legacy.
+        A call that asks for a response always takes the component: only the
+        component lists the states such a call changed. Otherwise the route is
+        taken only when confirming a single entity (``should_wait``): the
+        component's value there is the confirmed pre->post transition, while for a
+        non-confirmed call (``wait=False``, no / multi entity, or a
+        non-state-changing domain) it returns ``transitions=[]`` and the legacy
+        REST POST, which lists the changed states (e.g. a scene's members), is
+        richer at the same one round-trip.
 
         Returns a FINAL ``ha_call_service`` response when the component served the
         call: the mapped transition, or — on a post-send timeout / transport drop
@@ -1657,10 +1657,8 @@ class ServiceTools(EventCallMixin):
         # compaction path expands, but the component confirms one LITERAL entity_id: it
         # would wait for the nonexistent literal "light.a,light.b" and report a false
         # ``partial`` with an empty result even though HA changed both real entities.
-        # Treat a comma as the multi-target signal → legacy REST POST (parity with the
-        # verbose / non-confirmed early-outs above, which the component cannot serve).
-        # A call asking for a response always takes the component when it can:
-        # only the component lists the states such a call changed.
+        # Treat a comma as the multi-target signal: no confirmation target, and
+        # legacy REST POST unless the call asks for a response.
         confirm = should_wait and not (entity_id and "," in entity_id)
         if not return_response and (not confirm or verbose):
             return None
@@ -1748,7 +1746,11 @@ class ServiceTools(EventCallMixin):
             Field(
                 description=(
                     "If True, the service's response data is returned once, as the "
-                    "top-level 'service_response' key — never nested inside 'result'."
+                    "top-level 'service_response' key — never nested inside 'result'. "
+                    "If Home Assistant rejects the response after the service ran, "
+                    "the call still succeeds, with 'response_error' and a warning not "
+                    "to call it again. The states such a call changed are listed only "
+                    "with the ha_mcp_tools component; without it a warning says so."
                 ),
             ),
         ] = False,
@@ -1759,10 +1761,10 @@ class ServiceTools(EventCallMixin):
                     "If True (default), wait for the entity state to change "
                     "before returning. Applies only to state-changing services "
                     "called with a single entity_id. A comma-separated "
-                    "multi-target does not get confirmed by this: it falls "
-                    "through to a legacy path that polls for the literal "
-                    "composite entity_id and times out after 10s. Set "
-                    "wait=False for multi-target calls."
+                    "multi-target does not get confirmed by this: without "
+                    "return_response it falls through to a legacy path that "
+                    "polls for the literal composite entity_id and times out "
+                    "after 10s. Set wait=False for multi-target calls."
                 ),
             ),
         ] = True,
@@ -1891,9 +1893,10 @@ class ServiceTools(EventCallMixin):
             # Only for state-changing services with an entity_id set, not for
             # trigger/reload/fire-and-forget services or services without entities.
             # A comma-separated multi-target entity_id is not excluded here — it
-            # still falls through to the legacy path, which polls for the literal
-            # composite entity_id and times out after 10s (see the wait Field
-            # description and _maybe_component_call_service).
+            # still falls through to the legacy path (unless the call asks for a
+            # response), which polls for the literal composite entity_id and times
+            # out after 10s (see the wait Field description and
+            # _maybe_component_call_service).
             # This server-side decision (D6) also chooses whether to hand the
             # component wait+entity_ids: a non-state-changing call passes wait
             # implicitly false and no confirmation targets.
@@ -1905,9 +1908,9 @@ class ServiceTools(EventCallMixin):
             )
 
             # Route a confirmable single call, or one asking for a response, through
-            # the component capability (D8);
-            # a returned response means it served the call, None means fall through to
-            # the legacy REST path below (a safe first fire, D9 at-most-once).
+            # the component capability (D8); a returned response means it served the
+            # call, None means fall through to the legacy path below (a safe first
+            # fire, D9 at-most-once).
             component_response = await self._maybe_component_call_service(
                 domain=domain,
                 service=service,

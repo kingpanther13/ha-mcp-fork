@@ -36,8 +36,9 @@ COMPONENT_RESPONSE_UNCONFIRMED_WARNING = (
     "and lost with the confirmation. Re-read state to confirm the outcome."
 )
 
-# Core's name for a requested response it refused because it was no mapping;
-# Core checks it only after the service ran (``ServiceRegistry.async_call``).
+# The (translation_domain, translation_key) Core raises when a requested
+# response is not a mapping, checked only after the service ran
+# (``ServiceRegistry.async_call``); the key's spelling is Core's.
 RESPONSE_REJECTED = ("homeassistant", "service_reponse_invalid")
 
 STATES_NOT_LISTED_WARNING = (
