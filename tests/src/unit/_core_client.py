@@ -107,3 +107,21 @@ def sent(core_client: HomeAssistantClient) -> Iterator[AsyncMock]:
 
     with sent_messages(core_client) as spy:
         yield spy
+
+
+@pytest.fixture
+async def second_client(
+    component_core_client: HomeAssistantClient,
+) -> AsyncIterator[HomeAssistantClient]:
+    """Another client of the same Home Assistant, as a second user's would be."""
+    from ha_mcp.client.rest_client import HomeAssistantClient
+
+    client = HomeAssistantClient(
+        base_url=component_core_client.base_url,
+        token=component_core_client.token,
+        verify_ssl=False,
+    )
+    try:
+        yield client
+    finally:
+        await client.close()
