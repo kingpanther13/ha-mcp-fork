@@ -227,7 +227,7 @@ jobs:
           listening 5555 || { cat /tmp/zwave-mock.log; exit 1; }
           nohup npx zwave-server tcp://127.0.0.1:5555 --config keys.json > /tmp/zwave-server.log 2>&1 &
           listening 3000 || { cat /tmp/zwave-mock.log /tmp/zwave-server.log; exit 1; }
-          tail -20 /tmp/zwave-mock.log /tmp/zwave-server.log
+          tail -n 20 /tmp/zwave-mock.log; tail -n 20 /tmp/zwave-server.log
 
       - name: Boot HA and open the tunnels
         env:
