@@ -223,9 +223,24 @@ jobs:
           }
           JSON
           listening() { for _ in $(seq 1 90); do ss -ltn | grep -q ":$1 " && return 0; sleep 2; done; return 1; }
-          nohup npx mock-server > /tmp/zwave-mock.log 2>&1 &
-          listening 5555 || { cat /tmp/zwave-mock.log; exit 1; }
-          nohup npx zwave-server tcp://127.0.0.1:5555 --config keys.json > /tmp/zwave-server.log 2>&1 &
+          # A hard reset ends the server: start both again on a fresh network,
+          # which is also how a test puts the controller back to idle.
+          cat > run.sh <<'SH'
+          #!/bin/bash
+          cd /tmp/zw
+          while true; do
+            rm -rf /tmp/zw/cache
+            npx mock-server >> /tmp/zwave-mock.log 2>&1 &
+            mock=$!
+            for _ in $(seq 1 60); do ss -ltn | grep -q ":5555 " && break; sleep 1; done
+            npx zwave-server tcp://127.0.0.1:5555 --config keys.json >> /tmp/zwave-server.log 2>&1
+            kill "$mock" 2>/dev/null
+            pkill -f mock-server 2>/dev/null
+            sleep 2
+          done
+          SH
+          chmod +x run.sh
+          nohup ./run.sh > /tmp/zwave-run.log 2>&1 &
           listening 3000 || { cat /tmp/zwave-mock.log /tmp/zwave-server.log; exit 1; }
           tail -n 20 /tmp/zwave-mock.log; tail -n 20 /tmp/zwave-server.log
 
