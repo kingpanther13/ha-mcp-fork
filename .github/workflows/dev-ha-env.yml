@@ -202,20 +202,32 @@ jobs:
           echo "$CLOUDFLARED_SHA256  cloudflared" | sha256sum -c -
           chmod +x cloudflared
 
-      # Throwaway live-test rig: a Z-Wave JS server on its fake stick, which the
-      # HA container reaches as ws://host.docker.internal:3000.
-      - name: Start a Z-Wave JS server on a mock stick
+      # Throwaway live-test rig: zwave-js's mock controller on tcp://127.0.0.1:5555
+      # and a real Z-Wave JS server driving it, which the HA container reaches
+      # as ws://172.17.0.1:3000. The keys are made up for this rig.
+      - name: Start a Z-Wave JS server on a mock controller
         run: |
           mkdir /tmp/zw && cd /tmp/zw
           npm init -y >/dev/null
           npm install @zwave-js/server zwave-js
           npm ls --depth=0
-          nohup npx zwave-server --mock-driver > /tmp/zwave-server.log 2>&1 &
-          for _ in $(seq 1 60); do
-            if (echo > /dev/tcp/127.0.0.1/3000) 2>/dev/null; then echo "listening on 3000"; break; fi
-            sleep 2
-          done
-          cat /tmp/zwave-server.log
+          cat > keys.json <<'JSON'
+          {
+            "securityKeys": {
+              "S0_Legacy": "0102030405060708090a0b0c0d0e0f10",
+              "S2_Unauthenticated": "1102030405060708090a0b0c0d0e0f10",
+              "S2_Authenticated": "2102030405060708090a0b0c0d0e0f10",
+              "S2_AccessControl": "3102030405060708090a0b0c0d0e0f10"
+            },
+            "storage": { "cacheDir": "/tmp/zw/cache" }
+          }
+          JSON
+          listening() { for _ in $(seq 1 90); do ss -ltn | grep -q ":$1 " && return 0; sleep 2; done; return 1; }
+          nohup npx mock-server > /tmp/zwave-mock.log 2>&1 &
+          listening 5555 || { cat /tmp/zwave-mock.log; exit 1; }
+          nohup npx zwave-server tcp://127.0.0.1:5555 --config keys.json > /tmp/zwave-server.log 2>&1 &
+          listening 3000 || { cat /tmp/zwave-mock.log /tmp/zwave-server.log; exit 1; }
+          tail -20 /tmp/zwave-mock.log /tmp/zwave-server.log
 
       - name: Boot HA and open the tunnels
         env:
