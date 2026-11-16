@@ -1,0 +1,53 @@
+# Throwaway, fork only: run the radio E2E file alone on a GitHub runner.
+name: zw probe
+on:
+  push:
+    branches: [zw-e2e-probe]
+permissions:
+  contents: read
+jobs:
+  pulls:
+    name: image pulls (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - run: |
+          docker version --format '{{.Server.Version}} {{.Server.Arch}}'
+          for image in public.ecr.aws/docker/library/node:22.23.5-slim node:22.23.5-slim; do
+            echo "== $image"
+            docker pull "$image" 2>&1 | tail -4 || true
+          done
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+  probe:
+    name: radio e2e (${{ matrix.os }}, ${{ matrix.lane }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        lane: [container, no_tools]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+      - run: uv python install 3.14
+      - run: uv sync --all-extras --dev
+      - name: Radio E2E file
+        env:
+          HAMCP_ENV_FILE: "tests/.env.test"
+          E2E_NO_TOOLS_ENTRY: ${{ matrix.lane == 'no_tools' && '1' || '' }}
+        run: |
+          cd tests
+          uv run pytest src/e2e/tools/test_radio_management.py -n1 --dist loadscope --tb=short -v --durations=25
+      - name: Containers
+        if: always()
+        run: docker ps -a --format '{{.Image}} {{.Status}}' || true
