@@ -202,6 +202,21 @@ jobs:
           echo "$CLOUDFLARED_SHA256  cloudflared" | sha256sum -c -
           chmod +x cloudflared
 
+      # Throwaway live-test rig: a Z-Wave JS server on its fake stick, which the
+      # HA container reaches as ws://host.docker.internal:3000.
+      - name: Start a Z-Wave JS server on a mock stick
+        run: |
+          mkdir /tmp/zw && cd /tmp/zw
+          npm init -y >/dev/null
+          npm install @zwave-js/server zwave-js
+          npm ls --depth=0
+          nohup npx zwave-server --mock-driver > /tmp/zwave-server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/3000) 2>/dev/null; then echo "listening on 3000"; break; fi
+            sleep 2
+          done
+          cat /tmp/zwave-server.log
+
       - name: Boot HA and open the tunnels
         env:
           GITHUB_TOKEN: ${{ github.token }}
