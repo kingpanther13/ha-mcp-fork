@@ -87,7 +87,7 @@ jobs:
           uv run python scripts/stand_in_lists_ratchet.py --base d46b3c8491a97064748f04d6f36368aafc5a31dd
       - name: Scheduler and workflow regression tests
         if: ${{ !cancelled() }}
-        run: uv run pytest tests/src/unit/test_e2e_topology_scheduling.py tests/src/unit/test_e2e_lane_env_shape.py tests/src/unit/test_e2e_skip_gate_shape.py tests/src/unit/test_template_backup_e2e_topology.py -q --maxfail=0 2>&1 | tee /tmp/topology-unit.log
+        run: uv run pytest tests/src/unit/test_e2e_topology_scheduling.py tests/src/unit/test_e2e_topology_restart.py tests/src/unit/test_e2e_lane_env_shape.py tests/src/unit/test_e2e_skip_gate_shape.py tests/src/unit/test_template_backup_e2e_topology.py -q --maxfail=0 2>&1 | tee /tmp/topology-unit.log
       - name: Collect combined E2E suite
         if: ${{ !cancelled() }}
         env:
