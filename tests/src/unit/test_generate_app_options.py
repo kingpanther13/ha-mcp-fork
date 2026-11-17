@@ -49,4 +49,3 @@ def test_regeneration_keeps_the_rest_of_config_yaml() -> None:
         "ports:\n"
         "  9583/tcp: 9583\n"
     )
-

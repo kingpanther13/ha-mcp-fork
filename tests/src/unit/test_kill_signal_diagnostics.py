@@ -9,10 +9,10 @@ gating, and the kernel ABI constants the diagnostic block depends on).
 from __future__ import annotations
 
 import importlib
-import subprocess
-import textwrap
 import signal
+import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -348,7 +348,10 @@ def test_real_signal_preserves_shutdown_and_reports_kernel_sender(handler):
     )
     result = subprocess.run(
         [sys.executable, "-c", child, handler],
-        capture_output=True, text=True, timeout=10,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     sender = result.stdout.split("SENDER ", 1)[1].splitlines()[0]
     assert f"Sender PID:     {sender}" in result.stderr

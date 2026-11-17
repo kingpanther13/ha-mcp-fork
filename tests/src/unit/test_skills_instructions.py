@@ -448,6 +448,8 @@ async def test_skill_catalog_keeps_aliases_keywords_annotations_and_tags(
     server, populated_dir, available
 ):
     """Both healthy and degraded catalogs tell old clients where to go."""
+    from ha_mcp.server_tool_text import SEARCH_KEYWORDS
+
     tool = await server(populated_dir if available else None).mcp.get_tool(SKILL_TOOL_NAME)
     assert tool is not None
     for old_name in (
@@ -455,15 +457,16 @@ async def test_skill_catalog_keeps_aliases_keywords_annotations_and_tags(
         "ha_get_skill_home_assistant_best_practices",
     ):
         assert old_name in tool.description
+        assert old_name in SEARCH_KEYWORDS[SKILL_TOOL_NAME]
     for anchor in (
         "Use BEFORE:", "creating or editing automations", "writing triggers",
         "ha_config_set_automation",
     ):
         assert anchor in tool.description
     assert tool.annotations is not None
-    assert tool.annotations.readOnlyHint is True
-    assert tool.annotations.idempotentHint is True
-    assert tool.annotations.destructiveHint is not True
+    assert tool.annotations.read_only_hint is True
+    assert tool.annotations.idempotent_hint is True
+    assert tool.annotations.destructive_hint is not True
     assert tool.annotations.title == "Get Home Assistant Best Practices Skill Guide"
     assert "System" in tool.tags
     assert ("currently not available" in tool.description) is not available

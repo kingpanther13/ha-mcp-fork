@@ -13,10 +13,8 @@ from ha_mcp._vendor.mcp_types import (
     CLIENT_CAPABILITIES_META_KEY,
     PROTOCOL_VERSION_META_KEY,
 )
-from ha_mcp.config import get_global_settings, reset_global_settings
 from ha_mcp.client.rest_client import HomeAssistantClient
-
-from ._server_factory import make_server
+from ha_mcp.config import get_global_settings, reset_global_settings
 from ha_mcp.http_transport import HttpTransportFastMCP
 from ha_mcp.read_only import ReadOnlyToolsTransform
 from ha_mcp.tool_catalog import (
@@ -29,6 +27,8 @@ from ha_mcp.transforms.categorized_search import (
     SearchKeywordsTransform,
 )
 from ha_mcp.utils.data_paths import get_data_dir
+
+from ._server_factory import make_server
 
 FULL = {"read", "write"}
 SEARCH = {
@@ -216,6 +216,7 @@ def test_missing_search_transform_serves_the_full_catalog_everywhere(
 ):
     """Without the transform, a search URL must not promise search tools."""
     from ha_mcp import transforms
+
     tool_catalog.set_search_available(True)
     if failure == "import":
         monkeypatch.delattr(transforms, "CategorizedSearchTransform")
@@ -234,7 +235,10 @@ def test_missing_search_transform_serves_the_full_catalog_everywhere(
         for path in ("/mcp", "/mcp/catalog/search"):
             assert "read_tool" in _tool_names(client, path)
             assert "ha_search_tools" not in _tool_names(client, path)
-            assert "## Tool Discovery" not in _initialize(client, path, {})[0]["instructions"]
+            assert (
+                "## Tool Discovery"
+                not in _initialize(client, path, {})[0]["instructions"]
+            )
 
 
 def test_a_later_server_with_the_search_transform_serves_search(

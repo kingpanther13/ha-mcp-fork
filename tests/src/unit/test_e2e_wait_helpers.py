@@ -6,7 +6,7 @@ existing helpers (``wait_for_entity_state``, ``wait_for_entity_registration``,
 **WS happy path** in CI, but the REST fallback only fires when
 ``open_ha_ws`` raises — which a healthy testcontainer never does. These
 unit tests pin the fallback branches and the timeout-budget contract
-without standing up a real HA.
+against the real state tool and Home Assistant Core.
 
 Coverage:
 
@@ -24,9 +24,16 @@ Coverage:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import AsyncIterator
+from unittest.mock import patch
 
 import pytest
+from homeassistant.core import HomeAssistant
+
+from ha_mcp._vendor.fastmcp import Client, FastMCP
+from ha_mcp.client.rest_client import HomeAssistantClient
+from ha_mcp.tools.smart_search import SmartSearchTools
+from ha_mcp.tools.tools_search import register_search_tools
 
 from tests.src.e2e.utilities import wait_helpers
 from tests.src.e2e.utilities.wait_helpers import (
@@ -37,32 +44,13 @@ from tests.src.e2e.utilities.wait_helpers import (
 )
 
 
-def _mcp_result(text: str) -> MagicMock:
-    """Build an MCP ``call_tool`` result that ``parse_mcp_result`` will
-    decode as ``json.loads(text)``. ``is_error`` must be ``False``
-    explicitly: a bare ``MagicMock()`` returns a truthy MagicMock for it,
-    routing the parser down the error path."""
-    text_part = MagicMock()
-    text_part.text = text
-    result = MagicMock()
-    result.is_error = False
-    result.content = [text_part]
-    return result
-
-
-def _mcp_client_returning(state_value: str | None) -> MagicMock:
-    """Build an MCP-client double whose ``call_tool('ha_get_state', ...)``
-    returns a parsed-result wrapper with the given state value (or
-    ``None`` to simulate a missing entity)."""
-    client = MagicMock()
-    if state_value is None:
-        wrapper = _mcp_result('{"data": null}')
-    else:
-        wrapper = _mcp_result(
-            f'{{"data": {{"entity_id": "x", "state": "{state_value}"}}}}'
-        )
-    client.call_tool = AsyncMock(return_value=wrapper)
-    return client
+@pytest.fixture
+async def mcp_client(core_client: HomeAssistantClient) -> AsyncIterator[Client]:
+    """The actual state tool, with MCP serialization and Core's REST response."""
+    server = FastMCP("wait-helper tests")
+    register_search_tools(server, core_client, smart_tools=SmartSearchTools(core_client))
+    async with Client(server) as client:
+        yield client
 
 
 @pytest.fixture
@@ -87,73 +75,71 @@ def force_ws_runtime_error(monkeypatch):
     monkeypatch.setattr(wait_helpers, "open_ha_ws", _raise)
 
 
-class TestWsPathUnavailableContract:
-    """``_WsPathUnavailable`` carries elapsed for budget deduction."""
-
-    def test_default_elapsed_is_zero(self):
-        e = _WsPathUnavailable("handshake failed")
-        assert e.elapsed == 0.0
-
-    def test_elapsed_kwarg_preserved(self):
-        e = _WsPathUnavailable("mid-wait drop", elapsed=3.5)
-        assert e.elapsed == 3.5
-
-
 class TestRestFallbackOnHandshakeFailure:
     """When ``open_ha_ws`` raises a transport error, each migrated
     helper must fall back to REST polling and return the right type."""
 
     async def test_entity_state_falls_back_to_rest_and_succeeds(
-        self, force_ws_unavailable
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client
     ):
-        client = _mcp_client_returning("on")
-        result = await wait_for_entity_state(
-            client, "light.test", "on", timeout=2, poll_interval=0.01
-        )
+        hass.states.async_set("light.test", "on")
+        client = mcp_client
+        with patch.object(client, "call_tool", wraps=client.call_tool) as sampled:
+            result = await wait_for_entity_state(
+                client, "light.test", "on", timeout=2, poll_interval=0.01
+            )
         assert result is True
-        # Sample called at least once via REST.
-        assert client.call_tool.call_count >= 1
+        sampled.assert_awaited()
 
     async def test_entity_state_rest_returns_false_on_timeout(
-        self, force_ws_unavailable
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client
     ):
-        client = _mcp_client_returning("off")  # never reaches "on"
+        hass.states.async_set("light.test", "off")
+        client = mcp_client  # never reaches "on"
         result = await wait_for_entity_state(
             client, "light.test", "on", timeout=1, poll_interval=0.01
         )
         assert result is False
 
-    async def test_entity_registration_falls_back_to_rest(self, force_ws_unavailable):
-        client = _mcp_client_returning("on")
+    async def test_entity_registration_falls_back_to_rest(
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client
+    ):
+        hass.states.async_set("light.test", "on")
+        client = mcp_client
         result = await wait_for_entity_registration(client, "light.test", timeout=2)
         assert result is True
 
     async def test_entity_registration_rest_returns_false_on_timeout(
-        self, force_ws_unavailable
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client
     ):
-        client = _mcp_client_returning(None)
+        client = mcp_client
         result = await wait_for_entity_registration(client, "light.test", timeout=1)
         assert result is False
 
-    async def test_state_change_falls_back_to_rest(self, force_ws_unavailable):
-        # Sequence: initial 'off' (capture baseline), then 'on' (change detected)
-        client = MagicMock()
-        client.call_tool = AsyncMock(
-            side_effect=[
-                _mcp_result('{"data": {"entity_id": "x", "state": "off"}}'),
-                _mcp_result('{"data": {"entity_id": "x", "state": "on"}}'),
-            ]
-        )
+    async def test_state_change_falls_back_to_rest(
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client, monkeypatch
+    ):
+        hass.states.async_set("light.test", "off")
+        client = mcp_client
+        call_tool = client.call_tool
+
+        async def change_after_baseline(*args, **kwargs):
+            result = await call_tool(*args, **kwargs)
+            hass.states.async_set("light.test", "on")
+            return result
+
+        monkeypatch.setattr(client, "call_tool", change_after_baseline)
         result = await wait_for_state_change(
             client, "light.test", timeout=2, poll_interval=0.01
         )
         assert result == "on"
 
     async def test_state_change_rest_returns_none_on_timeout(
-        self, force_ws_unavailable
+        self, force_ws_unavailable, hass: HomeAssistant, mcp_client: Client
     ):
         # Initial state is 'off' and stays 'off' — no change observed.
-        client = _mcp_client_returning("off")
+        hass.states.async_set("light.test", "off")
+        client = mcp_client
         result = await wait_for_state_change(
             client, "light.test", timeout=1, poll_interval=0.01
         )
@@ -165,25 +151,29 @@ class TestRuntimeErrorPropagation:
     auth, malformed handshake) MUST propagate, not silently degrade —
     silent-failure-hunter finding."""
 
-    async def test_entity_state_propagates_runtime_error(self, force_ws_runtime_error):
-        client = _mcp_client_returning("on")
+    async def test_entity_state_propagates_runtime_error(
+        self, force_ws_runtime_error, hass: HomeAssistant, mcp_client: Client
+    ):
+        hass.states.async_set("light.test", "on")
+        client = mcp_client
         with pytest.raises(RuntimeError, match="HOMEASSISTANT_URL unset"):
             await wait_for_entity_state(client, "light.test", "on", timeout=1)
 
     async def test_entity_registration_propagates_runtime_error(
-        self, force_ws_runtime_error
+        self, force_ws_runtime_error, hass: HomeAssistant, mcp_client: Client
     ):
-        client = _mcp_client_returning("on")
+        hass.states.async_set("light.test", "on")
+        client = mcp_client
         with pytest.raises(RuntimeError, match="HOMEASSISTANT_URL unset"):
             await wait_for_entity_registration(client, "light.test", timeout=1)
 
-    async def test_state_change_propagates_runtime_error(self, force_ws_runtime_error):
+    async def test_state_change_propagates_runtime_error(
+        self, force_ws_runtime_error, hass: HomeAssistant, mcp_client: Client
+    ):
         # Initial state fetch happens before the WS path, so it succeeds.
         # Then open_ha_ws raises RuntimeError on the WS attempt.
-        client = MagicMock()
-        client.call_tool = AsyncMock(
-            return_value=_mcp_result('{"data": {"entity_id": "x", "state": "off"}}')
-        )
+        hass.states.async_set("light.test", "off")
+        client = mcp_client
         with pytest.raises(RuntimeError, match="HOMEASSISTANT_URL unset"):
             await wait_for_state_change(client, "light.test", timeout=1)
 
@@ -193,7 +183,9 @@ class TestTimeoutBudgetDeduction:
     full ``timeout`` — pr-test-analyzer finding. ``_WsPathUnavailable.elapsed``
     is the budget contract."""
 
-    async def test_rest_budget_deducted_by_elapsed(self, monkeypatch):
+    async def test_rest_budget_deducted_by_elapsed(
+        self, monkeypatch, hass: HomeAssistant, mcp_client: Client
+    ):
         """If the WS path raises ``_WsPathUnavailable(elapsed=N)``, the
         REST fallback budget must be ``timeout - N``, capped at zero."""
 
@@ -204,7 +196,8 @@ class TestTimeoutBudgetDeduction:
         monkeypatch.setattr(wait_helpers, "ws_wait_for_predicate", fake_predicate)
 
         # Sample never resolves — REST loop runs until budget exhausts.
-        client = _mcp_client_returning("off")
+        hass.states.async_set("light.test", "off")
+        client = mcp_client
 
         import time
 
@@ -222,7 +215,9 @@ class TestTimeoutBudgetDeduction:
             f"(budget = timeout - elapsed = 1.0 - 0.8 = 0.2s)"
         )
 
-    async def test_rest_budget_clamped_at_zero(self, monkeypatch):
+    async def test_rest_budget_clamped_at_zero(
+        self, monkeypatch, hass: HomeAssistant, mcp_client: Client
+    ):
         """If ``elapsed > timeout`` (already overspent), REST budget is
         zero and the helper returns false immediately."""
 
@@ -230,7 +225,8 @@ class TestTimeoutBudgetDeduction:
             raise _WsPathUnavailable("elapsed exceeded timeout", elapsed=5.0)
 
         monkeypatch.setattr(wait_helpers, "ws_wait_for_predicate", fake_predicate)
-        client = _mcp_client_returning("on")
+        hass.states.async_set("light.test", "on")
+        client = mcp_client
 
         import time
 

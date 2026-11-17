@@ -32,12 +32,12 @@ import pytest
 
 from ha_mcp._vendor.fastmcp.tools import Tool
 from ha_mcp._vendor.mcp.types import ToolAnnotations
-from ha_mcp.transforms import LiteDocstringsTransform
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.server_tool_text import LITE_DOCSTRINGS, LITE_DOCSTRING_DESTINATIONS
+from ha_mcp.server_tool_text import LITE_DOCSTRING_DESTINATIONS, LITE_DOCSTRINGS
+from ha_mcp.transforms import LiteDocstringsTransform
+from ha_mcp.utils import skill_loader
 
 from ._server_factory import make_server
-from ha_mcp.utils import skill_loader
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 
@@ -203,7 +203,8 @@ class TestApplyLiteDocstrings:
         self, core_client: HomeAssistantClient, monkeypatch, enabled
     ) -> None:
         server = make_server(
-            core_client, monkeypatch,
+            core_client,
+            monkeypatch,
             enabled_tool_modules="tools_config_automations",
             enable_lite_docstrings=enabled,
         )
@@ -212,8 +213,11 @@ class TestApplyLiteDocstrings:
         assert (tool.description == LITE_DOCSTRINGS[tool.name]) is enabled
 
     def test_lite_descriptions_carry_no_format_tokens(self) -> None:
-        assert not [name for name, text in LITE_DOCSTRINGS.items()
-                    if _PLACEHOLDER_RE.search(text)]
+        assert not [
+            name
+            for name, text in LITE_DOCSTRINGS.items()
+            if _PLACEHOLDER_RE.search(text)
+        ]
 
     def test_logs_warning_when_enabled(
         self, core_client: HomeAssistantClient, monkeypatch, caplog

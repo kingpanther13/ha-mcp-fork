@@ -6,14 +6,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from starlette.testclient import TestClient
-from pydantic import AnyHttpUrl
 from homeassistant.core import HomeAssistant
+from pydantic import AnyHttpUrl
 from pytest_homeassistant.common import MockUser
-
-from ha_mcp.client.rest_client import HomeAssistantClient
+from starlette.testclient import TestClient
 
 from ha_mcp._vendor import fastmcp
+from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.config import get_global_settings, reset_global_settings
 from ha_mcp.http_transport import HttpTransportFastMCP
 from ha_mcp.read_only import ReadOnlyMiddleware, ReadOnlyToolsTransform
@@ -120,10 +119,14 @@ async def test_readonly_alias_keeps_oauth_authentication_and_discovery():
     )
     await provider.register_client(client_info)
     code = HomeAssistantAuthorizationCode(
-        code="readonly-code", client_id="readonly-client",
+        code="readonly-code",
+        client_id="readonly-client",
         redirect_uri=AnyHttpUrl("http://localhost/callback"),
-        redirect_uri_provided_explicitly=True, scopes=["homeassistant"],
-        expires_at=time.time() + 60, code_challenge="challenge", ha_token="test-ha-token",
+        redirect_uri_provided_explicitly=True,
+        scopes=["homeassistant"],
+        expires_at=time.time() + 60,
+        code_challenge="challenge",
+        ha_token="test-ha-token",
     )
     provider.auth_codes[code.code] = code
     token = (await provider.exchange_authorization_code(client_info, code)).access_token
@@ -270,8 +273,12 @@ def test_readonly_endpoint_under_root_path(prefix_in_path):
 
 @pytest.mark.parametrize("readonly", [False, True])
 async def test_theme_guidance_observes_readonly_connection(
-    hass: HomeAssistant, core_client: HomeAssistantClient,
-    hass_admin_user: MockUser, tmp_path, monkeypatch, readonly
+    hass: HomeAssistant,
+    core_client: HomeAssistantClient,
+    hass_admin_user: MockUser,
+    tmp_path,
+    monkeypatch,
+    readonly,
 ):
     from contextlib import nullcontext
 
@@ -280,7 +287,9 @@ async def test_theme_guidance_observes_readonly_connection(
     from ha_mcp.read_only import read_only_request
 
     from ._dashboard_screenshot_theme_guard_core import (
-        Account, render_report, set_up_frontend,
+        Account,
+        render_report,
+        set_up_frontend,
     )
 
     await set_up_frontend(hass, tmp_path)

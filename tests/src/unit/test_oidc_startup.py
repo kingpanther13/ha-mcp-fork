@@ -90,9 +90,7 @@ class TestMainOidcValidation:
 
         with (
             patch.dict(os.environ, self.VALID_OIDC_ENV, clear=True),
-            patch.object(
-                main_module, "run_entrypoint", side_effect=mockrun_entrypoint
-            ),
+            patch.object(main_module, "run_entrypoint", side_effect=mockrun_entrypoint),
         ):
             main_module.main_oidc()
 
@@ -124,9 +122,7 @@ class TestMainOidcValidation:
 
         with (
             patch.dict(os.environ, env, clear=True),
-            patch.object(
-                main_module, "run_entrypoint", side_effect=mockrun_entrypoint
-            ),
+            patch.object(main_module, "run_entrypoint", side_effect=mockrun_entrypoint),
         ):
             main_module.main_oidc()
 

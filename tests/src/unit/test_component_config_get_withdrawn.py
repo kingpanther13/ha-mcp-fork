@@ -11,6 +11,8 @@ async def test_config_get_is_neither_advertised_nor_registered(
 ) -> None:
     info = await ws_result(component_ws, "ha_mcp_tools/info")
     assert "config_get" not in info["capabilities"]
-    reply = await ws_call(component_ws, "ha_mcp_tools/config_get", entity_id="automation.old")
+    reply = await ws_call(
+        component_ws, "ha_mcp_tools/config_get", entity_id="automation.old"
+    )
     assert reply["success"] is False
     assert reply["error"]["code"] == "unknown_command"

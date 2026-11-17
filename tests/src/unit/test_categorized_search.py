@@ -1,36 +1,82 @@
 """Categorized tool search via public transform and tool interfaces."""
+
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
+
 import pytest
-from ha_mcp._vendor.fastmcp.exceptions import ToolError
+
 from ha_mcp._vendor.fastmcp.tools import Tool
 from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.transforms.categorized_search import CategorizedSearchTransform, SearchKeywordsTransform, DEFAULT_PINNED_TOOLS, categorize_capability
-from ._categorized_search_helpers import _make_tool, _make_ctx, set_catalog, proxy_function, render_search_results
+from ha_mcp.transforms.categorized_search import (
+    DEFAULT_PINNED_TOOLS,
+    CategorizedSearchTransform,
+    SearchKeywordsTransform,
+    categorize_capability,
+)
+
+from ._categorized_search_helpers import (
+    _make_tool,
+    render_search_results,
+)
 from ._categorized_search_helpers import read_only_on as read_only_on
 from ._search_mode_connection import search_connection as search_connection
+
 
 class TestCategorizeTool:
     """Tests for the _categorize_tool helper function."""
 
     def test_read_only_tool(self):
         tool = _make_tool("ha_get_state", read_only=True)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "read"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "read"
+        )
 
     def test_destructive_delete_tool(self):
         tool = _make_tool("ha_remove_area_or_floor", destructive=True, idempotent=True)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "delete"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "delete"
+        )
 
     def test_destructive_delete_pattern(self):
         tool = _make_tool("ha_delete_zone", destructive=True, idempotent=True)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "delete"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "delete"
+        )
 
     def test_destructive_write_tool(self):
         tool = _make_tool("ha_config_set_automation", destructive=True)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "write"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "write"
+        )
 
     def test_no_annotations(self):
         """Tool without annotations defaults to write."""
@@ -39,17 +85,44 @@ class TestCategorizeTool:
             return "ok"
 
         tool = Tool.from_function(fn=noop, name="ha_some_tool")
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "write"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "write"
+        )
 
     def test_name_pattern_without_destructive_hint_is_write(self):
         """A tool with _remove_ in name but no destructiveHint is NOT delete."""
         tool = _make_tool("ha_remove_something", destructive=False)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "write"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "write"
+        )
 
     def test_read_only_beats_name_pattern(self):
         """readOnlyHint takes precedence even if name contains _delete_."""
         tool = _make_tool("ha_get_delete_history", read_only=True)
-        assert categorize_capability(tool.name, read_only=bool(tool.annotations and tool.annotations.read_only_hint), destructive=bool(tool.annotations and tool.annotations.destructive_hint)) == "read"
+        assert (
+            categorize_capability(
+                tool.name,
+                read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                destructive=bool(
+                    tool.annotations and tool.annotations.destructive_hint
+                ),
+            )
+            == "read"
+        )
 
 
 class TestRenderResults:
@@ -467,8 +540,11 @@ class TestSearchKeywordsTransform:
 
 
 @pytest.mark.parametrize("search_enabled", [False, True])
-async def test_keywords_are_served_in_both_catalog_modes(core_client: HomeAssistantClient, monkeypatch, search_enabled):
+async def test_keywords_are_served_in_both_catalog_modes(
+    core_client: HomeAssistantClient, monkeypatch, search_enabled
+):
     from ._real_server import build_server
+
     monkeypatch.setenv("ENABLE_TOOL_SEARCH", str(search_enabled).lower())
     monkeypatch.setenv("ENABLE_LITE_DOCSTRINGS", "false")
     server = build_server(monkeypatch, core_client)
@@ -479,14 +555,20 @@ async def test_keywords_are_served_in_both_catalog_modes(core_client: HomeAssist
         assert term in tool.description.lower()
 
 
-async def test_keyword_transform_failure_is_logged_not_raised(core_client: HomeAssistantClient, monkeypatch, caplog):
+async def test_keyword_transform_failure_is_logged_not_raised(
+    core_client: HomeAssistantClient, monkeypatch, caplog
+):
     from ha_mcp._vendor.fastmcp import FastMCP
+
     from ._real_server import build_server
+
     original = FastMCP.add_transform
+
     def add_transform(server, transform):
         if isinstance(transform, SearchKeywordsTransform):
             raise RuntimeError("boom")
         return original(server, transform)
+
     monkeypatch.setattr(FastMCP, "add_transform", add_transform)
     with caplog.at_level("ERROR"):
         server = build_server(monkeypatch, core_client)
@@ -494,17 +576,50 @@ async def test_keyword_transform_failure_is_logged_not_raised(core_client: HomeA
     assert "SearchKeywordsTransform" in caplog.text
 
 
-@pytest.mark.parametrize(("tool_name", "terms"), [
-    ("ha_manage_energy_prefs", ("price", "tariff", "cost", "kwh", "rate", "peak", "off-peak", "electricity", "contract", "read", "get")),
-    ("ha_manage_blueprints", ("blueprint", "import", "delete", "substitute", "take-control", "list", "ha_get_blueprint", "ha_import_blueprint")),
-    ("ha_config_set_automation", ("enable", "disable", "run", "trigger")),
-    ("ha_config_set_script", ("run", "start", "stop")),
-    ("ha_config_set_scene", ("activate",)),
-    ("ha_manage_updates", ("repair", "ignore", "dismiss")),
-    ("ha_set_integration", ("log", "debug")),
-])
-async def test_search_vocabulary_reaches_the_served_tool(core_client: HomeAssistantClient, monkeypatch, tool_name, terms):
+@pytest.mark.parametrize(
+    ("tool_name", "terms"),
+    [
+        (
+            "ha_manage_energy_prefs",
+            (
+                "price",
+                "tariff",
+                "cost",
+                "kwh",
+                "rate",
+                "peak",
+                "off-peak",
+                "electricity",
+                "contract",
+                "read",
+                "get",
+            ),
+        ),
+        (
+            "ha_manage_blueprints",
+            (
+                "blueprint",
+                "import",
+                "delete",
+                "substitute",
+                "take-control",
+                "list",
+                "ha_get_blueprint",
+                "ha_import_blueprint",
+            ),
+        ),
+        ("ha_config_set_automation", ("enable", "disable", "run", "trigger")),
+        ("ha_config_set_script", ("run", "start", "stop")),
+        ("ha_config_set_scene", ("activate",)),
+        ("ha_manage_updates", ("repair", "ignore", "dismiss")),
+        ("ha_set_integration", ("log", "debug")),
+    ],
+)
+async def test_search_vocabulary_reaches_the_served_tool(
+    core_client: HomeAssistantClient, monkeypatch, tool_name, terms
+):
     from ._real_server import build_server
+
     monkeypatch.setenv("ENABLE_LITE_DOCSTRINGS", "false")
     server = build_server(monkeypatch, core_client)
     tool = await server.mcp.get_tool(tool_name)

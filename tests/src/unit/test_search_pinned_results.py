@@ -8,20 +8,19 @@ point at the tool list, without taking a result slot from hidden tools.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from typing import Any
-from ha_mcp.client.rest_client import HomeAssistantClient
-from ._real_server import build_server
 
 import pytest
 
 import ha_mcp.server as server_module
 from ha_mcp._vendor.fastmcp import Client, FastMCP
 from ha_mcp._vendor.fastmcp.tools import Tool
+from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.config import reset_global_settings
 from ha_mcp.transforms.categorized_search import CategorizedSearchTransform
 
+from ._real_server import build_server
 from ._search_noop_tools import noop_tool
 
 # These tests exercise the search tools a search-mode connection gets.
@@ -57,12 +56,19 @@ async def test_cached_search_uses_current_tool_schema(reverse_catalog: bool) -> 
     mcp.add_tool(other)
     mcp.add_transform(CategorizedSearchTransform())
     async with Client(mcp) as client:
-        before = await client.call_tool("ha_search_tools", {"query": "look up an entity"})
-        updated = original.model_copy(update={"parameters": {
-            "type": "object", "properties": {
-                "entity_id": {"type": "array", "items": {"type": "string"}}
+        before = await client.call_tool(
+            "ha_search_tools", {"query": "look up an entity"}
+        )
+        updated = original.model_copy(
+            update={
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "array", "items": {"type": "string"}}
+                    },
+                }
             }
-        }})
+        )
         mcp.remove_tool("ha_lookup")
         if reverse_catalog:
             mcp.remove_tool("ha_unrelated")
@@ -70,7 +76,9 @@ async def test_cached_search_uses_current_tool_schema(reverse_catalog: bool) -> 
             mcp.add_tool(other)
         else:
             mcp.add_tool(updated)
-        after = await client.call_tool("ha_search_tools", {"query": "look up an entity"})
+        after = await client.call_tool(
+            "ha_search_tools", {"query": "look up an entity"}
+        )
     assert after.data[0]["name"] == "ha_lookup"
     assert after.data[0]["params"] != before.data[0]["params"]
     assert "[]" in after.data[0]["params"]

@@ -6,23 +6,14 @@ proxy category validation, dispatch execution, and SearchKeywordsTransform.
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import Tool
 from ha_mcp._vendor.mcp.types import ToolAnnotations
-from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.transforms.categorized_search import (
-    DEFAULT_PINNED_TOOLS,
-    CategorizedSearchTransform,
-    SearchKeywordsTransform,
-    categorize_capability,
-)
 
 from ._search_mode_connection import search_connection as search_connection
 
@@ -69,7 +60,9 @@ def set_catalog(transform, tools):
 
 
 async def proxy_function(transform, category):
-    proxy = await transform.get_tool(f"ha_call_{category}_tool", AsyncMock(return_value=None))
+    proxy = await transform.get_tool(
+        f"ha_call_{category}_tool", AsyncMock(return_value=None)
+    )
     assert proxy is not None
     return proxy.fn
 
@@ -80,7 +73,9 @@ async def render_search_results(transform, tools):
     for tool in tools:
         # A singleton query checks formatting independently of BM25 ranking.
         set_catalog(transform, [tool])
-        search = await transform.get_tool("ha_search_tools", AsyncMock(return_value=None))
+        search = await transform.get_tool(
+            "ha_search_tools", AsyncMock(return_value=None)
+        )
         assert search is not None
         found.extend(await search.fn(query=tool.name, ctx=_make_ctx()))
     return found
@@ -91,5 +86,3 @@ def _make_ctx(call_tool_return: Any = "tool_result"):
     ctx = MagicMock()
     ctx.fastmcp.call_tool = AsyncMock(return_value=call_tool_return)
     return ctx
-
-

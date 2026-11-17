@@ -23,13 +23,13 @@ from ._config import (
     INDIVIDUAL_FETCH_BATCH_SIZE,
     SCRIPT_CONFIG_TIME_BUDGET,
 )
-from ._fetch import (
+from .fetch import (
     http_500_diagnosis_hint,
     is_timeout_error,
     record_first_failure,
 )
 from ._flow_helpers import FlowHelperSearchMixin
-from ._graph import (
+from .graph import (
     GraphResult,
     _graph_applies,
     _graph_partial_reasons,

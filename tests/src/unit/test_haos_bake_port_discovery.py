@@ -139,4 +139,3 @@ class TestDiscoverHaBaseUrl:
         message = str(excinfo.value)
         assert str(build_image.HA_HOST_PORT) in message
         assert str(build_image.HA_ALT_HOST_PORT) in message
-

@@ -19,6 +19,7 @@ from ha_mcp.tools.tools_code import register_code_tools
 @pytest.fixture
 def start(core_client: HomeAssistantClient, monkeypatch, tmp_path):
     settings = get_global_settings()
+    monkeypatch.setattr(settings, "enable_beta_features", True)
     monkeypatch.setattr(settings, "enable_code_mode", True)
 
     def build(path):
@@ -86,7 +87,7 @@ async def test_saved_tools_survive_restart_and_overwrite_atomically(start, tmp_p
     saved = await _save(mcp, "first", "1 + 1")
     assert saved["saved_as"] == "first"
     payload = json.loads(path.read_text())
-    assert isinstance(payload["version"], int)
+    assert payload["version"] == 1
     assert payload["saved_at"]
     assert payload["saved_tools"]["first"]["code"] == "1 + 1"
     mcp = start(path)
@@ -104,6 +105,7 @@ async def test_saved_tools_survive_restart_and_overwrite_atomically(start, tmp_p
 async def test_empty_path_keeps_tools_in_memory_and_warns_without_writing(start, tmp_path):
     before = sorted(tmp_path.rglob("*"))
     mcp = start("")
+    assert (await _call(mcp, list_saved=True))["saved_tools"] == {}
     saved = await _save(mcp)
     assert saved["saved_as"] == "example"
     assert "memory only" in saved["save_warning"]
@@ -163,7 +165,7 @@ async def test_load_caps_large_files_and_tool_rejects_growth_at_the_cap(start, t
     _write(path, entries)
     mcp = start(path)
     listed = (await _call(mcp, list_saved=True))["saved_tools"]
-    assert 0 < len(listed) < len(entries)
+    assert len(listed) == 256
     with pytest.raises(ToolError, match="cache is full"):
         await _save(mcp, "overflow")
     # Replacing one existing entry is still allowed at capacity.

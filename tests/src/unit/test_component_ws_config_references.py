@@ -423,9 +423,7 @@ async def test_a_core_without_a_part_names_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """After a Core rename the check stopped with no hint of which part went."""
-    monkeypatch.setattr(
-        config_references, "core_parts", lambda: "script_entities"
-    )
+    monkeypatch.setattr(config_references, "core_parts", lambda: "script_entities")
 
     result = await _check(component_ws, {"actions": []})
 

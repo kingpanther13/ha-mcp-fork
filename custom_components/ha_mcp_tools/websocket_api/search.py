@@ -39,7 +39,7 @@ from .registry import (
     _resolve_registries,
     _unambiguous_device_entries,
 )
-from .search_config import search_config_surface, _search_helpers
+from .search_config import _search_helpers, search_config_surface
 from .search_score import _apply_hidden_penalty, _text_tier, _tokenize
 from .secrets import (
     SCRUB_DEGRADED_MATCH_WARNING,

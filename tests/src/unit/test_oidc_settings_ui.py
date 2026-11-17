@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ._oidc_test_helpers import OIDC_PROXY_PATCH_TARGET, make_mock_oidc_proxy
-
 from ._oidc_test_helpers import isolated_oidc_runtime as isolated_oidc_runtime
 
 

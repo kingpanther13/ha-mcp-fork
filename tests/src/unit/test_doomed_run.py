@@ -74,7 +74,6 @@ def test_skip_and_passing_setup_do_not_increment():
     assert d.streak == 0
 
 
-
 def test_xdist_abort_retains_first_shared_fixture_failure(tmp_path):
     """A worker exit must not hide the exception that doomed that worker."""
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
@@ -166,8 +165,12 @@ def test_controller_reports_first_fixture_failure_per_worker(monkeypatch, when):
         )
 
     doomed_run.pytest_runtest_logreport(report("gw0", "first_test", "original failure"))
-    doomed_run.pytest_runtest_logreport(report("gw0", "second_test", "repeated failure"))
-    doomed_run.pytest_runtest_logreport(report("gw1", "other_test", "other worker failure"))
+    doomed_run.pytest_runtest_logreport(
+        report("gw0", "second_test", "repeated failure")
+    )
+    doomed_run.pytest_runtest_logreport(
+        report("gw1", "other_test", "other worker failure")
+    )
 
     assert terminal.write_sep.call_args_list == [
         (("!", f"First {when} failure on gw0: first_test"),),
@@ -178,6 +181,4 @@ def test_controller_reports_first_fixture_failure_per_worker(monkeypatch, when):
         (("other worker failure",),),
     ]
     # A genuine call resets the detector for the next test.
-    doomed_run.pytest_runtest_logreport(
-        SimpleNamespace(when="call", outcome="passed")
-    )
+    doomed_run.pytest_runtest_logreport(SimpleNamespace(when="call", outcome="passed"))

@@ -1,17 +1,26 @@
 """Categorized tool search via public transform and tool interfaces."""
+
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+
 import pytest
+
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp._vendor.fastmcp.tools import Tool
-from ha_mcp.client.rest_client import HomeAssistantClient
-from ha_mcp.transforms.categorized_search import CategorizedSearchTransform, SearchKeywordsTransform, DEFAULT_PINNED_TOOLS, categorize_capability
-from ._categorized_search_helpers import _make_tool, _make_ctx, set_catalog, proxy_function, render_search_results
+from ha_mcp.transforms.categorized_search import (
+    CategorizedSearchTransform,
+)
+
+from ._categorized_search_helpers import (
+    _make_ctx,
+    _make_tool,
+    proxy_function,
+    set_catalog,
+)
 from ._categorized_search_helpers import read_only_on as read_only_on
 from ._search_mode_connection import search_connection as search_connection
+
 
 class TestCategorizedCallDispatch:
     """Tests for the categorized_call closure — the core dispatch function."""
@@ -30,7 +39,6 @@ class TestCategorizedCallDispatch:
             ],
         )
         return t
-
 
     @pytest.mark.anyio
     async def test_read_proxy_happy_path(self, transform):
@@ -362,7 +370,6 @@ class TestDoubleUnwrap:
         )
         return t
 
-
     @pytest.mark.anyio
     async def test_double_wrapped_read_unwraps_correctly(self, transform):
         """Double-wrapped read tool via read proxy unwraps and succeeds."""
@@ -555,7 +562,6 @@ class TestArgumentsAsString:
         )
         return t
 
-
     @pytest.mark.anyio
     async def test_json_string_arguments_parsed_and_forwarded(self, transform):
         """A JSON-object string is parsed to a dict and forwarded."""
@@ -627,5 +633,3 @@ class TestRebuildCategoryCache:
             await reader("ha_get_state", {}, ctx)
         # Repeated unchanged catalog requests must still dispatch successfully.
         assert await writer("ha_get_state", {}, ctx) == "tool_result"
-
-

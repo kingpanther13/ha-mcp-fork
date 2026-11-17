@@ -175,7 +175,9 @@ class TestBadgeCriteria:
     async def test_unread_badge_entries_are_reported_not_listed(self, url_path: str | None, criteria: dict[str, str], prefix: str, search_dashboard):
         result = await self._unread_search(search_dashboard, url_path, **criteria)
         assert [m['jq_path'] for m in result['matches']] == ['.views[0].badges[2]']
-        [warning] = result['warnings']
+        [warning] = [item for item in result['warnings'] if item.startswith('Not searched as cards or badges')]
+        if url_path is None:
+            assert any('default dashboard was not searched' in item for item in result['warnings'])
         assert f'{prefix}.views[0].badges[0]' in warning
         assert f'{prefix}.views[0].badges[1]' in warning
 

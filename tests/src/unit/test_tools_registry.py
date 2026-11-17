@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
+from importlib.machinery import FileFinder
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,10 +35,14 @@ def _make_registry(
         smart_tools=None,
         device_tools=None,
     )
-    monkeypatch.setattr(
-        pkgutil, "iter_modules",
-        lambda _path: [pkgutil.ModuleInfo(None, name, False) for name in module_names],
-    )
+    discover = pkgutil.iter_modules
+
+    def modules(paths=None, prefix=""):
+        if paths and paths[0].endswith("ha_mcp/tools"):
+            return iter(pkgutil.ModuleInfo(FileFinder(paths[0]), name, False) for name in module_names)
+        return discover(paths, prefix)
+
+    monkeypatch.setattr(pkgutil, "iter_modules", modules)
     return ToolsRegistry(server, enabled_modules=",".join(module_names))
 
 
@@ -202,7 +207,7 @@ class TestModuleSplitExpansion:
     def test_legacy_filter_registers_only_its_own_modules(
         self, enabled, expected, monkeypatch, fake_import, core_client: HomeAssistantClient
     ):
-        registered = []
+        registered: list[str] = []
         names = ["tools_utility", "tools_logs", "tools_search"]
         for name in names:
             fake_import[name] = _fake_module(name, registered)

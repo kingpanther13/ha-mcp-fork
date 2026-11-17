@@ -47,8 +47,9 @@ def _redirect_write_probe(monkeypatch, tmp_path, writable: set[Path]) -> None:
 
     original = data_paths.tempfile.mkstemp
 
-    def mkstemp(*args, dir=None, **kwargs):
-        return original(*args, dir=tmp_path if dir in writable else dir, **kwargs)
+    def mkstemp(**kwargs):
+        target = kwargs["dir"]
+        return original(prefix=kwargs["prefix"], dir=tmp_path if target in writable else target)
 
     monkeypatch.setattr(data_paths.tempfile, "mkstemp", mkstemp)
 
@@ -264,10 +265,11 @@ class TestFallbacks:
 
         original = data_paths.tempfile.mkstemp
 
-        def mkstemp(*args, dir=None, **kwargs):
-            if dir == home / ".ha-mcp":
+        def mkstemp(**kwargs):
+            target = kwargs["dir"]
+            if target == home / ".ha-mcp":
                 raise PermissionError(13, "Permission denied")
-            return original(*args, dir=dir, **kwargs)
+            return original(prefix=kwargs["prefix"], dir=target)
 
         monkeypatch.setattr(data_paths.tempfile, "mkstemp", mkstemp)
         fallback_root = tmp_path / "fallback-tmp"
@@ -307,7 +309,9 @@ class TestFallbacks:
         monkeypatch.setattr(Path, "mkdir", mkdir)
         monkeypatch.setenv("HA_MCP_CONFIG_DIR", str(target))
         monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
-        monkeypatch.setattr("ha_mcp.utils.data_paths.tempfile.gettempdir", lambda: str(tmp_path))
+        monkeypatch.setattr(
+            "ha_mcp.utils.data_paths.tempfile.gettempdir", lambda: str(tmp_path)
+        )
         assert get_data_dir() == tmp_path / "ha-mcp"
 
     @pytest.mark.parametrize("operation", ["unlink", "close"])

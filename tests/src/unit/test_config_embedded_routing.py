@@ -18,15 +18,18 @@ embedded-awareness itself is covered hermetically in ``test_version_embedded``.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-config = pytest.importorskip("ha_mcp.config")
+from ha_mcp import config
+from ha_mcp.utils.data_paths import get_data_dir
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HA_MCP_CONFIG_DIR", str(tmp_path))
+    get_data_dir.cache_clear()
     config.reset_global_settings()
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     monkeypatch.delenv("HA_MCP_EMBEDDED", raising=False)
@@ -37,6 +40,7 @@ def _clean_env(monkeypatch, tmp_path):
     # later test's Settings.
     config.reset_embedded_connection()
     config.reset_global_settings()
+    get_data_dir.cache_clear()
 
 
 def _a_backup_env_name() -> str:
@@ -109,12 +113,21 @@ def test_backup_override_follows_deployment_mode(monkeypatch, tmp_path, embedded
     monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
     if embedded:
         monkeypatch.setenv("HA_MCP_EMBEDDED", "1")
-    monkeypatch.delenv("BACKUP_RETENTION_DAYS", raising=False)
+    monkeypatch.delenv("AUTO_BACKUP_RETAIN_PER_ENTITY", raising=False)
     (tmp_path / "backup_settings.json").write_text(
-        json.dumps({"backup_retention_days": 37})
+        json.dumps({"auto_backup_retain_per_entity": 37})
     )
+    reads = []
+    original_read = Path.read_text
+
+    def read(path, *args, **kwargs):
+        reads.append(path)
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
     settings = config.get_global_settings()
-    assert (settings.backup_retention_days == 37) is embedded
+    assert (settings.auto_backup_retain_per_entity == 37) is embedded
+    assert ((tmp_path / "backup_settings.json") in reads) is embedded
 
 
 @pytest.mark.parametrize("embedded", [False, True])

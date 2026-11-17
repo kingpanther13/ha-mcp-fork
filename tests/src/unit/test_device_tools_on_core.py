@@ -211,11 +211,9 @@ async def test_refused_config_entries_read_fails_the_call(
     def refuse(*_args: Any, **_kwargs: Any) -> Any:
         raise HomeAssistantError("entries unavailable")
 
-    monkeypatch.setattr(
-        hass.config_entries, "async_entries", refuse
-    )
-
-    error = await rejected_call_body(tools.ha_get_device(integration="hue"))
+    with monkeypatch.context() as refusing:
+        refusing.setattr(hass.config_entries, "async_entries", refuse)
+        error = await rejected_call_body(tools.ha_get_device(integration="hue"))
 
     assert error["error"]["message"] == (
         "Failed to read config entries: entries unavailable"

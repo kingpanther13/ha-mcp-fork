@@ -33,11 +33,11 @@ from .response import (
     _finalize_partial_state,
     _mirror_partial_to_warnings,
     _new_search_response,
-    prefetch_shared_search_snapshots,
     _project_response_fields,
     _ResolvedSearch,
     _synthesize_combined_pagination,
     _validate_search_types,
+    prefetch_shared_search_snapshots,
 )
 
 logger = logging.getLogger(__name__)

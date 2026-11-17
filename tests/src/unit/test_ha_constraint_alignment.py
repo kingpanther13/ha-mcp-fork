@@ -429,7 +429,9 @@ class TestFetchFailurePath:
         self._patch_fetch(monkeypatch, sleeps=sleeps, attempts=attempts)
         checker.main(["--ha-version", "2026.8.0"])
         assert len(attempts) > 1
-        assert attempts == list(range(len(attempts))), "each retry follows one more wait"
+        assert attempts == list(range(len(attempts))), (
+            "each retry follows one more wait"
+        )
         assert len(sleeps) == len(attempts) - 1, (
             "a sleep after the final attempt is pure waste and pushes the "
             "worst case toward the job timeout"

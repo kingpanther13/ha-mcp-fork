@@ -209,12 +209,34 @@ class TestSessionDisconnectLogFilter:
 
 def test_nested_disconnect_groups_demote_only_when_every_leaf_is_benign():
     for error, expected_level in (
-        (ExceptionGroup("outer", [ExceptionGroup("inner", [anyio.ClosedResourceError()]), anyio.BrokenResourceError()]), logging.WARNING),
-        (ExceptionGroup("outer", [ExceptionGroup("inner", [anyio.BrokenResourceError()]), RuntimeError("bug")]), logging.ERROR),
+        (
+            ExceptionGroup(
+                "outer",
+                [
+                    ExceptionGroup("inner", [anyio.ClosedResourceError()]),
+                    anyio.BrokenResourceError(),
+                ],
+            ),
+            logging.WARNING,
+        ),
+        (
+            ExceptionGroup(
+                "outer",
+                [
+                    ExceptionGroup("inner", [anyio.BrokenResourceError()]),
+                    RuntimeError("bug"),
+                ],
+            ),
+            logging.ERROR,
+        ),
     ):
         record = logging.LogRecord(
-            name="mcp.server.streamable_http_manager", level=logging.ERROR,
-            pathname="", lineno=0, msg="Stateless session crashed", args=(),
+            name="mcp.server.streamable_http_manager",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="Stateless session crashed",
+            args=(),
             exc_info=(type(error), error, None),
         )
         assert SessionDisconnectLogFilter().filter(record)

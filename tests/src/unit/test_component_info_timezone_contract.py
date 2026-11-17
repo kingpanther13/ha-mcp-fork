@@ -44,4 +44,3 @@ async def test_real_info_timezone_serves_metadata_with_no_rest_call(
     assert result["metadata"]["home_assistant_timezone"] == "America/New_York"
     # 00:06 UTC on June 12 = 20:06 EDT on June 11 (date rolls back crossing midnight).
     assert result["data"]["last_changed"] == "2026-06-11T20:06:00-04:00"
-

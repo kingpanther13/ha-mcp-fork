@@ -1,4 +1,5 @@
 """Run OAuth startup through its CLI and inspect the resulting real routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ from ha_mcp._vendor.fastmcp import FastMCP
 from ha_mcp.settings_ui import reset_http_settings_state
 
 PUBLIC_URL = "https://connector.example"
+
 
 async def started_oauth_server(
     monkeypatch: pytest.MonkeyPatch, **env: str | None
@@ -57,5 +59,3 @@ def route_paths(routes: list[BaseRoute]) -> list[str]:
         paths.append(getattr(route, "path", ""))
         paths.extend(route_paths(getattr(route, "routes", [])))
     return paths
-
-

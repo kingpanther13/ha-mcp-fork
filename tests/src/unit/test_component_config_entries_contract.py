@@ -326,7 +326,6 @@ async def test_a_single_entry_read_does_not_need_cores_type_match(
     """An explicit entry_id wins over a mismatching integration type filter."""
     _entry(hass, "h1", "hue")
 
-
     result = await ws_result(
         component_ws, WS_CONFIG_ENTRIES, entry_id="h1", type_filter=["service"]
     )

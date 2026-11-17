@@ -59,8 +59,6 @@ def make_mock_oidc_proxy(capture: dict) -> type:
     return MockOIDCProxy
 
 
-
-
 @pytest.fixture(autouse=True)
 def isolated_oidc_runtime():
     """Leave no startup state behind when the serve coroutine is intercepted."""

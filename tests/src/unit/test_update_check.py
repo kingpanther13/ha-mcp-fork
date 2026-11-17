@@ -60,7 +60,9 @@ class TestVersionCompare:
             ("7.9.0.dev1", "7.8.0", True),  # next minor's dev > prior final
         ],
     )
-    async def test_is_newer(self, monkeypatch, pypi: PyPI, latest: str, current: str, expected: bool) -> None:
+    async def test_is_newer(
+        self, monkeypatch, pypi: PyPI, latest: str, current: str, expected: bool
+    ) -> None:
         monkeypatch.setattr(update_check, "get_version", lambda: current)
         package = "ha-mcp-dev" if ".dev" in current else "ha-mcp"
         pypi.publish(package, latest)
@@ -78,7 +80,9 @@ class TestVersionCompare:
 class TestGetUpdateInfoGating:
     """No-op (no network) for the excluded cases."""
 
-    async def test_disabled_env_returns_none(self, monkeypatch: pytest.MonkeyPatch, pypi: PyPI) -> None:
+    async def test_disabled_env_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, pypi: PyPI
+    ) -> None:
         monkeypatch.setenv(update_check.DISABLE_ENV, "1")
         assert get_update_info() is None
 
@@ -345,11 +349,15 @@ class TestUpdateCommandHint:
         assert "pip install -U ha-mcp-dev" in update_command_hint("7.8.0.dev720")
 
     def test_stable_docker_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(update_check.os.path, "exists", lambda path: path == "/.dockerenv")
+        monkeypatch.setattr(
+            update_check.os.path, "exists", lambda path: path == "/.dockerenv"
+        )
         assert "ha-mcp:stable" in update_command_hint("7.9.0")
 
     def test_dev_docker_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(update_check.os.path, "exists", lambda path: path == "/.dockerenv")
+        monkeypatch.setattr(
+            update_check.os.path, "exists", lambda path: path == "/.dockerenv"
+        )
         assert "ha-mcp:dev" in update_command_hint("7.8.0.dev720")
 
     def test_addon_hint_points_to_supervisor_ui(
@@ -461,7 +469,9 @@ class TestReleaseNeedsNewerPython:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The new image ships its own Python; the pull is still the fix."""
-        monkeypatch.setattr(update_check.os.path, "exists", lambda path: path == "/.dockerenv")
+        monkeypatch.setattr(
+            update_check.os.path, "exists", lambda path: path == "/.dockerenv"
+        )
         info = UpdateInfo("9.1.2", "9.2.0", True, requires_python=">=3.14")
         assert update_check.required_python(info) is None
         assert "docker pull" in update_command_hint("9.1.2", info)

@@ -203,7 +203,9 @@ class TestFailurePaths:
 
     def test_missing_pin_is_refused(self, sandbox):
         target, _install = sandbox
-        (target.parent / "requirements.txt").write_text("# no pin here\n", encoding="utf-8")
+        (target.parent / "requirements.txt").write_text(
+            "# no pin here\n", encoding="utf-8"
+        )
 
         with pytest.raises(SystemExit, match="no 'websockets==<version>' pin"):
             vendor.main(target.parent)

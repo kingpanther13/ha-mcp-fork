@@ -14,8 +14,8 @@ import pytest
 
 from ha_mcp._vendor.fastmcp.tools import Tool
 from ha_mcp._vendor.mcp.types import ToolAnnotations
-from ha_mcp.transforms import DESKTOP_APPROVAL_NOTE, WriteToolNoteTransform
 from ha_mcp.client.rest_client import HomeAssistantClient
+from ha_mcp.transforms import DESKTOP_APPROVAL_NOTE, WriteToolNoteTransform
 
 from ._server_factory import make_server
 
@@ -125,7 +125,8 @@ async def test_server_installs_transform_after_lite_docstrings(
     from ha_mcp.server_tool_text import LITE_DOCSTRINGS
 
     server = make_server(
-        core_client, monkeypatch,
+        core_client,
+        monkeypatch,
         enabled_tool_modules="tools_config_dashboards",
         enable_lite_docstrings=True,
     )
