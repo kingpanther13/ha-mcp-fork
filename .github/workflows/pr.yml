@@ -72,11 +72,10 @@ jobs:
           path: |
             /tmp/*.txt
             /tmp/format.patch
-      - name: Affected unit tests
+      - name: Full unit and app tests
         if: always()
         run: |
-          sed -n '\|^tests/src/unit/test_.*\.py$|p; \|^tests/src/unit/policy/test_.*\.py$|p; \|^tests/src/unit/visibility/test_.*\.py$|p' /tmp/changed-python > /tmp/test-files
-          xargs -r uv run pytest -n 4 --tb=short --maxfail=0 -v < /tmp/test-files > /tmp/pytest.txt 2>&1
+          uv run pytest tests/src/unit/ tests/addon/ -n 4 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
