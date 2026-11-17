@@ -5,6 +5,9 @@ on:
       track_ref:
         required: true
         default: refactor/e2e-topology-runners
+      live:
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -40,7 +43,7 @@ jobs:
             /tmp/topology-lint.log
       - name: Scheduler and workflow regression tests
         if: ${{ !cancelled() }}
-        run: uv run pytest tests/src/unit/test_e2e_topology_scheduling.py tests/src/unit/test_e2e_lane_env_shape.py tests/src/unit/test_e2e_skip_gate_shape.py -q --maxfail=0
+        run: uv run pytest tests/src/unit/test_e2e_topology_scheduling.py tests/src/unit/test_e2e_lane_env_shape.py tests/src/unit/test_e2e_skip_gate_shape.py -q --maxfail=0 2>&1 | tee /tmp/topology-unit.log
       - name: Collect combined E2E suite
         if: ${{ !cancelled() }}
         env:
@@ -50,7 +53,7 @@ jobs:
           uv run pytest tests/src/e2e/ --collect-only -q > /tmp/topology-collection.log 2>&1
           tail -4 /tmp/topology-collection.log
       - name: Live container transition
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && inputs.live }}
         env:
           E2E_COMBINE_TOPOLOGIES: '1'
           HAMCP_ENV_FILE: tests/.env.test
@@ -62,4 +65,6 @@ jobs:
         if: always()
         with:
           name: topology-collection
-          path: /tmp/topology-collection.log
+          path: |
+            /tmp/topology-collection.log
+            /tmp/topology-unit.log
