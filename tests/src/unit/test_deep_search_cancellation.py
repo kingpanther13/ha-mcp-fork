@@ -39,7 +39,7 @@ async def test_helper_type_cancellation_propagates(
     )
 
     with (
-        patch.object(tools, "_search_helper_type", one_cancelled),
+        patch.object(tools, "search_helper_type", one_cancelled),
         pytest.raises(asyncio.CancelledError),
     ):
         await tools.deep_search("query", search_types=["helper"])
@@ -71,7 +71,7 @@ async def test_dashboard_cancellation_propagates(
     )
 
     with (
-        patch.object(tools, "_search_one_dashboard", one_cancelled),
+        patch.object(tools, "search_one_dashboard", one_cancelled),
         pytest.raises(asyncio.CancelledError),
     ):
         await tools.deep_search("query", search_types=["dashboard"])
@@ -100,7 +100,7 @@ async def test_flow_helper_cancellation_propagates(
     )
 
     with (
-        patch.object(tools, "_score_flow_entry", one_cancelled),
+        patch.object(tools, "score_flow_entry", one_cancelled),
         pytest.raises(asyncio.CancelledError),
     ):
         await tools.deep_search("query", search_types=["helper"])

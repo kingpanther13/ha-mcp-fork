@@ -382,7 +382,7 @@ from .logbook import _do_logbook_events, _logbook_events_prep
 from .lookups import (
     _blueprint_get_prep,
     _do_blueprint_get,
-    _do_device_get,
+    do_device_get,
     _do_device_list,
     _do_entity_enrich,
     _do_entity_lookup,
@@ -390,7 +390,7 @@ from .lookups import (
     _do_registry_lookup,
 )
 from .oauth_callbacks import command_specs as _oauth_callback_specs
-from .overview import _do_helpers_list, _do_overview, _do_states, _helpers_list_prep
+from .overview import do_helpers_list, _do_overview, _do_states, _helpers_list_prep
 from .registries import _do_registries, _do_registry_fields
 from .schemas import (
     _blueprint_get_schema,
@@ -423,10 +423,10 @@ from .schemas import (
     _trace_context_schema,
 )
 from .seam import PreSerializedResult
-from .search import _do_search, _search_prep
+from .search import do_search, _search_prep
 from .services import _do_reference_data, _do_services_list, _services_list_prep
 from .system import (
-    _do_info,
+    do_info,
     _do_server_entry,
     _do_server_entry_update,
     _do_system_snapshot,
@@ -493,13 +493,13 @@ def _command_specs() -> list[tuple[dict[Any, Any], Any, Any]]:
     ``_do_*`` function a pure, synchronous in-memory read.
     """
     return [
-        (_info_schema(), lambda hass, msg: _do_info(hass), None),
-        (_search_schema(), _do_search, _search_prep),
+        (_info_schema(), lambda hass, msg: do_info(hass), None),
+        (_search_schema(), do_search, _search_prep),
         (_overview_schema(), _do_overview, None),
-        (_helpers_list_schema(), _do_helpers_list, _helpers_list_prep),
+        (_helpers_list_schema(), do_helpers_list, _helpers_list_prep),
         (_states_schema(), _do_states, None),
         (_blueprint_get_schema(), _do_blueprint_get, _blueprint_get_prep),
-        (_device_get_schema(), _do_device_get, None),
+        (_device_get_schema(), do_device_get, None),
         (_device_list_schema(), _do_device_list, None),
         (_entity_enrich_schema(), _do_entity_enrich, None),
         (_exposure_schema(), _do_exposure, None),

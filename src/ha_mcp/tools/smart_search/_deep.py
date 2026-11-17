@@ -350,7 +350,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
                 (
                     results["dashboards"],
                     dashboard_failed,
-                ) = await self._search_dashboards_surface(
+                ) = await self.search_dashboards_surface(
                     query_lower,
                     exact_match,
                     semaphore,
@@ -787,7 +787,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             out[uid] = (entity_id, current_name)
         return out
 
-    async def _search_helper_type(
+    async def search_helper_type(
         self,
         helper_type: str,
         query_lower: str,
@@ -941,7 +941,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         failed_type_count = 0
         type_results = await asyncio.gather(
             *[
-                self._search_helper_type(
+                self.search_helper_type(
                     ht,
                     query_lower,
                     exact_match,
@@ -981,7 +981,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
         failed_type_count += flow_failed_count
         return results, failed_type_count, unsearched
 
-    async def _search_dashboards_surface(
+    async def search_dashboards_surface(
         self,
         query_lower: str,
         exact_match: bool,
@@ -1083,7 +1083,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
             }
         return list(records.values()), failed
 
-    async def _search_one_dashboard(
+    async def search_one_dashboard(
         self,
         url_path: str,
         title: str,
@@ -1202,7 +1202,7 @@ class DeepSearchMixin(SceneSearchMixin, FlowHelperSearchMixin):
 
             dash_results = await asyncio.gather(
                 *[
-                    self._search_one_dashboard(
+                    self.search_one_dashboard(
                         url_path, title, query_lower, exact_match, semaphore
                     )
                     for url_path, title in dashboards_to_search

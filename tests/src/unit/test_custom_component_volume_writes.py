@@ -49,8 +49,8 @@ async def write_file(hass: HomeAssistant, volume_root: Path) -> FileService:
 def mounts(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     """Mount points as /proc/self/mountinfo lists them, inside a container."""
     mounted: set[str] = set()
-    monkeypatch.setattr(volume_mounts, "_in_container", lambda: True)
-    monkeypatch.setattr(volume_mounts, "_mount_points", lambda: mounted)
+    monkeypatch.setattr(volume_mounts, "in_container", lambda: True)
+    monkeypatch.setattr(volume_mounts, "mount_points", lambda: mounted)
     return mounted
 
 
@@ -141,7 +141,7 @@ async def test_core_install_writes_to_an_existing_plain_volume(
     write_file: FileService,
 ) -> None:
     # No container: /share on a Core (venv) install is the host's own folder.
-    monkeypatch.setattr(volume_mounts, "_in_container", lambda: False)
+    monkeypatch.setattr(volume_mounts, "in_container", lambda: False)
     await hass.async_add_executor_job(volume_root.mkdir)
     target = volume_root / "x.txt"
 

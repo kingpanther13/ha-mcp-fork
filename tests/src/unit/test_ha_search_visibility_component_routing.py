@@ -247,10 +247,17 @@ async def test_a_failing_component_search_falls_back_and_keeps_the_filter(
     core_client: HomeAssistantClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(*args: Any, **kwargs: Any) -> Any:
-        raise HomeAssistantError("search failed")
+    read_states = hass.states.async_all
+    failed = False
 
-    monkeypatch.setattr("custom_components.ha_mcp_tools.websocket_api._do_search", fail)
+    def fail_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise HomeAssistantError("search failed")
+        return read_states(*args, **kwargs)
+
+    monkeypatch.setattr(hass.states, "async_all", fail_once)
     component_ws_api.async_register_commands(hass)
     _deny_kitchen_light(tmp_path)
 

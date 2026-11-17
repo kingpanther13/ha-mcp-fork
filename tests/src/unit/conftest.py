@@ -273,7 +273,7 @@ def _restore_fastmcp_host_origin_guard():
     """Restore fastmcp's Host/Origin guard env var + setting after each test.
 
     ``transport_security.ensure_host_origin_guard_default_off`` runs for real in
-    server-creation paths some unit tests exercise (e.g. via ``_create_server``)
+    server-creation paths some unit tests exercise (e.g. via ``create_server``)
     and writes ``os.environ`` and the fastmcp settings singleton directly, which
     ``monkeypatch`` cannot revert. Snapshot and restore both so those mutations do
     not leak across tests once fastmcp exposes the guard (>= 3.4.3).
@@ -335,7 +335,7 @@ def opened_flows(
     from ha_mcp.tools import integration_flow_steps
 
     flows: dict[str, tuple[str, str | None]] = {}
-    monkeypatch.setattr(integration_flow_steps, "_opened_flows", flows)
+    monkeypatch.setattr(integration_flow_steps, "opened_flows", flows)
     return flows
 
 

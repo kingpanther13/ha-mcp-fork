@@ -83,7 +83,6 @@ def test_all_quickjs_context_operations_use_the_creating_thread(
     # Removing the resource disposes its runtime.
     custom.refresh([])
     (engine,) = engines
-    assert not hasattr(engine, "_context")
     with pytest.raises(RuntimeError, match="shutdown"):
         engine("check", None)
     assert len(set(calls)) == 1

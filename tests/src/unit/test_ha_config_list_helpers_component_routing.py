@@ -132,7 +132,7 @@ async def _register_failing_helpers_list(
         raise HomeAssistantError("helpers_list failed")
 
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.websocket_api._do_helpers_list", fail
+        "custom_components.ha_mcp_tools.websocket_api.do_helpers_list", fail
     )
     component_ws_api.async_register_commands(hass)
 
@@ -146,7 +146,7 @@ async def _register_helpers_list_without_coverage(
         return {"helpers": [], "count": 0}
 
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.websocket_api._do_helpers_list", older
+        "custom_components.ha_mcp_tools.websocket_api.do_helpers_list", older
     )
     component_ws_api.async_register_commands(hass)
 
@@ -652,7 +652,7 @@ async def test_all_types_reads_the_helper_flows_afresh(
     as missing from the component's listing."""
     await setup_every_simple_type(hass)
     monkeypatch.setattr(
-        "ha_mcp.tools.helper_flows._fetch_helper_flow_types",
+        "ha_mcp.tools.helper_flows.fetch_helper_flow_types",
         AsyncMock(side_effect=[CORE_HELPER_FLOWS | {"gone_helper"}, CORE_HELPER_FLOWS]),
     )
     assert "gone_helper" in await helper_flows.helper_flow_types(client)
@@ -667,7 +667,7 @@ async def test_all_types_with_an_unreadable_helper_flow_list_is_a_connection_err
 ) -> None:
     await setup_every_simple_type(hass)
     monkeypatch.setattr(
-        "ha_mcp.tools.helper_flows._fetch_helper_flow_types",
+        "ha_mcp.tools.helper_flows.fetch_helper_flow_types",
         AsyncMock(side_effect=HomeAssistantConnectionError("flow_handlers down")),
     )
     socket = await pooled_socket(client)

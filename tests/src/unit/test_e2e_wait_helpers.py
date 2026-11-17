@@ -4,20 +4,20 @@ The test-side migration in #1382 added a WS-event-driven path to three
 existing helpers (``wait_for_entity_state``, ``wait_for_entity_registration``,
 ``wait_for_state_change``). The ~85 existing e2e call sites exercise the
 **WS happy path** in CI, but the REST fallback only fires when
-``_open_ha_ws`` raises — which a healthy testcontainer never does. These
+``open_ha_ws`` raises — which a healthy testcontainer never does. These
 unit tests pin the fallback branches and the timeout-budget contract
 without standing up a real HA.
 
 Coverage:
 
-- Each migrated helper takes the REST fallback when ``_open_ha_ws`` raises
+- Each migrated helper takes the REST fallback when ``open_ha_ws`` raises
   a transport error, returns the right type, and respects the remaining
   timeout budget after the WS path's elapsed time.
 - ``_WsPathUnavailable.elapsed`` is honored so total wall-clock stays
   bounded by the original ``timeout`` (pr-test-analyzer finding).
-- ``_open_ha_ws`` ``RuntimeError`` propagates instead of degrading silently
+- ``open_ha_ws`` ``RuntimeError`` propagates instead of degrading silently
   (silent-failure-hunter finding).
-- ``_ws_wait_for_predicate`` returns ``None`` on pure WS timeout (terminal),
+- ``ws_wait_for_predicate`` returns ``None`` on pure WS timeout (terminal),
   raises ``_WsPathUnavailable`` on handshake/transport failure (recoverable
   via REST).
 """
@@ -67,24 +67,24 @@ def _mcp_client_returning(state_value: str | None) -> MagicMock:
 
 @pytest.fixture
 def force_ws_unavailable(monkeypatch):
-    """Make ``_open_ha_ws`` raise ``OSError`` so every helper takes the
+    """Make ``open_ha_ws`` raise ``OSError`` so every helper takes the
     REST fallback path. Mirrors a CI env without HA WS access."""
 
     async def _raise(*_args, **_kwargs):
         raise OSError("connection refused")
 
-    monkeypatch.setattr(wait_helpers, "_open_ha_ws", _raise)
+    monkeypatch.setattr(wait_helpers, "open_ha_ws", _raise)
 
 
 @pytest.fixture
 def force_ws_runtime_error(monkeypatch):
-    """Make ``_open_ha_ws`` raise ``RuntimeError`` to assert the
+    """Make ``open_ha_ws`` raise ``RuntimeError`` to assert the
     config-failure path does NOT degrade to REST — it must propagate."""
 
     async def _raise(*_args, **_kwargs):
         raise RuntimeError("HOMEASSISTANT_URL unset")
 
-    monkeypatch.setattr(wait_helpers, "_open_ha_ws", _raise)
+    monkeypatch.setattr(wait_helpers, "open_ha_ws", _raise)
 
 
 class TestWsPathUnavailableContract:
@@ -100,7 +100,7 @@ class TestWsPathUnavailableContract:
 
 
 class TestRestFallbackOnHandshakeFailure:
-    """When ``_open_ha_ws`` raises a transport error, each migrated
+    """When ``open_ha_ws`` raises a transport error, each migrated
     helper must fall back to REST polling and return the right type."""
 
     async def test_entity_state_falls_back_to_rest_and_succeeds(
@@ -161,7 +161,7 @@ class TestRestFallbackOnHandshakeFailure:
 
 
 class TestRuntimeErrorPropagation:
-    """``RuntimeError`` from ``_open_ha_ws`` (missing URL/token, bad
+    """``RuntimeError`` from ``open_ha_ws`` (missing URL/token, bad
     auth, malformed handshake) MUST propagate, not silently degrade —
     silent-failure-hunter finding."""
 
@@ -179,7 +179,7 @@ class TestRuntimeErrorPropagation:
 
     async def test_state_change_propagates_runtime_error(self, force_ws_runtime_error):
         # Initial state fetch happens before the WS path, so it succeeds.
-        # Then _open_ha_ws raises RuntimeError on the WS attempt.
+        # Then open_ha_ws raises RuntimeError on the WS attempt.
         client = MagicMock()
         client.call_tool = AsyncMock(
             return_value=_mcp_result('{"data": {"entity_id": "x", "state": "off"}}')
@@ -197,11 +197,11 @@ class TestTimeoutBudgetDeduction:
         """If the WS path raises ``_WsPathUnavailable(elapsed=N)``, the
         REST fallback budget must be ``timeout - N``, capped at zero."""
 
-        # Stub _ws_wait_for_predicate to raise with elapsed=0.8 of a 1s budget.
+        # Stub ws_wait_for_predicate to raise with elapsed=0.8 of a 1s budget.
         async def fake_predicate(*_args, **_kwargs):
             raise _WsPathUnavailable("simulated mid-wait drop", elapsed=0.8)
 
-        monkeypatch.setattr(wait_helpers, "_ws_wait_for_predicate", fake_predicate)
+        monkeypatch.setattr(wait_helpers, "ws_wait_for_predicate", fake_predicate)
 
         # Sample never resolves — REST loop runs until budget exhausts.
         client = _mcp_client_returning("off")
@@ -229,7 +229,7 @@ class TestTimeoutBudgetDeduction:
         async def fake_predicate(*_args, **_kwargs):
             raise _WsPathUnavailable("elapsed exceeded timeout", elapsed=5.0)
 
-        monkeypatch.setattr(wait_helpers, "_ws_wait_for_predicate", fake_predicate)
+        monkeypatch.setattr(wait_helpers, "ws_wait_for_predicate", fake_predicate)
         client = _mcp_client_returning("on")
 
         import time

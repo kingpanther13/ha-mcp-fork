@@ -23,7 +23,7 @@ def _no_manifest_pin(monkeypatch):
     patch it via ``_paired``; ``TestPairedServerRequirement`` calls the real
     reader."""
     monkeypatch.setattr(
-        es, "_async_paired_server_requirement", AsyncMock(return_value=None)
+        es, "async_paired_server_requirement", AsyncMock(return_value=None)
     )
 
 
