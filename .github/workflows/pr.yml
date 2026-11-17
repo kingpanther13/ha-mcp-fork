@@ -26,8 +26,8 @@ jobs:
       - name: Format and lint changed Python files
         run: |
           mapfile -t changed < <(git diff --name-only d46b3c8491a97064748f04d6f36368aafc5a31dd HEAD -- '*.py')
-          uv run ruff check --fix "${changed[@]}"
-          uv run ruff format "${changed[@]}"
+          uv run ruff format "${changed[@]}" 2>&1 | tee /tmp/topology-lint.log
+          uv run ruff check --fix "${changed[@]}" 2>&1 | tee -a /tmp/topology-lint.log
       - name: Save formatting patch
         if: always()
         run: git diff > /tmp/topology-format.patch
@@ -35,7 +35,9 @@ jobs:
         if: always()
         with:
           name: topology-format
-          path: /tmp/topology-format.patch
+          path: |
+            /tmp/topology-format.patch
+            /tmp/topology-lint.log
       - name: Scheduler and workflow regression tests
         if: ${{ !cancelled() }}
         run: uv run pytest tests/src/unit/test_e2e_topology_scheduling.py tests/src/unit/test_e2e_lane_env_shape.py tests/src/unit/test_e2e_skip_gate_shape.py -q --maxfail=0
