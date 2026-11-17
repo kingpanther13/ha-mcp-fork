@@ -274,20 +274,26 @@ class _FileJobs:
             self.release.set()
 
 
+def _service_file(hass: HomeAssistant, data: bytes) -> Path:
+    directory = Path(hass.config.path("cards"))
+    directory.mkdir(exist_ok=True)
+    return _file(directory, data)
+
+
 class TestEditFileService:
     async def test_reports_the_applied_edits(
         self, hass: HomeAssistant, tmp_path: Path
     ) -> None:
-        target = _file(tmp_path, b"one two\n")
-        call = await make_file_service(hass, str(tmp_path))
+        target = _service_file(hass, b"one two\n")
+        call = await make_file_service(hass, "cards")
 
         response = await call(
             component.SERVICE_EDIT_FILE,
-            {"path": str(target), "edits": [_edit("one", "1"), _edit("two", "2")]},
+            {"path": "cards/card.js", "edits": [_edit("one", "1"), _edit("two", "2")]},
         )
 
         assert response["success"] is True
-        assert response["path"] == str(target)
+        assert response["path"] == "cards/card.js"
         assert response["edits_applied"] == 2
         assert target.read_bytes() == b"1 2\n"
 
@@ -295,11 +301,11 @@ class TestEditFileService:
     async def test_refused_caller_changes_nothing(
         self, hass: HomeAssistant, tmp_path: Path, bad_token: bool
     ) -> None:
-        target = _file(tmp_path, b"one\n")
+        target = _service_file(hass, b"one\n")
         call = await make_file_service(
-            hass, str(tmp_path if bad_token else tmp_path / "allowed")
+            hass, "cards" if bad_token else "allowed"
         )
-        data = {"path": str(target), "edits": [_edit("one", "1")]}
+        data = {"path": "cards/card.js", "edits": [_edit("one", "1")]}
         if bad_token:
             response = await hass.services.async_call(
                 component.DOMAIN,
@@ -321,19 +327,19 @@ class TestEditFileService:
         monkeypatch: pytest.MonkeyPatch, other: str,
     ) -> None:
         """An edit's read-modify-write shares the lock with all file mutations."""
-        target = _file(tmp_path, b"one two\n")
-        call = await make_file_service(hass, str(tmp_path))
+        target = _service_file(hass, b"one two\n")
+        call = await make_file_service(hass, "cards")
         jobs = _FileJobs(hass, monkeypatch)
-        first = asyncio.create_task(call(
-            component.SERVICE_EDIT_FILE, {"path": str(target), "edits": [_edit("one", "1")]}
+        first = asyncio.ensure_future(call(
+            component.SERVICE_EDIT_FILE, {"path": "cards/card.js", "edits": [_edit("one", "1")]}
         ))
         await asyncio.wait_for(jobs.entered.wait(), 2)
-        data: dict[str, Any] = {"path": str(target)}
+        data: dict[str, Any] = {"path": "cards/card.js"}
         if other == "edit_file":
             data["edits"] = [_edit("two", "2")]
         elif other == "write_file":
             data.update(content="written\n", overwrite=True)
-        following = asyncio.create_task(call(other, data))
+        following = asyncio.ensure_future(call(other, data))
         await jobs.assert_serialized()
         responses = await asyncio.gather(first, following)
 
@@ -348,7 +354,7 @@ class TestEditFileService:
         self, hass: HomeAssistant, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A cancelled executor caller cannot release the shared write lock early."""
-        target = _file(tmp_path, b"one two\n")
+        target = _service_file(hass, b"one two\n")
         jobs = _FileJobs(hass, monkeypatch)
         cancelled = asyncio.create_task(file_ops.run_file_job(
             hass, edit_file_sync, target, [_edit("one", "1")]
@@ -361,9 +367,10 @@ class TestEditFileService:
         await jobs.attempted.wait()
         cancelled.cancel()
         await jobs.assert_serialized()
-        outcome, response = await asyncio.gather(cancelled, following, return_exceptions=True)
+        outcomes = await asyncio.gather(cancelled, following, return_exceptions=True)
 
-        assert isinstance(outcome, asyncio.CancelledError)
+        assert isinstance(outcomes[0], asyncio.CancelledError)
+        response = outcomes[1]
         assert isinstance(response, dict)
         assert "_error" not in response
         assert target.read_bytes() == b"1 2\n"
@@ -371,12 +378,12 @@ class TestEditFileService:
     async def test_refusal_tells_the_model_which_edit_failed(
         self, hass: HomeAssistant, tmp_path: Path
     ) -> None:
-        target = _file(tmp_path, b"one\n")
-        call = await make_file_service(hass, str(tmp_path))
+        target = _service_file(hass, b"one\n")
+        call = await make_file_service(hass, "cards")
 
         response = await call(
             component.SERVICE_EDIT_FILE,
-            {"path": str(target), "edits": [_edit("one", "1"), _edit("missing", "x")]},
+            {"path": "cards/card.js", "edits": [_edit("one", "1"), _edit("missing", "x")]},
         )
 
         assert response["success"] is False

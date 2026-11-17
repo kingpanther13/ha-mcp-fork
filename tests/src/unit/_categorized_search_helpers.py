@@ -6,24 +6,22 @@ proxy category validation, dispatch execution, and SearchKeywordsTransform.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ha_mcp._vendor.fastmcp import Client, FastMCP
 from ha_mcp._vendor.fastmcp.tools import Tool
 from ha_mcp._vendor.mcp.types import ToolAnnotations
+from ha_mcp.config import get_global_settings
 
 from ._search_mode_connection import search_connection as search_connection
 
 
 @pytest.fixture
 def read_only_on(monkeypatch):
-    monkeypatch.setattr(
-        "ha_mcp.read_only.get_global_settings",
-        lambda: SimpleNamespace(read_only_mode=True),
-    )
+    monkeypatch.setattr(get_global_settings(), "read_only_mode", True)
 
 
 def _make_tool(
@@ -68,17 +66,16 @@ async def proxy_function(transform, category):
 
 
 async def render_search_results(transform, tools):
-    """Read each compact hit through the generated search tool."""
-    found = []
+    """Read compact hits from one real MCP search over the complete catalog."""
+    mcp = FastMCP("categorized-search")
     for tool in tools:
-        # A singleton query checks formatting independently of BM25 ranking.
-        set_catalog(transform, [tool])
-        search = await transform.get_tool(
-            "ha_search_tools", AsyncMock(return_value=None)
+        mcp.add_tool(tool)
+    mcp.add_transform(transform)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "ha_search_tools", {"query": " ".join(tool.name for tool in tools)}
         )
-        assert search is not None
-        found.extend(await search.fn(query=tool.name, ctx=_make_ctx()))
-    return found
+    return list(result.data)
 
 
 def _make_ctx(call_tool_return: Any = "tool_result"):

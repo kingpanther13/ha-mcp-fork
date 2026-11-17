@@ -190,8 +190,7 @@ async def test_the_search_tool_points_at_the_skill_tool_only_while_it_is_served(
     server = make_server(
         core_client, monkeypatch, enable_tool_search=True, enable_strict_mandatory_bps=False
     )
-    tool = await server.mcp.get_tool("ha_search_tools")
-    assert tool is not None
+    tool = next(tool for tool in await server.mcp.list_tools() if tool.name == "ha_search_tools")
     description = tool.description
     if hidden:
         assert SKILL_TOOL_NAME not in description

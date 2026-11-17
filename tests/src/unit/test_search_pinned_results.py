@@ -69,9 +69,9 @@ async def test_cached_search_uses_current_tool_schema(reverse_catalog: bool) -> 
                 }
             }
         )
-        mcp.remove_tool("ha_lookup")
-        if reverse_catalog:
-            mcp.remove_tool("ha_unrelated")
+        mcp.local_provider.remove_tool("ha_lookup")
+        if not reverse_catalog:
+            mcp.local_provider.remove_tool("ha_unrelated")
             mcp.add_tool(updated)
             mcp.add_tool(other)
         else:
@@ -79,6 +79,7 @@ async def test_cached_search_uses_current_tool_schema(reverse_catalog: bool) -> 
         after = await client.call_tool(
             "ha_search_tools", {"query": "look up an entity"}
         )
+    assert before.data[0]["name"] == "ha_lookup"
     assert after.data[0]["name"] == "ha_lookup"
     assert after.data[0]["params"] != before.data[0]["params"]
     assert "[]" in after.data[0]["params"]

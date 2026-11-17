@@ -8,9 +8,9 @@ and the compact summary the tool returns.
 from typing import Any
 
 import pytest
+from aiohttp import web
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from aiohttp import web
 
 from ._tool_errors import error_body, error_of
 from ._tools_addons_core import INGRESS_TOKEN, SLUG, Route, manage
@@ -26,19 +26,28 @@ def _registered_tool(app_route: Route):
 
 
 async def _patch_array(
-    route: Route, items: list[Any], operations: list[dict[str, Any]], *,
-    id_field: str = "id", posted: list[Any] | None = None,
+    route: Route,
+    items: list[Any],
+    operations: list[dict[str, Any]],
+    *,
+    id_field: str = "id",
+    posted: list[Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Apply operations to an array served over the real app HTTP route."""
     route.target.body = items
     try:
         result = await manage(
-            route.client, slug=SLUG, path="/flows",
+            route.client,
+            slug=SLUG,
+            path="/flows",
             array_patch={"id_field": id_field, "operations": operations},
         )
     finally:
-        bodies = [request.body for request in route.target.requests
-                  if request.method == "POST"]
+        bodies = [
+            request.body
+            for request in route.target.requests
+            if request.method == "POST"
+        ]
         if posted is not None:
             posted.extend(bodies)
     [body] = bodies
@@ -441,10 +450,14 @@ class TestHaManageAddonArrayPatchDispatch:
         # item proves the internal GET read the whole array.
         route.target.body = [{"id": f"n{i}", "name": "old"} for i in range(2000)]
         result = await manage(
-            route.client, slug=SLUG, path="/flows",
-            array_patch={"operations": [
-                {"op": "patch", "id": "n1999", "patches": {"name": "new"}},
-            ]},
+            route.client,
+            slug=SLUG,
+            path="/flows",
+            array_patch={
+                "operations": [
+                    {"op": "patch", "id": "n1999", "patches": {"name": "new"}},
+                ]
+            },
         )
         get, post = route.target.requests
         assert [get.method, post.method] == ["GET", "POST"]
@@ -458,8 +471,12 @@ class TestHaManageAddonArrayPatchDispatch:
         route = _registered_tool
         route.target.body = {"not": "an array"}
         with pytest.raises(ToolError) as exc:
-            await manage(route.client, slug=SLUG, path="/flows",
-                         array_patch={"operations": [{"op": "delete", "id": "x"}]})
+            await manage(
+                route.client,
+                slug=SLUG,
+                path="/flows",
+                array_patch={"operations": [{"op": "delete", "id": "x"}]},
+            )
         assert error_of(exc)["code"] == "VALIDATION_FAILED"
         assert [request.method for request in route.target.requests] == ["GET"]
 
@@ -477,19 +494,32 @@ class TestHaManageAddonArrayPatchDispatch:
 
         monkeypatch.setattr(route.target, "handle", respond)
         with pytest.raises(ToolError):
-            await manage(route.client, slug=SLUG, path="/flows",
-                         array_patch={"operations": [
-                             {"op": "patch", "id": "n1", "patches": {"name": "new"}},
-                         ]})
+            await manage(
+                route.client,
+                slug=SLUG,
+                path="/flows",
+                array_patch={
+                    "operations": [
+                        {"op": "patch", "id": "n1", "patches": {"name": "new"}},
+                    ]
+                },
+            )
         assert [r.method for r in route.target.requests] == (
             ["GET"] if failure == "get" else ["GET", "POST"]
         )
 
-    @pytest.mark.parametrize("extra", [
-        {"websocket": True}, {"body": {"foo": "bar"}}, {"limit": 10},
-        {"array_patch": {"operations": []}},
-    ])
-    async def test_dispatch_rejects_conflicting_or_empty_modes(self, _registered_tool, extra):
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"websocket": True},
+            {"body": {"foo": "bar"}},
+            {"limit": 10},
+            {"array_patch": {"operations": []}},
+        ],
+    )
+    async def test_dispatch_rejects_conflicting_or_empty_modes(
+        self, _registered_tool, extra
+    ):
         route = _registered_tool
         kwargs = {"array_patch": {"operations": [{"op": "delete", "id": "x"}]}, **extra}
         with pytest.raises(ToolError) as exc:
@@ -500,25 +530,50 @@ class TestHaManageAddonArrayPatchDispatch:
 
 class TestHaManageAddonRequestHeaders:
     @pytest.mark.parametrize("array_patch", [False, True])
-    async def test_caller_headers_reach_every_app_request(self, _registered_tool, array_patch):
+    async def test_caller_headers_reach_every_app_request(
+        self, _registered_tool, array_patch
+    ):
         route = _registered_tool
         route.target.body = [{"id": "n1", "name": "old"}]
-        extra = {"array_patch": {"operations": [
-            {"op": "patch", "id": "n1", "patches": {"name": "new"}},
-        ]}} if array_patch else {}
-        await manage(route.client, slug=SLUG, path="/flows",
-                     request_headers={"Node-RED-Deployment-Type": "full"}, **extra)
+        extra = (
+            {
+                "array_patch": {
+                    "operations": [
+                        {"op": "patch", "id": "n1", "patches": {"name": "new"}},
+                    ]
+                }
+            }
+            if array_patch
+            else {}
+        )
+        await manage(
+            route.client,
+            slug=SLUG,
+            path="/flows",
+            request_headers={"Node-RED-Deployment-Type": "full"},
+            **extra,
+        )
         assert len(route.target.requests) == (2 if array_patch else 1)
-        assert all(r.headers["Node-RED-Deployment-Type"] == "full"
-                   for r in route.target.requests)
+        assert all(
+            r.headers["Node-RED-Deployment-Type"] == "full"
+            for r in route.target.requests
+        )
 
-    @pytest.mark.parametrize("kwargs", [
-        {"path": "/logs", "websocket": True}, {"options": {"log_level": "debug"}},
-    ])
-    async def test_headers_are_rejected_outside_http_proxy_mode(self, _registered_tool, kwargs):
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"path": "/logs", "websocket": True},
+            {"options": {"log_level": "debug"}},
+        ],
+    )
+    async def test_headers_are_rejected_outside_http_proxy_mode(
+        self, _registered_tool, kwargs
+    ):
         route = _registered_tool
         with pytest.raises(ToolError) as exc:
-            await manage(route.client, slug=SLUG, request_headers={"X-Custom": "v"}, **kwargs)
+            await manage(
+                route.client, slug=SLUG, request_headers={"X-Custom": "v"}, **kwargs
+            )
         assert error_of(exc)["code"] == "VALIDATION_FAILED"
         assert not route.target.requests
 

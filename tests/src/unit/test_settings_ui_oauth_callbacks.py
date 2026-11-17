@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,6 +19,7 @@ from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.client.websocket_client import get_websocket_client
 from ha_mcp.settings_ui import build_settings_handlers
 
+from ._client_spies import sent_commands
 from ._server_entry import add_server_entry
 
 CALLBACK = "https://chatgpt.example/cb"
@@ -45,15 +47,14 @@ async def _call(client: HomeAssistantClient, name: str, body: Any = None) -> tup
 
 @pytest.fixture
 async def component_commands(
-    core_client: HomeAssistantClient, monkeypatch: pytest.MonkeyPatch
-) -> AsyncMock:
+    core_client: HomeAssistantClient,
+) -> AsyncIterator[AsyncMock]:
     """Observe commands while keeping every reply on the real Core transport."""
     ws = await get_websocket_client(
         url=core_client.base_url, token=core_client.token, verify_ssl=core_client.verify_ssl
     )
-    commands = AsyncMock(wraps=ws.send_command)
-    monkeypatch.setattr(ws, "send_command", commands)
-    return commands
+    with sent_commands(ws) as commands:
+        yield commands
 
 
 async def test_other_install_types_do_not_offer_the_editor(

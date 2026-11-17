@@ -23,10 +23,35 @@ _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
     """Nodes in one lexical scope, leaving nested bodies to their own scope."""
-    for child in ast.iter_child_nodes(scope):
+    children: Iterator[ast.AST]
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        children = iter(scope.body)
+    elif isinstance(scope, ast.Lambda):
+        children = iter([scope.body])
+    else:
+        children = ast.iter_child_nodes(scope)
+    for child in children:
         yield child
         if not isinstance(child, _SCOPES):
             yield from _nodes(child)
+
+
+def _headers(scope: ast.AST) -> Iterator[ast.expr]:
+    """Decorators, bases and defaults execute before entering the new scope."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield from scope.decorator_list
+    if isinstance(scope, ast.ClassDef):
+        yield from scope.bases
+        yield from (keyword.value for keyword in scope.keywords)
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        yield from scope.args.defaults
+        yield from (value for value in scope.args.kw_defaults if value is not None)
+        yield from (
+            node.annotation for node in ast.walk(scope.args)
+            if isinstance(node, ast.arg) and node.annotation is not None
+        )
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.returns is not None:
+        yield scope.returns
 
 
 def _dotted(node: ast.expr, aliases: dict[str, str]) -> str:
@@ -56,24 +81,30 @@ def _strings(node: ast.expr | None, values: dict[str, set[str]]) -> set[str]:
     if isinstance(node, ast.Name):
         return values.get(node.id, set())
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _joined([
-            _strings(node.left, values) or {"?"},
-            _strings(node.right, values) or {"?"},
-        ])
+        return _joined(
+            [
+                _strings(node.left, values) or {"?"},
+                _strings(node.right, values) or {"?"},
+            ]
+        )
     if isinstance(node, ast.JoinedStr):
-        return _joined([
-            _strings(part.value, values) or {"?"}
-            if isinstance(part, ast.FormattedValue)
-            else _strings(part, values)
-            for part in node.values
-        ])
+        return _joined(
+            [
+                _strings(part.value, values) or {"?"}
+                if isinstance(part, ast.FormattedValue)
+                else _strings(part, values)
+                for part in node.values
+            ]
+        )
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         return set().union(*(_strings(item, values) for item in node.elts))
     if isinstance(node, ast.Dict):
-        return set().union(*(
-            _strings(value if key is None else key, values)
-            for key, value in zip(node.keys, node.values, strict=True)
-        ))
+        return set().union(
+            *(
+                _strings(value if key is None else key, values)
+                for key, value in zip(node.keys, node.values, strict=True)
+            )
+        )
     return set()
 
 
@@ -84,8 +115,14 @@ def _bindings(
     aliases = dict(parent_aliases)
     nodes = list(_nodes(scope))
     local_names = {
-        node.id for node in nodes if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-    } | {node.arg for node in nodes if isinstance(node, ast.arg)}
+        node.id
+        for node in nodes
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        parameters = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs,
+                      scope.args.vararg, scope.args.kwarg]
+        local_names.update(parameter.arg for parameter in parameters if parameter is not None)
     for name in local_names:
         values.pop(name, None)
         aliases.pop(name, None)
@@ -132,9 +169,15 @@ def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr]]:
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     yield target.id, node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        ):
             yield node.target.id, node.value
-        elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(
+            node.target, ast.Name
+        ):
             yield node.target.id, node.iter
 
 
@@ -158,11 +201,21 @@ def _targets(
         return _strings(target, values)
     if name.endswith("patch.multiple"):
         keys = {item.arg for item in call.keywords if item.arg is not None}
-        keys.update(set().union(*(_strings(item.value, values) for item in call.keywords if item.arg is None)))
+        keys.update(
+            set().union(
+                *(
+                    _strings(item.value, values)
+                    for item in call.keywords
+                    if item.arg is None
+                )
+            )
+        )
         return _strings(target, values) | (set() if _own_object(target) else keys)
     if name.endswith("patch.object"):
         return _strings(target, values) | (
-            set() if _own_object(target) else _strings(_argument(call, 1, "attribute"), values)
+            set()
+            if _own_object(target)
+            else _strings(_argument(call, 1, "attribute"), values)
         )
     if operation in {"getattr", "hasattr", "setattr", "delattr"}:
         if _own_object(target):
@@ -170,7 +223,8 @@ def _targets(
         # pytest.MonkeyPatch also accepts a fully qualified string as its
         # first argument; then its second argument is the replacement value.
         if operation in {"setattr", "delattr"} and name not in {
-            operation, f"builtins.{operation}"
+            operation,
+            f"builtins.{operation}",
         }:
             dotted = _strings(target, values)
             if dotted:
@@ -182,7 +236,9 @@ def _targets(
 def _private(target: str) -> bool:
     parts = target.split(".")
     for index, part in enumerate(parts):
-        if not part.startswith("_") or (len(part) > 4 and part.startswith("__") and part.endswith("__")):
+        if not part.startswith("_") or (
+            len(part) > 4 and part.startswith("__") and part.endswith("__")
+        ):
             continue
         if index == 1 and parts[0] == "ha_mcp" and part == "_vendor":
             continue
@@ -196,6 +252,8 @@ def _scan_scope(
     values, aliases = _bindings(scope, values, aliases)
     for node in _nodes(scope):
         if isinstance(node, _SCOPES):
+            for header in _headers(node):
+                yield from _scan_scope(ast.Expression(body=header), values, aliases)
             yield from _scan_scope(node, values, aliases)
         elif isinstance(node, ast.Call):
             for target in sorted(_targets(node, aliases, values)):

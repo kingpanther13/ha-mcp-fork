@@ -888,6 +888,14 @@ _build_failed_at: float | None = None
 BUILD_RETRY_SECONDS = 600
 
 
+def reset_card_definitions_state() -> None:
+    """Clear the process cache between isolated component lifecycles."""
+    global _definitions, _build_task, _build_failed_at
+    _definitions = None
+    _build_task = None
+    _build_failed_at = None
+
+
 def _build() -> CardDefinitions | None:
     try:
         import hass_frontend

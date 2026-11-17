@@ -6,8 +6,8 @@ the MCP path every connector knows (GHSA-mx64-982r-65vg).
 
 from __future__ import annotations
 
-import re
 import os
+import re
 
 import httpx
 import pytest

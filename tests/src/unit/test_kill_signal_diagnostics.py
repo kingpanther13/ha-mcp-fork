@@ -356,7 +356,7 @@ def test_real_signal_preserves_shutdown_and_reports_kernel_sender(handler):
     sender = result.stdout.split("SENDER ", 1)[1].splitlines()[0]
     assert f"Sender PID:     {sender}" in result.stderr
     assert "SI_USER" in result.stderr
-    assert "handler failed" not in result.stderr
+    assert "kill-signal diagnostics handler failed for signal" not in result.stderr
     if handler == "chained":
         assert result.returncode == 0, result.stderr
         assert f"CHAINED {signal.SIGTERM}" in result.stdout

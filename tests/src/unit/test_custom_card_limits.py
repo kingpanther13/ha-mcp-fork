@@ -168,8 +168,7 @@ async def test_linkedom_download_stops_before_buffering_an_oversized_response(
     app.router.add_get("/linkedom.tgz", linkedom)
     server = await aiohttp_client(app)
     monkeypatch.setattr(cc, "LINKEDOM_URL", str(server.make_url("/linkedom.tgz")))
-    for name in ("_custom", "_refresh_task", "_dom_failed_at", "_resource_error"):
-        monkeypatch.setattr(cc, name, None)
+    cc.reset_custom_cards_state()
     transform = MagicMock(return_value="oversized content was accepted")
     monkeypatch.setattr(cc, "dom_script", transform)
     assert await async_setup_component(hass, "lovelace", {})

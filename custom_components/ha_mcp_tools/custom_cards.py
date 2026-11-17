@@ -561,6 +561,15 @@ _custom: CustomCards | None = None
 _REFRESH_LOCK = asyncio.Lock()
 _refresh_task: asyncio.Task[CustomCards | None] | None = None
 _resource_error: str | None = None
+
+
+def reset_custom_cards_state() -> None:
+    """Clear the process cache between isolated component lifecycles."""
+    global _custom, _refresh_task, _dom_failed_at, _resource_error
+    _custom = None
+    _refresh_task = None
+    _dom_failed_at = None
+    _resource_error = None
 _unsupported_resources: list[dict[str, str]] = []
 
 

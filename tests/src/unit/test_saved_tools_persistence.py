@@ -51,7 +51,9 @@ def _write(path, entries, **metadata):
 
 
 @pytest.mark.parametrize("contents", [None, "{not JSON", "[1, 2, 3]"])
-async def test_missing_or_malformed_file_starts_with_empty_catalog(start, tmp_path, contents):
+async def test_missing_or_malformed_file_starts_with_empty_catalog(
+    start, tmp_path, contents
+):
     path = tmp_path / "saved.json"
     if contents is not None:
         path.write_text(contents)
@@ -60,13 +62,19 @@ async def test_missing_or_malformed_file_starts_with_empty_catalog(start, tmp_pa
 
 async def test_invalid_names_and_entry_shapes_never_enter_catalog(start, tmp_path):
     path = tmp_path / "saved.json"
-    _write(path, {
-        "valid": {"code": "1", "justification": "valid"},
-        "../bad": {"code": "1"}, "1leading_digit": {"code": "1"},
-        "with space": {"code": "1"}, "no_code": {"justification": "x"},
-        "code_not_str": {"code": 42}, "empty_code": {"code": ""},
-        "not_a_dict": "raw string",
-    })
+    _write(
+        path,
+        {
+            "valid": {"code": "1", "justification": "valid"},
+            "../bad": {"code": "1"},
+            "1leading_digit": {"code": "1"},
+            "with space": {"code": "1"},
+            "no_code": {"justification": "x"},
+            "code_not_str": {"code": 42},
+            "empty_code": {"code": ""},
+            "not_a_dict": "raw string",
+        },
+    )
     tools = (await _call(start(path), list_saved=True))["saved_tools"]
     assert tools == {"valid": {"code": "1", "justification": "valid"}}
 
@@ -102,7 +110,9 @@ async def test_saved_tools_survive_restart_and_overwrite_atomically(start, tmp_p
     assert not list(path.parent.glob("*.tmp"))
 
 
-async def test_empty_path_keeps_tools_in_memory_and_warns_without_writing(start, tmp_path):
+async def test_empty_path_keeps_tools_in_memory_and_warns_without_writing(
+    start, tmp_path
+):
     before = sorted(tmp_path.rglob("*"))
     mcp = start("")
     assert (await _call(mcp, list_saved=True))["saved_tools"] == {}
@@ -141,7 +151,9 @@ async def test_successful_reload_recovers_after_failed_load(start, tmp_path):
     assert (await _call(start(path), run_saved="example"))["result"] == 2
 
 
-async def test_unreadable_file_is_preserved_on_attempted_save(start, tmp_path, monkeypatch):
+async def test_unreadable_file_is_preserved_on_attempted_save(
+    start, tmp_path, monkeypatch
+):
     path = tmp_path / "saved.json"
     _write(path, {"keep_me": {"code": "1"}})
     original = path.read_bytes()
@@ -159,7 +171,9 @@ async def test_unreadable_file_is_preserved_on_attempted_save(start, tmp_path, m
     assert path.read_bytes() == original
 
 
-async def test_load_caps_large_files_and_tool_rejects_growth_at_the_cap(start, tmp_path):
+async def test_load_caps_large_files_and_tool_rejects_growth_at_the_cap(
+    start, tmp_path
+):
     path = tmp_path / "saved.json"
     entries = {f"tool_{i:04d}": {"code": "1"} for i in range(1000)}
     _write(path, entries)
@@ -171,4 +185,6 @@ async def test_load_caps_large_files_and_tool_rejects_growth_at_the_cap(start, t
     # Replacing one existing entry is still allowed at capacity.
     first = next(iter(listed))
     assert (await _save(mcp, first, "2 + 2"))["saved_as"] == first
-    assert len((await _call(start(path), list_saved=True))["saved_tools"]) == len(listed)
+    assert len((await _call(start(path), list_saved=True))["saved_tools"]) == len(
+        listed
+    )

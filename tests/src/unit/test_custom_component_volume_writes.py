@@ -154,9 +154,10 @@ async def test_core_install_writes_to_an_existing_plain_volume(
 async def test_read_only_mount_is_named_not_a_raw_errno(
     build: str, hass: HomeAssistant, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target = tmp_path / "read-only.txt"
+    target = Path(hass.config.path("www/read-only.txt"))
+    target.parent.mkdir(exist_ok=True)
     target.write_text("original")
-    call = await make_file_service(hass, str(tmp_path))
+    call = await make_file_service(hass)
     method = "write_bytes" if build == "write" else "unlink"
     original = getattr(Path, method)
 
@@ -166,7 +167,7 @@ async def test_read_only_mount_is_named_not_a_raw_errno(
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, method, read_only)
-    data: dict[str, Any] = {"path": str(target)}
+    data: dict[str, Any] = {"path": "www/read-only.txt"}
     if build == "write":
         data.update(content="x", overwrite=True)
     service = SERVICE_WRITE_FILE if build == "write" else SERVICE_DELETE_FILE
@@ -175,7 +176,7 @@ async def test_read_only_mount_is_named_not_a_raw_errno(
 
     assert result == {
         "success": False,
-        "error": f"{target} is on a read-only mount in Home Assistant Core"
+        "error": "www/read-only.txt is on a read-only mount in Home Assistant Core"
         " on this install",
     }
     assert target.read_text() == "original"

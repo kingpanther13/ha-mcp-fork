@@ -241,9 +241,10 @@ class TestRenderResults:
         ]
         results = await render_search_results(transform, tools)
         assert len(results) == 3
-        assert "ha_call_read_tool" in results[0]["execute_via"]
-        assert "ha_call_write_tool" in results[1]["execute_via"]
-        assert "ha_call_delete_tool" in results[2]["execute_via"]
+        hints = {result["name"]: result["execute_via"] for result in results}
+        assert "ha_call_read_tool" in hints["ha_get_state"]
+        assert "ha_call_write_tool" in hints["ha_config_set_helper"]
+        assert "ha_call_delete_tool" in hints["ha_config_delete_zone"]
 
 
 # ---------------------------------------------------------------------------

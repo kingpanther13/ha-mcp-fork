@@ -23,12 +23,13 @@ from ._config import (
     INDIVIDUAL_FETCH_BATCH_SIZE,
     SCRIPT_CONFIG_TIME_BUDGET,
 )
+from ._flow_helpers import FlowHelperSearchMixin
+from ._scenes import SceneSearchMixin
 from .fetch import (
     http_500_diagnosis_hint,
     is_timeout_error,
     record_first_failure,
 )
-from ._flow_helpers import FlowHelperSearchMixin
 from .graph import (
     GraphResult,
     _graph_applies,
@@ -36,7 +37,6 @@ from .graph import (
     _merge_graph_hits,
     fetch_related_buckets,
 )
-from ._scenes import SceneSearchMixin
 
 logger = logging.getLogger(__name__)
 

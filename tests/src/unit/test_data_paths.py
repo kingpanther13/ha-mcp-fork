@@ -49,7 +49,9 @@ def _redirect_write_probe(monkeypatch, tmp_path, writable: set[Path]) -> None:
 
     def mkstemp(**kwargs):
         target = kwargs["dir"]
-        return original(prefix=kwargs["prefix"], dir=tmp_path if target in writable else target)
+        return original(
+            prefix=kwargs["prefix"], dir=tmp_path if target in writable else target
+        )
 
     monkeypatch.setattr(data_paths.tempfile, "mkstemp", mkstemp)
 

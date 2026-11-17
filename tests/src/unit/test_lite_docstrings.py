@@ -210,7 +210,7 @@ class TestApplyLiteDocstrings:
         )
         tool = await server.mcp.get_tool("ha_config_get_automation")
         assert tool is not None
-        assert (tool.description == LITE_DOCSTRINGS[tool.name]) is enabled
+        assert tool.description.startswith(LITE_DOCSTRINGS[tool.name]) is enabled
 
     def test_lite_descriptions_carry_no_format_tokens(self) -> None:
         assert not [

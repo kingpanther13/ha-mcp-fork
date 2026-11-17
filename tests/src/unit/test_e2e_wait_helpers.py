@@ -34,7 +34,6 @@ from ha_mcp._vendor.fastmcp import Client, FastMCP
 from ha_mcp.client.rest_client import HomeAssistantClient
 from ha_mcp.tools.smart_search import SmartSearchTools
 from ha_mcp.tools.tools_search import register_search_tools
-
 from tests.src.e2e.utilities import wait_helpers
 from tests.src.e2e.utilities.wait_helpers import (
     _WsPathUnavailable,
@@ -48,7 +47,9 @@ from tests.src.e2e.utilities.wait_helpers import (
 async def mcp_client(core_client: HomeAssistantClient) -> AsyncIterator[Client]:
     """The actual state tool, with MCP serialization and Core's REST response."""
     server = FastMCP("wait-helper tests")
-    register_search_tools(server, core_client, smart_tools=SmartSearchTools(core_client))
+    register_search_tools(
+        server, core_client, smart_tools=SmartSearchTools(core_client)
+    )
     async with Client(server) as client:
         yield client
 

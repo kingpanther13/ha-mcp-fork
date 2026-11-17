@@ -194,15 +194,15 @@ def _no_threads_left_by_the_test(monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     threads_before = set(threading.enumerate())
     pools: list[concurrent.futures.ThreadPoolExecutor] = []
 
-    class RecordedPool(concurrent.futures.ThreadPoolExecutor):
-        """Remembers the pool quickjs makes for an engine of its own."""
+    pool_type = concurrent.futures.ThreadPoolExecutor
+    original_init = pool_type.__init__
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-            if str(kwargs.get("thread_name_prefix", "")).startswith("quickjs-worker"):
-                pools.append(self)
+    def record_pool(pool: concurrent.futures.ThreadPoolExecutor, *args: Any, **kwargs: Any) -> None:
+        original_init(pool, *args, **kwargs)
+        if str(kwargs.get("thread_name_prefix", "")).startswith("quickjs-worker"):
+            pools.append(pool)
 
-    monkeypatch.setattr(concurrent.futures, "ThreadPoolExecutor", RecordedPool)
+    monkeypatch.setattr(pool_type, "__init__", record_pool)
     try:
         yield
     finally:

@@ -505,8 +505,14 @@ async def test_resource_provider_failure_keeps_guide_tool(
 
         monkeypatch.setattr(builtins, "__import__", import_module)
     else:
-        def add_provider(*args, **kwargs):
-            raise RuntimeError("simulated provider registration crash")
+        from ha_mcp._vendor.fastmcp.server.providers.skills import SkillsDirectoryProvider
+
+        original_add = HttpTransportFastMCP.add_provider
+
+        def add_provider(self, provider, **kwargs):
+            if isinstance(provider, SkillsDirectoryProvider):
+                raise RuntimeError("simulated provider registration crash")
+            return original_add(self, provider, **kwargs)
 
         monkeypatch.setattr(HttpTransportFastMCP, "add_provider", add_provider)
     with caplog.at_level(logging.WARNING):
