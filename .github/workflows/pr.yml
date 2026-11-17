@@ -42,20 +42,36 @@ jobs:
       - name: Lint and rules
         if: always()
         run: |
-          uv run ruff check src/ custom_components/ scripts/ tests/ > /tmp/ruff.txt 2>&1
-          uv run ast-grep scan > /tmp/ast-grep.txt 2>&1
+          failed=0
+          uv run ruff check src/ custom_components/ scripts/ tests/ > /tmp/ruff.txt 2>&1 || failed=1
+          uv run ast-grep scan > /tmp/ast-grep.txt 2>&1 || failed=1
+          exit "$failed"
       - name: Types
         if: always()
         run: |
-          uv run mypy src/ > /tmp/mypy-src.txt 2>&1
-          uv run mypy tests/src/unit/ tests/addon/ > /tmp/mypy-tests.txt 2>&1
+          failed=0
+          uv run mypy src/ > /tmp/mypy-src.txt 2>&1 || failed=1
+          uv run mypy tests/src/unit/ tests/addon/ > /tmp/mypy-tests.txt 2>&1 || failed=1
+          exit "$failed"
       - name: Public seams and ratchets
         if: always()
         env:
           BASE: ${{ inputs.base }}
         run: |
-          uv run python scripts/test_only_public_names.py > /tmp/public-names.txt 2>&1
-          uv run python scripts/stand_in_lists_ratchet.py --base "$BASE" > /tmp/stand-ins.txt 2>&1
+          failed=0
+          uv run python scripts/test_only_public_names.py > /tmp/public-names.txt 2>&1 || failed=1
+          uv run python scripts/stand_in_lists_ratchet.py --base "$BASE" > /tmp/stand-ins.txt 2>&1 || failed=1
+          uv run python scripts/private_test_access.py > /tmp/private-access.txt 2>&1 || failed=1
+          uv run python scripts/module_size_ratchet.py --check > /tmp/module-size.txt 2>&1 || failed=1
+          uv run python scripts/duplicate_code_ratchet.py --check > /tmp/duplicate-code.txt 2>&1 || failed=1
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slf001-checks
+          path: |
+            /tmp/*.txt
+            /tmp/format.patch
       - name: Affected unit tests
         if: always()
         run: |
