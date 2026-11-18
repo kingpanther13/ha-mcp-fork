@@ -1,4 +1,4 @@
-"""Prove the full guard suite before and after the class binding and control-flow fixes."""
+"""Prove preserved rule tests, guard regressions, and diagnostic source lines."""
 
 import ast
 from collections import Counter
@@ -12,22 +12,26 @@ import xml.etree.ElementTree as ET
 
 GUARD_PATH = "scripts/private_test_access.py"
 GUARD_SUPPORT = "scripts/private_test_bindings.py"
-GUARD_PATHS = (GUARD_PATH, GUARD_SUPPORT)
+GUARD_FLOW = "scripts/private_test_flow.py"
+GUARD_PATHS = (GUARD_PATH, GUARD_SUPPORT, GUARD_FLOW)
 FINALLY_NAME = "test_nested_finally_reports_each_source_access_once"
 BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
 PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
-GUARD_TEST = "tests/src/unit/test_private_test_access.py"
+OLD_GUARD_TEST = "tests/src/unit/test_private_test_access.py"
+GUARD_TEST = "tests/src/unit/test_server_answer_rule.py"
+BASELINE_TESTS = (OLD_GUARD_TEST, GUARD_TEST)
 GUARD_TESTS = (GUARD_TEST,)
+LOCATION_NAME = "test_multiline_private_access_reports_its_call_line"
 ERROR_NAME = "test_oversized_targets_still_fail_after_lazy_binding"
 SPY_NAME = "test_formatter_spy_delegates_ordinary_target_formatting"
 REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
-BASELINE = "38a9aed58c0df7e6d970855336f6a11eff35b136"
+BASELINE = "9067b66318acdf6c7a82537ab851ae9c48697bfa"
 BASELINE_GROUP_COUNTS = {
-    REJECT_NAME: 212,
-    ALLOW_NAME: 194,
+    REJECT_NAME: 221,
+    ALLOW_NAME: 202,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -40,16 +44,21 @@ BASELINE_GROUP_COUNTS = {
     "test_the_guard_covers_every_python_file_in_both_trees": 2,
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
+    "test_only_a_typed_in_server_answer_is_refused": 31,
+    "test_no_test_types_in_a_server_answer": 1,
 }
+STRONG_REJECT_SOURCE = 'def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):\n    result = _run(tmp_path, source)\n    assert result.returncode == 1, result.stderr\n    assert re.search(\n        r"^tests/src/unit/test_sample\\.py:[1-9]\\d*: private string target ",\n        result.stdout,\n        re.MULTILINE,\n    ), result.stdout'
+LOCATION_TEST_SOURCE = 'def test_multiline_private_access_reports_its_call_line(tmp_path):\n    result = _run(tmp_path, "name = \'_helper\'\\n\\ngetattr(mod, name)\\n")\n    assert result.returncode == 1, result.stdout + result.stderr\n    assert "tests/src/unit/test_sample.py:3: private string target \'_helper\'" in result.stdout'
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
 assert set(CASE_MANIFEST) == set(CASE_GROUPS.values())
-assert sum(BASELINE_GROUP_COUNTS.values()) == 477
+assert sum(BASELINE_GROUP_COUNTS.values()) == 526
 NEW_CASE_COUNTS = {group: len(CASE_MANIFEST[section]) for group, section in CASE_GROUPS.items()}
 GROUP_COUNTS = {
     group: count + NEW_CASE_COUNTS.get(group, 0)
     for group, count in BASELINE_GROUP_COUNTS.items()
 }
+GROUP_COUNTS[LOCATION_NAME] = 1
 FAILURE_GROUP_COUNTS = {
     group: sum(case["baseline_fails"] for case in CASE_MANIFEST[section])
     for group, section in CASE_GROUPS.items()
@@ -130,32 +139,50 @@ def parameter_cases(text: str, name: str) -> dict[str, str]:
     return cases
 
 
-def expected_failures(baseline: str, candidate: str) -> set[str]:
-    old_source = source(baseline, GUARD_TEST)
-    new_sources = [source(candidate, path) for path in GUARD_TESTS]
-    old_nodes = {node.name: node for node in ast.parse(old_source).body
-                 if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")}
-    new_nodes = {}
-    for text in new_sources:
+def definitions(texts: list[str]) -> dict[str, ast.AST]:
+    nodes = {}
+    for text in texts:
         for node in ast.parse(text).body:
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
-                new_nodes.setdefault(node.name, []).append(node)
-    assert set(new_nodes) == set(old_nodes)
-    # Preserve every old test and all parametrization outside the split tables.
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                assert node.name not in nodes, (node.name, "duplicate definition")
+                nodes[node.name] = node
+    return nodes
+
+
+def expected_failures(baseline: str, candidate: str) -> set[str]:
+    old_sources = [source(baseline, path) for path in BASELINE_TESTS]
+    new_sources = [source(candidate, path) for path in GUARD_TESTS]
+    old_nodes = definitions(old_sources)
+    new_nodes = definitions(new_sources)
+    assert set(new_nodes) == set(old_nodes) | {LOCATION_NAME}
+    assert ast.dump(new_nodes[LOCATION_NAME]) == ast.dump(ast.parse(LOCATION_TEST_SOURCE).body[0])
+    # Preserve both old modules' tests and harnesses. Only the explicitly
+    # approved diagnostic assertion replacement may differ from the old body.
     for name, node in old_nodes.items():
-        [new_node] = new_nodes[name]
+        new_node = new_nodes[name]
+        if name not in CASE_GROUPS:
+            assert ast.dump(node) == ast.dump(new_node), (name, "changed prior definition")
+            continue
         assert ast.dump(node.args) == ast.dump(new_node.args), (name, "changed signature")
-        assert [ast.dump(item) for item in node.body] == [
+        expected_node = ast.parse(STRONG_REJECT_SOURCE).body[0] if name == REJECT_NAME else node
+        assert [ast.dump(item) for item in expected_node.body] == [
             ast.dump(item) for item in new_node.body
         ], (name, "changed prior test assertions")
-        if name not in CASE_GROUPS:
-            assert [ast.dump(item) for item in node.decorator_list] == [
-                ast.dump(item) for item in new_node.decorator_list
-            ], name
+        # The source table can grow; its decorator, parameter name and options cannot.
+        assert len(node.decorator_list) == len(new_node.decorator_list) == 1
+        old_decorator = ast.parse(ast.unparse(node.decorator_list[0])).body[0].value
+        new_decorator = ast.parse(ast.unparse(new_node.decorator_list[0])).body[0].value
+        old_decorator.args[1] = new_decorator.args[1] = ast.List(elts=[], ctx=ast.Load())
+        assert ast.dump(old_decorator) == ast.dump(new_decorator), name
 
     names = set()
     for group, section in CASE_GROUPS.items():
-        old = parameter_cases(old_source, group) if group in old_nodes else {}
+        old = {}
+        for text in old_sources:
+            if group in definitions([text]):
+                additions = parameter_cases(text, group)
+                assert not old.keys() & additions.keys(), (group, "duplicate baseline IDs")
+                old.update(additions)
         new = {}
         for text in new_sources:
             if any(isinstance(node, ast.FunctionDef) and node.name == group
@@ -176,12 +203,12 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
     return names
 
 
-def run_variant(root: Path, label: str) -> dict:
+def run_variant(root: Path, label: str, selected: tuple[str, ...] = GUARD_TESTS) -> dict:
     junit = root / f"{label}.xml"
     types_file = root / f"{label}-exception-types.json"
     command = [
         sys.executable, "-m", "pytest", "--maxfail=0", "--tb=short", "-v",
-        "-p", "slf001_proof_types", f"--junitxml={junit}", *GUARD_TESTS,
+        "-p", "slf001_proof_types", f"--junitxml={junit}", *selected,
     ]
     # Keep the complete project configuration and Core fixture/plugin stack.
     # This additional observer records real exception classes, not log guesses.
@@ -239,8 +266,59 @@ def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
         assert after["exit_code"] == 0, after["exit_code"]
 
 
+def diagnostic_mutations(root: Path, candidate_source: str) -> dict:
+    """Prove the CLI diagnostic's missing and incorrect line both fail the test."""
+    marker = ":{line}: private string target "
+    assert candidate_source.count(marker) == 1
+    selected = (f"{GUARD_TEST}::{LOCATION_NAME}",)
+    results = {}
+    mutations = {
+        "diagnostic-no-line": (": private string target ", "test_sample.py: private string target"),
+        "diagnostic-wrong-line": (":{line + 1}: private string target ", "test_sample.py:4: private string target"),
+    }
+    for label, (replacement, actual_diagnostic) in mutations.items():
+        try:
+            mutant = candidate_source.replace(marker, replacement)
+            Path(GUARD_PATH).write_text(mutant, encoding="utf-8")
+            (root / f"{label}-source.py").write_text(mutant, encoding="utf-8")
+            (root / f"{label}.patch").write_text(git("diff", "--", GUARD_PATH), encoding="utf-8")
+            data = results[label] = run_variant(root, label, selected)
+        finally:
+            Path(GUARD_PATH).write_text(candidate_source, encoding="utf-8")
+            (root / "diagnostic-results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+        assert data["tests"] == 1 and data["case_names"] == [LOCATION_NAME]
+        assert not data["errors"] and not data["skips"]
+        assert data["exit_code"] == 1 and set(data["failures"]) == {LOCATION_NAME}
+        assert data["exception_types"] == {LOCATION_NAME: "AssertionError"}
+        failure = data["failures"][LOCATION_NAME]
+        assert "tests/src/unit/test_sample.py:3: private string target" in failure
+        assert actual_diagnostic in failure
+    assert not git("status", "--porcelain", "--untracked-files=no")
+    restored = results["diagnostic-restored"] = run_variant(root, "diagnostic-restored", selected)
+    (root / "diagnostic-results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    assert restored["tests"] == 1 and restored["case_names"] == [LOCATION_NAME]
+    assert restored["exit_code"] == 0
+    assert not restored["failures"] and not restored["exception_types"]
+    assert not restored["errors"] and not restored["skips"]
+    return results
+
+
+def existing_source(revision: str, path: str) -> str | None:
+    return source(revision, path) if git("ls-tree", "--name-only", revision, "--", path) else None
+
+
+def restore_sources(sources: dict[str, str | None]) -> None:
+    for path, text in sources.items():
+        if text is None:
+            Path(path).unlink(missing_ok=True)
+        else:
+            Path(path).write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
+    diagnostic_only = os.environ.get("PROBE_DIAGNOSTIC_LINES_ONLY", "false") == "true"
+    assert not (baseline_only and diagnostic_only)
     baseline = os.environ["PROBE_BASELINE"]
     assert baseline == BASELINE, (baseline, BASELINE)
     candidate = os.environ["PROBE_CANDIDATE"]
@@ -251,46 +329,68 @@ def main() -> None:
     root = Path(os.environ["PROBE_ROOT"])
     root.mkdir(parents=True, exist_ok=True)
     (root / "slf001_proof_types.py").write_text(EXCEPTION_PLUGIN, encoding="utf-8")
-    candidate_guards = {path: source(candidate, path) for path in GUARD_PATHS}
-    baseline_guards = {path: source(baseline, path) for path in GUARD_PATHS}
+    candidate_guards = {path: existing_source(candidate, path) for path in GUARD_PATHS}
+    baseline_guards = {path: existing_source(baseline, path) for path in GUARD_PATHS}
+    assert all(candidate_guards[path] is not None and baseline_guards[path] is not None
+               for path in (GUARD_PATH, GUARD_SUPPORT))
+    assert baseline_guards[GUARD_FLOW] is None
+    assert candidate_guards[GUARD_FLOW] is not None or baseline_only
     assert candidate_guards != baseline_guards or baseline_only
     expected = expected_failures(baseline, candidate)
     evidence = {
         "baseline_only": baseline_only,
+        "diagnostic_lines_only": diagnostic_only,
         "baseline": baseline,
         "candidate": candidate,
         "driver": git("-C", "../proof", "rev-parse", "HEAD"),
         "blobs": {
             revision: {
                 path: git("rev-parse", f"{revision}:{path}")
-                for path in (*GUARD_PATHS, *GUARD_TESTS)
+                for path in (*GUARD_PATHS, *BASELINE_TESTS)
                 if git("ls-tree", "--name-only", revision, "--", path)
             } for revision in (baseline, candidate)
         },
         "selected_modules": GUARD_TESTS,
+        "preserved_baseline_modules": BASELINE_TESTS,
+        "preserved_baseline_cases": sum(BASELINE_GROUP_COUNTS.values()),
+        "missing_guard_paths": {
+            "baseline": [path for path, text in baseline_guards.items() if text is None],
+            "candidate": [path for path, text in candidate_guards.items() if text is None],
+        },
         "expected_group_counts": GROUP_COUNTS,
         "expected_failure_group_counts": FAILURE_GROUP_COUNTS,
         "expected_baseline_failure_names": sorted(expected),
     }
     (root / "sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
-    for revision_label, revision in (("baseline", baseline), ("candidate", candidate)):
-        (root / f"{revision_label}-tests.py").write_text(source(revision, GUARD_TEST), encoding="utf-8")
+    for label, revision, paths in (("baseline", baseline, BASELINE_TESTS),
+                                   ("candidate", candidate, GUARD_TESTS)):
+        for path in paths:
+            (root / f"{label}-{Path(path).name}").write_text(source(revision, path), encoding="utf-8")
+    for label, guards in (("baseline", baseline_guards), ("candidate", candidate_guards)):
+        for path, text in guards.items():
+            if text is not None:
+                (root / f"{label}-{Path(path).name}").write_text(text, encoding="utf-8")
     results = {}
     try:
-        for path in GUARD_PATHS:
-            Path(path).write_text(baseline_guards[path], encoding="utf-8")
-            (root / f"baseline-{Path(path).name}").write_text(baseline_guards[path], encoding="utf-8")
-            (root / f"candidate-{Path(path).name}").write_text(candidate_guards[path], encoding="utf-8")
-        (root / "baseline-overlay.patch").write_text(git("diff", "--", *GUARD_PATHS), encoding="utf-8")
-        results["baseline"] = run_variant(root, "baseline")
+        if not diagnostic_only:
+            try:
+                restore_sources(baseline_guards)
+                (root / "baseline-overlay.patch").write_text(git("diff", "--", *GUARD_PATHS), encoding="utf-8")
+                results["baseline"] = run_variant(root, "baseline")
+            finally:
+                restore_sources(candidate_guards)
+            assert not git("status", "--porcelain", "--untracked-files=no")
+            if not baseline_only:
+                results["candidate"] = run_variant(root, "candidate")
+            validate(results, expected, baseline_only)
+        if not baseline_only:
+            candidate_source = candidate_guards[GUARD_PATH]
+            assert isinstance(candidate_source, str)
+            results.update(diagnostic_mutations(root, candidate_source))
     finally:
-        for path in GUARD_PATHS:
-            Path(path).write_text(candidate_guards[path], encoding="utf-8")
+        restore_sources(candidate_guards)
+        (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     assert not git("status", "--porcelain", "--untracked-files=no")
-    if not baseline_only:
-        results["candidate"] = run_variant(root, "candidate")
-    (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-    validate(results, expected, baseline_only)
     summary = {
         label: {"tests": data["tests"], "failures": len(data["failures"]),
                 "passed": data["tests"] - len(data["failures"]),
@@ -301,7 +401,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write(f"Regression proof: all {TOTAL_CASES} guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write(f"Regression proof: all {TOTAL_CASES} merged rule cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

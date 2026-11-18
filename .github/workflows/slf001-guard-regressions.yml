@@ -11,9 +11,13 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: 38a9aed58c0df7e6d970855336f6a11eff35b136
+        default: 9067b66318acdf6c7a82537ab851ae9c48697bfa
       baseline_only:
         description: Prove baseline failures before implementation is ready
+        type: boolean
+        default: false
+      diagnostic_lines_only:
+        description: Prove missing and incorrect CLI source lines fail the focused test
         type: boolean
         default: false
 
@@ -29,6 +33,7 @@ jobs:
       PROBE_ROOT: /tmp/slf001-review-proof
       PROBE_BASELINE: ${{ inputs.baseline }}
       PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
+      PROBE_DIAGNOSTIC_LINES_ONLY: ${{ inputs.diagnostic_lines_only }}
       PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
       - name: Check out the isolated proof driver
@@ -52,7 +57,7 @@ jobs:
       - name: Install full development dependencies for real Core fixtures
         working-directory: candidate
         run: uv sync --all-extras --dev
-      - name: Prove exact failures before and all cases passing after
+      - name: Prove exact regressions and diagnostic-line mutations
         working-directory: candidate
         run: uv run python ../proof/.github/scripts/slf001_guard_probe.py
       - name: Preserve source evidence, logs, and JUnit reports
