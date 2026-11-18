@@ -10,9 +10,14 @@ import sys
 import xml.etree.ElementTree as ET
 
 PREVIOUS = "8d69144aef38da25569d5ec6a33b09155c86b0cf"
+PREVIOUS_REBASED = "18fe48257e013cee99e5521e53a7c7121639e62a"
 CURRENT = "992c971257f8297ffa69ffad4772f4513bb24f14"
 TEST_PATH = "tests/src/unit/test_private_test_access.py"
 GUARD_PATH = "scripts/private_test_access.py"
+PREVIOUS_BLOBS = {
+    GUARD_PATH: "c0e263121d4bda2f43fc088ceaf5469c95f0e650",
+    TEST_PATH: "3fde9416a0d059c88d5f50d19d225c4fcceabce3",
+}
 TEST_NAMES = {
     "test_reflective_private_access_fails_with_a_source_location",
     "test_public_targets_and_non_target_strings_are_allowed",
@@ -20,6 +25,15 @@ TEST_NAMES = {
 
 
 def source(revision: str, path: str) -> str:
+    if revision == PREVIOUS:
+        # The stack was rebased. Verify exact original blobs, rather than
+        # treating an absent, superseded commit as a regression-test failure.
+        revision = PREVIOUS_REBASED
+        blob = subprocess.run(
+            ["git", "rev-parse", f"{revision}:{path}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert blob == PREVIOUS_BLOBS[path], (path, blob)
     return subprocess.run(
         ["git", "show", f"{revision}:{path}"],
         check=True, capture_output=True, text=True,
@@ -105,6 +119,8 @@ def main() -> None:
         label: run_variant(root, label, revision, test_source)
         for label, revision in (("previous", PREVIOUS), ("current", CURRENT))
     }
+    results["previous"]["rebased_source_commit"] = PREVIOUS_REBASED
+    results["previous"]["verified_original_blobs"] = PREVIOUS_BLOBS
     summary = json.dumps(results, indent=2)
     (root / "results.json").write_text(summary, encoding="utf-8")
     print(summary)
