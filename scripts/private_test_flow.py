@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import ast
-import copy
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -54,6 +53,72 @@ def comprehension_nodes(
     yield first.target
     yield from first.ifs
     yield from remaining
+
+
+def bindings(
+    scope: ast.AST,
+    parent_values: dict[str, Value],
+    parent_aliases: Aliases,
+    nodes: list[ast.AST],
+    initial_values: dict[str, Value] | None = None,
+) -> tuple[dict[str, Value], Aliases]:
+    if isinstance(scope, ast.ClassDef):
+        values, aliases = class_bindings(
+            parent_values, parent_aliases, nodes
+        )
+        return ClassValues(values), aliases
+    local_names = binding_rules.bound_names(nodes)
+    global_names = {
+        name for node in nodes if isinstance(node, ast.Global) for name in node.names
+    }
+    nonlocal_names = binding_rules.declared_names(nodes, ast.Nonlocal)
+    local_names -= global_names | nonlocal_names
+    values = ScopeValues(parent_values)
+    aliases = dict(parent_aliases)
+    imported: Aliases = {}
+    parameter_names: set[str] = set()
+    binding_rules.import_aliases(nodes, imported)
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        parameters = [
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+            scope.args.vararg,
+            scope.args.kwarg,
+        ]
+        parameter_names = {
+            parameter.arg for parameter in parameters if parameter is not None
+        }
+        local_names.update(parameter_names)
+    values.scope_id = scope
+    values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
+    values.cell_owners.update(dict.fromkeys(local_names, scope))
+    for name in global_names:
+        values.cell_owners.pop(name, None)
+    values.lexical_names = (
+        frozenset()
+        if isinstance(scope, ast.Module)
+        else (values.lexical_names | local_names) - global_names
+    )
+    for name in local_names:
+        values.pop(name, None)
+        aliases.pop(name, None)
+    aliases.update(imported)
+    values.update(initial_values or {})
+    binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
+    for name in nonlocal_names:
+        values.pop(name, None)
+        if name in parent_values:
+            values[name] = parent_values[name]
+        aliases[name] = parent_aliases.get(name, frozenset({name}))
+    for name in parameter_names:
+        values.pop(name, None)
+        aliases[name] = frozenset({""})
+    values.update(initial_values or {})
+    for name, value in (initial_values or {}).items():
+        aliases[name] = value.callables or frozenset({""})
+    return values, aliases
+
 
 class ScopeValues(dict[str, Value]):
     """Lexical values retaining the module namespace for class name lookup."""
@@ -355,7 +420,9 @@ def apply_delta(target: Env, before: Env, after: Env) -> None:
     mapping_delta(target[1], before[1], after[1])
 
 
-def replay_names[T](target: dict[str, T], source: dict[str, T], names: set[str]) -> None:
+def replay_names[T](
+    target: dict[str, T], source: dict[str, T], names: set[str]
+) -> None:
     before = {name: target[name] for name in names if name in target}
     after = {name: source[name] for name in names if name in source}
     mapping_delta(target, before, after)
@@ -528,7 +595,11 @@ class Deferred:
         return name
 
     def call(
-        self, call: ast.Call, env: Env, closure: Env, *,
+        self,
+        call: ast.Call,
+        env: Env,
+        closure: Env,
+        *,
         captured: tuple[ast.Call, Env] | None = None,
     ) -> Iterator[tuple[int, str]]:
         prepared, inputs = captured if captured is not None else (call, env)
@@ -556,10 +627,17 @@ class Deferred:
                     )
                 )
                 yield from self.invoke_targets(
-                    targets, call, env, closure, constructor=True, captured=(prepared, inputs)
+                    targets,
+                    call,
+                    env,
+                    closure,
+                    constructor=True,
+                    captured=(prepared, inputs),
                 )
             return
-        yield from self.invoke_targets(names, call, env, closure, captured=(prepared, inputs))
+        yield from self.invoke_targets(
+            names, call, env, closure, captured=(prepared, inputs)
+        )
 
     def invoke_targets(
         self,
@@ -580,7 +658,9 @@ class Deferred:
             return
         runs: list[Invocation] = []
         suspended: set[str] = set()
-        for arguments in self.capture_arguments(*(captured if captured is not None else (call, env))):
+        for arguments in self.capture_arguments(
+            *(captured if captured is not None else (call, env))
+        ):
             for name in known:
                 invocation = self.invocation(name, arguments, constructor=constructor)
                 if invocation is None:
@@ -626,20 +706,32 @@ class Deferred:
         for name in names & self.suspended.keys():
             invocation = self.suspended[name]
             if self.scopes[invocation.token].kind == "generator":
-                results.extend((invocation, result) for result in self.resume_generator(name, invocation, env, closure))
+                results.extend(
+                    (invocation, result)
+                    for result in self.resume_generator(name, invocation, env, closure)
+                )
             else:
                 results.append((invocation, self.analyze(invocation, closure)))
         yield from self.execute(
-            [], closure, results=results,
+            [],
+            closure,
+            results=results,
             unknown=any(name not in self.suspended for name in names),
         )
 
     def execute(
-        self, invocations: list[Invocation], closure: Env, *, unknown: bool = False,
+        self,
+        invocations: list[Invocation],
+        closure: Env,
+        *,
+        unknown: bool = False,
         results: list[tuple[Invocation, Analysis]] | None = None,
     ) -> Iterator[tuple[int, str]]:
         if results is None:
-            results = [(invocation, self.analyze(invocation, closure)) for invocation in invocations]
+            results = [
+                (invocation, self.analyze(invocation, closure))
+                for invocation in invocations
+            ]
         if not results:
             return
         before = copy_context(closure)
@@ -672,11 +764,14 @@ class Deferred:
             publish_context(closure, combined)
 
     def replay_cells(self, target: Env, source: Env, invocation: Invocation) -> None:
-        if not isinstance(target[0], ScopeValues) or not isinstance(source[0], ScopeValues):
+        if not isinstance(target[0], ScopeValues) or not isinstance(
+            source[0], ScopeValues
+        ):
             return
         local_scope = self.scopes[invocation.token].node
         names = {
-            name for name, owner in source[0].cell_owners.items()
+            name
+            for name, owner in source[0].cell_owners.items()
             if owner is not local_scope and target[0].cell_owners.get(name) is owner
         }
         replay_names(target[0], source[0], names)
@@ -687,7 +782,9 @@ class Deferred:
         if invocation is not None:
             yield from self.analyze(invocation, closure).findings
 
-    def analyze(self, invocation: Invocation, closure: Env, *, generator: bool = False) -> Analysis:
+    def analyze(
+        self, invocation: Invocation, closure: Env, *, generator: bool = False
+    ) -> Analysis:
         function = self.scopes[invocation.token]
         module = module_bindings(*closure)
         closure = copy_context(self.frames.get(function.owner, closure))
@@ -737,7 +834,11 @@ class Deferred:
         self.continuations[key] = Continuation(state.copy(), [], findings)
         return {key: state}
 
-    def chain(self, outcomes: dict[str, State], step: Callable[[dict[str, State]], dict[str, State]]) -> None:
+    def chain(
+        self,
+        outcomes: dict[str, State],
+        step: Callable[[dict[str, State]], dict[str, State]],
+    ) -> None:
         for kind in outcomes:
             if kind in self.continuations:
                 self.continuations[kind].steps.append(step)
@@ -755,7 +856,9 @@ class Deferred:
                 outcomes = step(outcomes)
                 for kind in list(outcomes):
                     if kind in self.continuations:
-                        self.continuations[kind].steps.extend(continuation.steps[index + 1:])
+                        self.continuations[kind].steps.extend(
+                            continuation.steps[index + 1 :]
+                        )
                         suspended[kind] = outcomes.pop(kind)
                 if not outcomes:
                     break
@@ -763,12 +866,22 @@ class Deferred:
             self.generating.pop()
         return Analysis(tuple(continuation.findings), outcomes | suspended)
 
-    def resume_generator(self, name: str, invocation: Invocation, env: Env, closure: Env) -> list[Analysis]:
+    def resume_generator(
+        self, name: str, invocation: Invocation, env: Env, closure: Env
+    ) -> list[Analysis]:
         key = f"@resume:{name}"
         stages = env[1].get(key, frozenset({"start"}))
-        results = [self.analyze(invocation, closure, generator=True) if stage == "start" else self.continue_generator(stage, closure) for stage in stages if stage != "done"]
+        results = [
+            self.analyze(invocation, closure, generator=True)
+            if stage == "start"
+            else self.continue_generator(stage, closure)
+            for stage in stages
+            if stage != "done"
+        ]
         if "done" in stages:
-            state = State(ClassValues(closure[0]), dict(closure[1]), copy_context(closure))
+            state = State(
+                ClassValues(closure[0]), dict(closure[1]), copy_context(closure)
+            )
             results.append(Analysis((), {"raise": state}))
         following: set[str] = set()
         resumed: list[Analysis] = []
@@ -786,179 +899,7 @@ class Deferred:
         self.bind_alias(key, frozenset(following or {"done"}), env, closure)
         for result in resumed:
             for state in result.outcomes.values():
-                module_bindings(*state.closure)[1][key] = frozenset(following or {"done"})
-        return resumed
-
-
-class Expression:
-    """Evaluate operand effects in order while retaining already captured values."""
-
-    def __init__(
-        self,
-        context: Deferred,
-        scan_node: Callable[..., Iterator[tuple[int, str]]],
-        targets: Callable[..., set[str]],
-        private: Callable[[str], bool],
-        scopes: tuple[type[ast.AST], ...],
-    ) -> None:
-        self.context = context
-        self.scan_node = scan_node
-        self.targets = targets
-        self.private = private
-        self.scopes = scopes
-        self.snapshots: Env = ({}, {})
-
-    def snapshot(
-        self, node: ast.expr, env: Env, *, origin: ast.expr | None = None,
-        kind: str = "value",
-    ) -> ast.Name:
-        source = node if origin is None else origin
-        name = f"@operand:{id(source)}:{kind}"
-        value = self.context.capture(node, env)
-        self.snapshots[0][name] = value
-        self.snapshots[1][name] = value.callables
-        # Argument/state equality includes AST identity; repeated loop visits
-        # must retain the same proxy while each value keeps its own snapshot.
-        return self.context.operands.setdefault(
-            (source, kind), ast.copy_location(ast.Name(id=name, ctx=ast.Load()), source)
-        )
-
-    @staticmethod
-    def refresh(env: Env, closure: Env) -> None:
-        if isinstance(env[0], ClassValues):
-            State(env[0], env[1], closure).refresh()
-
-    def scan(
-        self, node: ast.expr, env: Env, closure: Env
-    ) -> Generator[tuple[int, str], None, tuple[ast.expr, Env]]:
-        prepared = yield from self.evaluate(node, env, closure)
-        assert isinstance(prepared, ast.expr)
-        return prepared, self.snapshots
-
-    def evaluate(
-        self, node: ast.AST, env: Env, closure: Env
-    ) -> Generator[tuple[int, str], None, ast.AST]:
-        if isinstance(node, ast.Name):
-            self.snapshots[1].update(env[1])
-            return self.snapshot(node, env)
-        if isinstance(node, ast.Constant):
-            return node
-        if isinstance(node, self.scopes):
-            yield from self.scan_node(node, *env, closure, self.context)
-            prepared = node
-        elif isinstance(node, ast.Call):
-            return (yield from self.call(node, env, closure))
-        elif isinstance(node, ast.BoolOp):
-            return (yield from self.boolean(node.values, node.op, env, closure))
-        elif isinstance(node, ast.Await):
-            value = yield from self.evaluate(node.value, env, closure)
-            assert isinstance(value, ast.expr)
-            yield from self.context.resume(value, self.snapshots, closure)
-            self.refresh(env, closure)
-            prepared = node
-        else:
-            prepared = yield from self.children(node, env, closure)
-        if self.context.effects and not self.context.effects[-1].normal:
-            raise Interrupted
-        if isinstance(prepared, ast.Attribute):
-            self.snapshots[1].update(env[1])
-            assert isinstance(node, ast.Attribute)
-            return self.snapshot(prepared, self.snapshots, origin=node)
-        return prepared
-
-    def children(
-        self, node: ast.AST, env: Env, closure: Env
-    ) -> Generator[tuple[int, str], None, ast.AST]:
-        prepared = copy.copy(node)
-        if isinstance(node, ast.Dict):
-            assert isinstance(prepared, ast.Dict)
-            keys: list[ast.expr | None] = []
-            values: list[ast.expr] = []
-            for key, value in zip(node.keys, node.values, strict=True):
-                resolved_key = (
-                    (yield from self.evaluate(key, env, closure)) if key else None
+                module_bindings(*state.closure)[1][key] = frozenset(
+                    following or {"done"}
                 )
-                resolved_value = yield from self.evaluate(value, env, closure)
-                assert resolved_key is None or isinstance(resolved_key, ast.expr)
-                assert isinstance(resolved_value, ast.expr)
-                keys.append(resolved_key)
-                values.append(resolved_value)
-            prepared.keys, prepared.values = keys, values
-            return prepared
-        for field, value in ast.iter_fields(node):
-            if isinstance(value, ast.AST):
-                setattr(prepared, field, (yield from self.evaluate(value, env, closure)))
-            elif isinstance(value, list):
-                items = []
-                for item in value:
-                    items.append(
-                        (yield from self.evaluate(item, env, closure))
-                        if isinstance(item, ast.AST)
-                        else item
-                    )
-                setattr(prepared, field, items)
-        return prepared
-
-    def call(
-        self, node: ast.Call, env: Env, closure: Env
-    ) -> Generator[tuple[int, str], None, ast.Name]:
-        prepared = yield from self.children(node, env, closure)
-        assert isinstance(prepared, ast.Call)
-        for target in sorted(
-            self.targets(prepared, self.snapshots[1], self.snapshots[0])
-        ):
-            if self.private(target):
-                yield node.lineno, target
-        yield from self.context.call(
-            node, env, closure, captured=(prepared, self.snapshots)
-        )
-        self.refresh(env, closure)
-        if self.context.effects and not self.context.effects[-1].normal:
-            raise Interrupted
-        return self.snapshot(node, env)
-
-    def boolean(
-        self, operands: list[ast.expr], operation: ast.boolop, env: Env, closure: Env
-    ) -> Generator[tuple[int, str], None, ast.AST]:
-        first, *remaining = operands
-        captured = yield from self.evaluate(first, env, closure)
-        if not remaining:
-            return captured
-        truth = bool(first.value) if isinstance(first, ast.Constant) else None
-        if truth is not None:
-            if truth == isinstance(operation, ast.Or):
-                return captured
-            return (yield from self.boolean(remaining, operation, env, closure))
-        # An unknown condition may skip the remainder, including a known raise.
-        skipped = State(ClassValues(env[0]), dict(env[1]), closure).copy()
-        branch = skipped.copy()
-        effects = Effects([])
-        self.context.effects.append(effects)
-        result = captured
-        try:
-            result = yield from self.boolean(
-                remaining, operation, (branch.values, branch.aliases), branch.closure
-            )
-        except Interrupted:
-            effects.normal = False
-        finally:
-            self.context.effects.pop()
-        if effects.normal:
-            skipped.merge(branch)
-        publish_context(closure, skipped.closure)
-        env[0].clear()
-        env[0].update(skipped.values)
-        env[1].clear()
-        env[1].update(skipped.aliases)
-        if self.context.effects:
-            self.context.effects[-1].raised.extend(effects.raised)
-        assert isinstance(captured, ast.expr) and isinstance(result, ast.expr)
-        merged = {"value": self.context.capture(captured, self.snapshots)}
-        binding_rules.union_values(
-            merged, {"value": self.context.capture(result, self.snapshots)}
-        )
-        return self.snapshot(
-            ast.Name(id="value", ctx=ast.Load()),
-            (merged, {"value": merged["value"].callables}),
-            origin=first, kind="boolean",
-        )
+        return resumed

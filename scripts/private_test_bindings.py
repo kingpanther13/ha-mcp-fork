@@ -382,9 +382,13 @@ def _position_snapshot(value: Value) -> Value:
         visited += 1
         for child in _snapshot_children(current):
             if depth >= 16 or visited + len(pending) >= 256:
-                return replace(snapshot, positions=(), position_errors=frozenset({
-                    "nested positional argument snapshot exceeds the size limit"
-                }))
+                return replace(
+                    snapshot,
+                    positions=(),
+                    position_errors=frozenset(
+                        {"nested positional argument snapshot exceeds the size limit"}
+                    ),
+                )
             pending.append((child, depth + 1))
     return snapshot
 
@@ -395,9 +399,12 @@ def _snapshot_children(value: Value | Argument) -> Iterator[Value | Argument]:
         if value.resolved is not None:
             yield value.resolved
     else:
-        yield from (item for option in value.positions for item in option if item is not None)
         yield from (
-            argument for option in value.mapping_alternatives + value.target_mappings
+            item for option in value.positions for item in option if item is not None
+        )
+        yield from (
+            argument
+            for option in value.mapping_alternatives + value.target_mappings
             for _, argument in option
         )
 

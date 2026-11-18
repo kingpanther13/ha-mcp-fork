@@ -23,14 +23,17 @@ import argparse
 import ast
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scripts import private_test_bindings as binding_rules
+    from scripts import private_test_expressions as expression_rules
     from scripts import private_test_flow as flow_rules
 else:
     import private_test_bindings as binding_rules
+    import private_test_expressions as expression_rules
     import private_test_flow as flow_rules
 
 
@@ -86,64 +89,9 @@ def _bindings(
     parent_aliases: binding_rules.Aliases,
     initial_values: dict[str, binding_rules.Value] | None = None,
 ) -> tuple[dict[str, binding_rules.Value], binding_rules.Aliases]:
-    nodes = list(_nodes(scope))
-    if isinstance(scope, ast.ClassDef):
-        values, aliases = flow_rules.class_bindings(
-            parent_values, parent_aliases, nodes
-        )
-        return _ClassValues(values), aliases
-    local_names = binding_rules.bound_names(nodes)
-    global_names = {
-        name for node in nodes if isinstance(node, ast.Global) for name in node.names
-    }
-    nonlocal_names = binding_rules.declared_names(nodes, ast.Nonlocal)
-    local_names -= global_names | nonlocal_names
-    values = flow_rules.ScopeValues(parent_values)
-    aliases = dict(parent_aliases)
-    imported: binding_rules.Aliases = {}
-    parameter_names: set[str] = set()
-    binding_rules.import_aliases(nodes, imported)
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        parameters = [
-            *scope.args.posonlyargs,
-            *scope.args.args,
-            *scope.args.kwonlyargs,
-            scope.args.vararg,
-            scope.args.kwarg,
-        ]
-        parameter_names = {
-            parameter.arg for parameter in parameters if parameter is not None
-        }
-        local_names.update(parameter_names)
-    values.scope_id = scope
-    values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
-    values.cell_owners.update({name: scope for name in local_names})
-    for name in global_names:
-        values.cell_owners.pop(name, None)
-    values.lexical_names = (
-        frozenset()
-        if isinstance(scope, ast.Module)
-        else (values.lexical_names | local_names) - global_names
+    return flow_rules.bindings(
+        scope, parent_values, parent_aliases, list(_nodes(scope)), initial_values
     )
-    for name in local_names:
-        values.pop(name, None)
-        aliases.pop(name, None)
-    aliases.update(imported)
-    values.update(initial_values or {})
-    binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
-    for name in nonlocal_names:
-        values.pop(name, None)
-        if name in parent_values:
-            values[name] = parent_values[name]
-        aliases[name] = parent_aliases.get(name, frozenset({name}))
-    for name in parameter_names:
-        values.pop(name, None)
-        aliases[name] = frozenset({""})
-    values.update(initial_values or {})
-    for name, value in (initial_values or {}).items():
-        aliases[name] = value.callables or frozenset({""})
-    return values, aliases
-
 
 def _targets(
     call: ast.Call,
@@ -297,7 +245,9 @@ def _scan_assignment(
         for header in _headers(value):
             yield from _scan_expression(header, values, aliases, closure, context)
     elif value is not None:
-        value, inputs = yield from _scan_expression(value, values, aliases, closure, context)
+        value, inputs = yield from _scan_expression(
+            value, values, aliases, closure, context
+        )
     token = (
         context.register(
             value,
@@ -439,7 +389,10 @@ class _ClassFlow:
             state.refresh()
             self.context.remember(state.closure)
             results = self.statement(node, state)
-            self.context.chain(results, lambda outcomes, rest=body[index + 1:]: self.follow(outcomes, rest))
+            self.context.chain(
+                results,
+                partial(self.follow, body=body[index + 1 :]),
+            )
             for kind, result in results.items():
                 _add_outcome(outcomes, kind, result)
         if not generating:
@@ -474,10 +427,13 @@ class _ClassFlow:
         return outcomes
 
     def dispatch(self, node: ast.stmt, state: _State) -> _Outcomes:
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Yield) and self.context.generating and self.context.generating[-1]:
-            if node.value.value is not None:
-                self.expression(node.value.value, state)
-            return self.context.pause(state, self.findings)
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Yield)
+            and self.context.generating
+            and self.context.generating[-1]
+        ):
+            return self.yield_statement(node.value, state)
         if isinstance(node, ast.ClassDef):
             return self.definition(node, state)
         if isinstance(node, ast.If):
@@ -497,6 +453,11 @@ class _ClassFlow:
         if isinstance(node, (ast.Break, ast.Continue)):
             return {"break" if isinstance(node, ast.Break) else "continue": state}
         return self.simple_statement(node, state)
+
+    def yield_statement(self, node: ast.Yield, state: _State) -> _Outcomes:
+        if node.value is not None:
+            self.expression(node.value, state)
+        return self.context.pause(state, self.findings)
 
     def simple_statement(self, node: ast.stmt, state: _State) -> _Outcomes:
         before = state.copy()
@@ -660,7 +621,14 @@ class _ClassFlow:
         iterations, bindings = self.loop_plan(node, state)
         return self.iterate(node, state, iterations, bindings, 0)
 
-    def iterate(self, node: ast.For | ast.AsyncFor | ast.While, state: _State, iterations: list[_Bindings] | None, bindings: _Bindings, start: int) -> _Outcomes:
+    def iterate(
+        self,
+        node: ast.For | ast.AsyncFor | ast.While,
+        state: _State,
+        iterations: list[_Bindings] | None,
+        bindings: _Bindings,
+        start: int,
+    ) -> _Outcomes:
         outcomes: _Outcomes = {}
         exhaustion: _Outcomes = {}
         current: _State | None = state.copy()
@@ -680,7 +648,7 @@ class _ClassFlow:
                 current,
                 iterations[index] if iterations is not None else bindings,
                 outcomes,
-                lambda result, index=index: self.resume_loop(node, result, iterations, bindings, index + 1),
+                partial(self.resume_loop, node, iterations=iterations, bindings=bindings, start=index + 1),
             )
             if current is None:
                 break
@@ -702,11 +670,20 @@ class _ClassFlow:
             node, outcomes, exhaustion, current, exact=iterations is not None
         )
 
-    def resume_loop(self, node: ast.For | ast.AsyncFor | ast.While, incoming: _Outcomes, iterations: list[_Bindings] | None, bindings: _Bindings, start: int) -> _Outcomes:
+    def resume_loop(
+        self,
+        node: ast.For | ast.AsyncFor | ast.While,
+        incoming: _Outcomes,
+        iterations: list[_Bindings] | None,
+        bindings: _Bindings,
+        start: int,
+    ) -> _Outcomes:
         outcomes: _Outcomes = {}
         for kind, state in incoming.items():
             if kind in {"normal", "continue"}:
-                for result_kind, result in self.iterate(node, state, iterations, bindings, start).items():
+                for result_kind, result in self.iterate(
+                    node, state, iterations, bindings, start
+                ).items():
                     _add_outcome(outcomes, result_kind, result)
             else:
                 _add_outcome(outcomes, "normal" if kind == "break" else kind, state)
@@ -727,7 +704,6 @@ class _ClassFlow:
             for kind, result in self.block(node.orelse, exhaustion["normal"]).items():
                 _add_outcome(outcomes, kind, result)
         return outcomes
-
 
     def handlers(self, node: ast.Try | ast.TryStar, raised: _State) -> _Outcomes:
         outcomes: _Outcomes = {}
@@ -763,7 +739,11 @@ class _ClassFlow:
         return self.finish_try(node, body)
 
     def finish_try(self, node: ast.Try | ast.TryStar, body: _Outcomes) -> _Outcomes:
-        suspended = {kind: state for kind, state in body.items() if kind in self.context.continuations}
+        suspended = {
+            kind: state
+            for kind, state in body.items()
+            if kind in self.context.continuations
+        }
         self.context.chain(suspended, lambda result: self.finish_try(node, result))
         outcomes: _Outcomes = {}
         if "normal" in body:
@@ -786,7 +766,10 @@ class _ClassFlow:
                 finished[previous] = incoming
                 continue
             results = self.block(body, incoming)
-            self.context.chain(results, lambda result, previous=previous: flow_rules.restore_outcome(result, previous))
+            self.context.chain(
+                results,
+                partial(flow_rules.restore_outcome, previous=previous),
+            )
             for kind, result in results.items():
                 _add_outcome(finished, previous if kind == "normal" else kind, result)
         return finished
@@ -906,7 +889,7 @@ def _scan_expression(
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     context: _Deferred,
 ) -> Generator[tuple[int, str], None, tuple[ast.expr, _Env]]:
-    evaluator = flow_rules.Expression(context, _scan_node, _targets, _private, _SCOPES)
+    evaluator = expression_rules.Expression(context, _scan_node, _targets, _private, _SCOPES)
     return (yield from evaluator.scan(expression, (values, aliases), closure))
 
 
@@ -956,7 +939,11 @@ def _scan_expression_body(
     state = _State(_ClassValues(values), aliases, closure).copy()
     try:
         assert isinstance(scope, (ast.Lambda, *_COMPREHENSIONS))
-        expressions = [scope.body] if isinstance(scope, ast.Lambda) else flow_rules.comprehension_nodes(scope)
+        expressions = (
+            [scope.body]
+            if isinstance(scope, ast.Lambda)
+            else flow_rules.comprehension_nodes(scope)
+        )
         for node in expressions:
             if isinstance(node, ast.expr):
                 yield from _scan_expression(node, values, aliases, closure, context)
