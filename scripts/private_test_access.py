@@ -664,9 +664,7 @@ class _ClassFlow:
                     _add_outcome(exhaustion, "normal", current)
                 signature = expression_rules.iteration_signature(names, current, self.context) if names else current.key()
                 if signature in seen:
-                    if names:
-                        expression_rules.finish_generators(names, (current.values, current.aliases), current.closure, self.context)
-                        _add_outcome(exhaustion, "normal", current)
+                    expression_rules.converged_iteration(names, current, self.context, exhaustion)
                     break
                 seen.add(signature)
         else:
