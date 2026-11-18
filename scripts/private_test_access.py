@@ -937,7 +937,7 @@ def _scan_expression_body(
         for node in _nodes(scope, descend_assignments=False):
             yield from _scan_node(node, values, aliases, closure, context)
     except flow_rules.Interrupted:
-        pass
+        effects.normal = False
     finally:
         context.effects.pop()
     final = _State(_ClassValues(values), aliases, closure).copy()
