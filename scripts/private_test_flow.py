@@ -576,7 +576,7 @@ class Deferred:
         pending: list[Value | binding_rules.Argument] = [
             value for values, _ in roots for value in values.values()
         ]
-        visited: set[int] = set()
+        visited: dict[int, Value | binding_rules.Argument] = {}
         retained: set[str] = set()
         while pending or (live & self.suspended.keys()) - retained:
             if not pending:
@@ -589,7 +589,7 @@ class Deferred:
             value = pending.pop()
             if id(value) in visited:
                 continue
-            visited.add(id(value))
+            visited[id(value)] = value
             if isinstance(value, Value):
                 live.update(value.callables)
             pending.extend(binding_rules.snapshot_children(value))
