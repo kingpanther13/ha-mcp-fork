@@ -209,6 +209,66 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             'class Example:\n    getattr = public_callback\n    try:\n        del getattr\n        risky()\n    except Exception:\n        getattr(mod, "_helper")\n',
             id="class-handler-after-builtin-restored",
         ),
+        pytest.param(
+            'NAME = "_helper"\ndef outer():\n    NAME = "public"\n    class Example:\n        getattr(mod, NAME)\n        NAME = "public"\n',
+            id="class-bound-name-uses-module-fallback",
+        ),
+        pytest.param(
+            'from builtins import getattr as read\ndef outer():\n    read = public_callback\n    class Example:\n        read(mod, "_helper")\n        read = public_callback\n',
+            id="class-bound-alias-uses-module-fallback",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_helper"\n    NAME, count = (NAME, 1)\n    getattr(mod, NAME)\n',
+            id="class-literal-unpack-preserves-value",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_helper"\n    OTHER = "public"\n    NAME, OTHER = (OTHER, NAME)\n    getattr(mod, OTHER)\n',
+            id="class-literal-unpack-snapshots-rhs",
+        ),
+        pytest.param(
+            'class Example:\n    read = getattr\n    read, count = (read, 1)\n    read(mod, "_helper")\n',
+            id="class-literal-unpack-preserves-alias",
+        ),
+        pytest.param(
+            'matrix["cases"] = getattr(mod, "_helper")\n',
+            id="nonbinding-assignment-still-scans-rhs",
+        ),
+        pytest.param(
+            'class Example:\n    read = public_callback\n    for item in (0, 1):\n        read(mod, "_helper")\n        from builtins import getattr as read\n',
+            id="class-loop-carries-import-alias",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    for item in (0, 1):\n        getattr(mod, NAME)\n        NAME = "_helper"\n',
+            id="class-loop-later-iteration-uses-body-value",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_helper"\n    for item in (0,):\n        break\n    else:\n        NAME = "public"\n    getattr(mod, NAME)\n',
+            id="class-loop-break-bypasses-else",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    try:\n        pass\n    except ValueError:\n        pass\n    else:\n        NAME = "_helper"\n    finally:\n        getattr(mod, NAME)\n',
+            id="class-reachable-try-else-reaches-finally",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    try:\n        raise ExceptionGroup("both", [ValueError(), TypeError()])\n    except* ValueError:\n        NAME = "_helper"\n    except* TypeError:\n        getattr(mod, NAME)\n',
+            id="class-except-star-carries-prior-handler",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    match "_helper":\n        case NAME if False:\n            pass\n        case _:\n            getattr(mod, NAME)\n',
+            id="class-false-match-guard-keeps-private-capture",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_helper"\n    match value:\n        case [NAME] if False:\n            pass\n        case _:\n            getattr(mod, NAME)\n',
+            id="class-failed-match-pattern-keeps-input",
+        ),
+        pytest.param(
+            'class Example:\n    match "_helper":\n        case NAME:\n            getattr(mod, NAME)\n',
+            id="class-whole-subject-private-capture",
+        ),
+        pytest.param(
+            'from contextlib import suppress\nclass Example:\n    NAME = "_helper"\n    with suppress(ValueError), fail() as NAME:\n        pass\n    getattr(mod, NAME)\n',
+            id="class-earlier-context-preserves-unbound-target",
+        ),
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -380,6 +440,66 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
             'getattr = public_callback\nclass Example:\n    try:\n        raise Exception()\n    finally:\n        getattr(None, "_data")\n',
             id="class-exceptional-finally-keeps-alias",
         ),
+        pytest.param(
+            'NAME = "public"\ndef outer():\n    NAME = "_data"\n    class Example:\n        getattr(mod, NAME)\n        NAME = "public"\n',
+            id="class-bound-name-ignores-private-function-value",
+        ),
+        pytest.param(
+            'NAME = "_data"\ndef outer():\n    NAME = "public"\n    class Example:\n        getattr(mod, NAME)\n',
+            id="class-free-name-keeps-function-value",
+        ),
+        pytest.param(
+            'read = public_callback\ndef outer():\n    from builtins import getattr as read\n    class Example:\n        read(None, "_data")\n        read = public_callback\n',
+            id="class-bound-alias-ignores-function-reflection",
+        ),
+        pytest.param(
+            'class Example:\n    NAME, data = ["public", "_data"]\n    getattr(mod, NAME)\n',
+            id="class-literal-unpack-keeps-elements-separate",
+        ),
+        pytest.param(
+            'class Example:\n    read, other = (public_callback, getattr)\n    read(None, "_data")\n',
+            id="class-literal-unpack-public-alias",
+        ),
+        pytest.param(
+            'matrix["cases"] = (\'a0\', \'a1\', \'a2\', \'a3\', \'a4\', \'a5\', \'a6\', \'a7\', \'a8\', \'a9\', \'a10\', \'a11\', \'a12\', \'a13\', \'a14\', \'a15\', \'a16\') + (\'b0\', \'b1\', \'b2\', \'b3\', \'b4\', \'b5\', \'b6\', \'b7\', \'b8\', \'b9\', \'b10\', \'b11\', \'b12\', \'b13\', \'b14\', \'b15\', \'b16\')\n',
+            id="nonbinding-assignment-does-not-expand-data",
+        ),
+        pytest.param(
+            'class Example:\n    read = public_callback\n    for item in (0,):\n        read(None, "_data")\n        from builtins import getattr as read\n',
+            id="class-single-iteration-import-does-not-run-backwards",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    for item in (0,):\n        getattr(mod, NAME)\n        NAME = "_data"\n',
+            id="class-single-iteration-value-does-not-run-backwards",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_data"\n    for item in items:\n        pass\n    else:\n        NAME = "public"\n    getattr(mod, NAME)\n',
+            id="class-for-normal-exit-runs-else",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_data"\n    while flag:\n        pass\n    else:\n        NAME = "public"\n    getattr(mod, NAME)\n',
+            id="class-while-normal-exit-runs-else",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    try:\n        raise ValueError()\n    except ValueError:\n        pass\n    else:\n        NAME = "_data"\n    finally:\n        getattr(mod, NAME)\n',
+            id="class-raised-try-skips-else-before-finally",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "public"\n    try:\n        raise ExceptionGroup("both", [ValueError(), TypeError()])\n    except* ValueError:\n        NAME = "also_public"\n    except* TypeError:\n        getattr(mod, NAME)\n',
+            id="class-except-star-public-handlers",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_data"\n    match "public":\n        case NAME if False:\n            pass\n        case _:\n            getattr(mod, NAME)\n',
+            id="class-false-match-guard-keeps-public-capture",
+        ),
+        pytest.param(
+            'class Example:\n    match "public":\n        case NAME:\n            getattr(mod, NAME)\n',
+            id="class-whole-subject-public-capture",
+        ),
+        pytest.param(
+            'from contextlib import suppress\nclass Example:\n    NAME = "public"\n    with suppress(ValueError), fail() as NAME:\n        pass\n    getattr(mod, NAME)\n',
+            id="class-earlier-context-keeps-public-target",
+        ),
     ],
 )
 def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
@@ -506,3 +626,24 @@ def test_a_suppression_comment_does_not_exempt_private_access(tmp_path):
     result = _run(tmp_path, 'getattr(mod, "_helper")  # noqa: SLF001\n')
     assert result.returncode == 1
     assert "private string target" in result.stdout
+
+
+@pytest.mark.parametrize("private", [False, True], ids=["public", "private"])
+def test_nested_finally_reports_each_source_access_once(tmp_path, private):
+    target = "_helper" if private else "public"
+    source = (
+        "class Example:\n"
+        "    try:\n"
+        "        pass\n"
+        "    finally:\n"
+        "        try:\n"
+        "            pass\n"
+        "        finally:\n"
+        "            try:\n"
+        "                pass\n"
+        "            finally:\n"
+        f"                getattr(mod, {target!r})\n"
+    )
+    result = _run(tmp_path, source)
+    assert result.returncode == int(private), result.stdout + result.stderr
+    assert result.stdout.count(": private string target ") == int(private)
