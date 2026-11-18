@@ -16,7 +16,8 @@ root = Path('/tmp/slf001-profile')
 root.mkdir()
 revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
 assert revision == os.environ['PROBE_CANDIDATE']
-source = Path('tests/src/unit/test_fields_projection_docstring_completeness.py')
+source = Path(os.environ['PROBE_FILE'])
+assert source.is_relative_to('tests/src/unit') and source.suffix == '.py'
 target = root / 'repo' / source
 target.parent.mkdir(parents=True)
 shutil.copyfile(source, target)
