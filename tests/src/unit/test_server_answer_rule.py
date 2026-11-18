@@ -488,6 +488,8 @@ runpy.run_path(script, run_name="__main__")
                 "patch-dict-optional-overlay-keeps-private-target": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._helper', **({'in_dict': {}} if flag else {f\"{'x':>5000}\": 1})}\npatch.dict(**kwargs)\n",
                 "patch-dict-aliased-conditional-key-keeps-private-target": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: 'pkg._helper'})\n",
                 "patch-dict-large-string-precision-retains-short-private-target-key": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
+                "helper-bound-method-argument-resolves-live-method": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
+                "helper-tuple-argument-preserves-ordered-shape": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nlookup(args)\n",
             }.items()
         ),
     ],
@@ -728,6 +730,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "patch-dict-definite-overlay-replaces-private-target": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._data', f\"{'x':>5000}\": 1, **{'in_dict': {}}}\npatch.dict(**kwargs)\n",
                 "patch-dict-conditional-key-keeps-public-target": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: {}})\n",
                 "patch-dict-large-width-key-keeps-private-looking-replacement-data": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
+                "helper-bound-method-argument-keeps-public-target": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
+                "helper-tuple-argument-keeps-public-target": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nlookup(args)\n",
             }.items()
         ),
     ],
