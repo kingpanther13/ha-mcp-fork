@@ -632,7 +632,9 @@ async def test_the_right_core_version_is_accepted_only_before_the_deadline(
         ):
             await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0)
     else:
-        assert await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0) == CORE_NEW
+        assert (
+            await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0) == CORE_NEW
+        )
 
     assert haos.supervisor.requests == [
         ("GET", "/supervisor/info"),
