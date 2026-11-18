@@ -929,13 +929,12 @@ class Deferred:
                     "normal" if yielded or (default and completed) else "raise"
                     for default in defaults
                 }
+                resumed_state = state.copy()
+                module_bindings(*resumed_state.closure)[1][key] = frozenset(
+                    {kind if yielded else "done"}
+                )
                 for destination in destinations:
-                    add_outcome(outcomes, destination, state)
+                    add_outcome(outcomes, destination, resumed_state)
             resumed.append(Analysis(result.findings, outcomes))
         self.bind_alias(key, frozenset(following or {"done"}), env, closure)
-        for result in resumed:
-            for state in result.outcomes.values():
-                module_bindings(*state.closure)[1][key] = frozenset(
-                    following or {"done"}
-                )
         return resumed
