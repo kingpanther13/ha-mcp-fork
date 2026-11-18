@@ -35,6 +35,7 @@ async def _patch_array(
 ) -> tuple[Any, dict[str, Any]]:
     """Apply operations to an array served over the real app HTTP route."""
     route.target.body = items
+    seen = len(route.target.requests)
     try:
         result = await manage(
             route.client,
@@ -45,7 +46,7 @@ async def _patch_array(
     finally:
         bodies = [
             request.body
-            for request in route.target.requests
+            for request in route.target.requests[seen:]
             if request.method == "POST"
         ]
         if posted is not None:
@@ -60,6 +61,24 @@ async def _patch_array(
 
 
 class TestApplyArrayOps:
+    async def test_repeated_calls_capture_only_their_own_post(self, _registered_tool):
+        first, _ = await _patch_array(
+            _registered_tool,
+            [{"id": "n1", "name": "Original"}],
+            [{"op": "patch", "id": "n1", "patches": {"name": "First"}}],
+        )
+        posted: list[Any] = []
+        second, summary = await _patch_array(
+            _registered_tool,
+            first,
+            [{"op": "patch", "id": "n1", "patches": {"name": "Second"}}],
+            posted=posted,
+        )
+        assert first == [{"id": "n1", "name": "First"}]
+        assert second == [{"id": "n1", "name": "Second"}]
+        assert posted == [second]
+        assert summary["patched"] == [{"id": "n1", "fields": ["name"]}]
+
     def _flows_fixture(self) -> list[dict]:
         return [
             {"id": "tab1", "type": "tab", "label": "Lights"},

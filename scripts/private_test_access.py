@@ -152,6 +152,11 @@ def _bindings(
         for node in nodes
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
+    local_names.update(
+        node.name
+        for node in nodes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
     imported: dict[str, str] = {}
     _import_aliases(nodes, imported)
     local_names.update(imported)
@@ -234,6 +239,10 @@ def _update_aliases(node: ast.AST, aliases: dict[str, str]) -> None:
         for target, expression in _assignments([node]):
             if isinstance(expression, (ast.Name, ast.Attribute)):
                 aliases[target] = _dotted(expression, aliases)
+            elif isinstance(expression, ast.Dict):
+                # Dictionary keys are data for patch.dict, but targets for
+                # patch.multiple. Preserve that distinction through aliases.
+                aliases[target] = "<mapping>"
             else:
                 aliases.pop(target, None)
 
@@ -256,6 +265,13 @@ def _targets(
     target = _argument(call, 0, "target")
     if operation == "patch":
         return _strings(target, values)
+    if name.endswith("patch.dict"):
+        mapping = _argument(call, 0, "in_dict")
+        if isinstance(mapping, ast.Dict) or (
+            mapping is not None and _dotted(mapping, aliases) == "<mapping>"
+        ):
+            return set()
+        return _strings(mapping, values)
     if name.endswith("patch.multiple"):
         keys = {item.arg for item in call.keywords if item.arg is not None}
         keys.update(
@@ -291,7 +307,7 @@ def _targets(
 
 
 def _private(target: str) -> bool:
-    parts = target.split(".")
+    parts = target.replace(":", ".").split(".")
     for index, part in enumerate(parts):
         if not part.startswith("_") or (
             len(part) > 4 and part.startswith("__") and part.endswith("__")
@@ -318,6 +334,11 @@ def _scan_scope(
         if isinstance(node, _SCOPES):
             for header in _headers(node):
                 yield from _scan_scope(ast.Expression(body=header), values, aliases)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Defaults and decorators used the old binding; the body and
+                # subsequent calls see the newly defined callable. An empty
+                # alias also prevents a local `getattr` from naming the builtin.
+                aliases[node.name] = ""
             first_values: dict[str, set[str]] = {}
             if isinstance(node, _COMPREHENSIONS) and isinstance(
                 iterator_target := node.generators[0].target, ast.Name
@@ -328,6 +349,9 @@ def _scan_scope(
             # Methods and comprehension bodies do not capture a class namespace;
             # their decorators/defaults/first iterable still execute in it.
             yield from _scan_scope(node, *closure, first_values)
+            if isinstance(node, ast.ClassDef):
+                # A class name is bound only after its body has executed.
+                aliases[node.name] = ""
         elif isinstance(node, ast.Call):
             for target in sorted(_targets(node, aliases, values)):
                 if _private(target):
