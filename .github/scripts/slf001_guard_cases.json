@@ -139,6 +139,30 @@
       "id": "unknown-generator-expression-for-converges-allow",
       "source": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, 'public')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "eager-generator-keeps-captured-argument-after-alias-cleared",
+      "source": "NAME = 'public'\ndef gen():\n    getattr(mod, NAME)\n    yield ('x', 1)\npending = gen()\nnext(pending)\ndef clear():\n    global pending\n    pending = None\nNAME = '_data'\ndict(pending, ignored=clear())\nNAME = 'public'\n",
+      "baseline_fails": false,
+      "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190",
+      "boundary_fails": true
+    },
+    {
+      "id": "definitely-infinite-generator-tuple-allow",
+      "source": "def endless():\n    while True:\n        yield None\ntuple(endless())\ngetattr(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "definitely-infinite-generator-for-allow",
+      "source": "def endless():\n    while True:\n        yield None\nfor _ in endless():\n    pass\ngetattr(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-next-eager-raise-public-control",
+      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, 'public')\n",
+      "baseline_fails": false,
+      "boundary_fails": false,
+      "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
     }
   ],
   "reject": [
@@ -281,6 +305,30 @@
       "id": "unknown-generator-expression-for-converges-reject",
       "source": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, '_helper')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "eager-generator-captured-argument-still-runs-following-body",
+      "source": "NAME = 'public'\ndef gen():\n    yield ('x', 1)\n    getattr(mod, NAME)\npending = gen()\nnext(pending)\ndef clear():\n    global pending\n    pending = None\nNAME = '_data'\ndict(pending, ignored=clear())\nNAME = 'public'\n",
+      "baseline_fails": true,
+      "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190",
+      "boundary_fails": false
+    },
+    {
+      "id": "definitely-infinite-generator-tuple-reject",
+      "source": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\ntuple(endless())\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "definitely-infinite-generator-for-reject",
+      "source": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\nfor _ in endless():\n    pass\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "mixed-next-eager-raise-preserves-next-normal-branch",
+      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, '_data')\n",
+      "baseline_fails": false,
+      "boundary_fails": true,
+      "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
     }
   ],
   "error": []
