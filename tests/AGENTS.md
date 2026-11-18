@@ -308,11 +308,13 @@ Private access and typing checks also cover both complete trees:
   user reaches: go through the public command or tool. Importing the name
   (`from module import _name`, or any name from a private module such as
   `ha_mcp._internal`) skips the entry point the same way and SLF001 does not
-  see it, so `src/unit/test_core_reply_rules.py` also refuses those imports. The vendored packages' import path (`ha_mcp._vendor`) and
+  see it, so `src/unit/test_core_reply_rules.py` also refuses those imports.
+  The vendored packages' import path (`ha_mcp._vendor`) and
   the test trees' own helper modules are exempt; a private name inside a
-  vendored package is not.   `scripts/private_test_access.py` also checks the private names that strings
+  vendored package is not.
+  `uv run python scripts/private_test_access.py` checks the private names that strings
   reach: reflection (`getattr`, `hasattr`, `setattr`, `delattr`) and patch
-  targets, including `patch.object` and `patch.multiple`. Fast Checks runs it
+  targets, including `patch.object`, `patch.dict` and `patch.multiple`. Fast Checks runs it
   over both complete trees with no exemption list. It resolves lexical string
   constants, concatenation, f-strings and static keyword dictionaries; runtime
   computed names still need review. Only real dunder names, the `_vendor`

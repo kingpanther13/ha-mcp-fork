@@ -612,16 +612,32 @@ async def test_a_core_version_that_never_arrives_is_reported(haos: Haos) -> None
     assert repr(CORE_OLD) in str(raised.value)
 
 
-async def test_the_right_core_version_answered_too_late_is_not_accepted(
-    haos: Haos,
+@pytest.mark.parametrize(
+    "elapsed",
+    [pytest.param(0.0, id="before-deadline"), pytest.param(1.0, id="at-deadline")],
+)
+async def test_the_right_core_version_is_accepted_only_before_the_deadline(
+    haos: Haos, elapsed: float
 ) -> None:
     haos.supervisor.answer("GET", "/supervisor/info", supervisor_info())
     haos.supervisor.answer("GET", "/core/info", CORE_NEW)
-    haos.supervisor.when("GET", "/core/info", lambda: haos.clock.advance(1.0))
+    haos.supervisor.when("GET", "/core/info", lambda: haos.clock.advance(elapsed))
     ws = await haos.connected()
 
-    with pytest.raises(TimeoutError, match="receive exceeded its deadline"):
-        await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0)
+    if elapsed:
+        # The server can advance the clock before the sending thread returns.
+        with pytest.raises(
+            TimeoutError,
+            match=r"supervisor/api get /core/info (?:send|receive) exceeded its deadline",
+        ):
+            await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0)
+    else:
+        assert await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0) == CORE_NEW
+
+    assert haos.supervisor.requests == [
+        ("GET", "/supervisor/info"),
+        ("GET", "/core/info"),
+    ]
 
 
 async def test_no_core_version_read_starts_after_the_reconnect_spent_the_budget(

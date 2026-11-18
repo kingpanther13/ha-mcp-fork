@@ -15,7 +15,6 @@ import ast
 from collections.abc import Iterator
 from itertools import chain
 from pathlib import Path
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -149,7 +148,9 @@ def _bindings(
 ) -> tuple[dict[str, binding_rules.Value], binding_rules.Aliases]:
     nodes = list(_nodes(scope))
     if isinstance(scope, ast.ClassDef):
-        values, aliases = binding_rules.class_bindings(parent_values, parent_aliases, nodes)
+        values, aliases = binding_rules.class_bindings(
+            parent_values, parent_aliases, nodes
+        )
         return _ClassValues(values), aliases
     local_names = binding_rules.bound_names(nodes)
     values = binding_rules.ScopeValues(parent_values)
@@ -189,13 +190,22 @@ def _own_object(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in {"self", "cls"}
 
 
-def _targets(call: ast.Call, aliases: binding_rules.Aliases, values: dict[str, binding_rules.Value]) -> set[str]:
+def _targets(
+    call: ast.Call,
+    aliases: binding_rules.Aliases,
+    values: dict[str, binding_rules.Value],
+) -> set[str]:
     return set().union(
-        *(_named_targets(call, name, values) for name in binding_rules.dotted(call.func, aliases))
+        *(
+            _named_targets(call, name, values)
+            for name in binding_rules.dotted(call.func, aliases)
+        )
     )
 
 
-def _named_targets(call: ast.Call, name: str, values: dict[str, binding_rules.Value]) -> set[str]:
+def _named_targets(
+    call: ast.Call, name: str, values: dict[str, binding_rules.Value]
+) -> set[str]:
     operation = name.rsplit(".", 1)[-1]
     target = _argument(call, 0, "target")
     if operation == "patch":
@@ -213,7 +223,9 @@ def _named_targets(call: ast.Call, name: str, values: dict[str, binding_rules.Va
                 )
             )
         )
-        return binding_rules.strings(target, values) | (set() if _own_object(target) else keys)
+        return binding_rules.strings(target, values) | (
+            set() if _own_object(target) else keys
+        )
     if name.endswith("patch.object"):
         return binding_rules.strings(target, values) | (
             set()
@@ -316,7 +328,9 @@ def _scan_assignment(
         yield from _scan_expression(value, values, aliases, closure)
     # Resolve a chained assignment's RHS once, then evaluate and bind targets
     # left to right: a later target expression can see an earlier new binding.
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    targets: list[ast.expr] = (
+        node.targets if isinstance(node, ast.Assign) else [node.target]
+    )
     for target, resolved, assigned_value in binding_rules.prepared_assignment(
         targets, value, values, aliases
     ):
@@ -375,7 +389,9 @@ def _join_class_paths(
     for path_values, path_aliases in paths:
         binding_rules.union_values(joined, path_values)
         binding_rules.union_values(values.observed_values, path_values.observed_values)
-        binding_rules.union_aliases(values.observed_aliases, path_values.observed_aliases)
+        binding_rules.union_aliases(
+            values.observed_aliases, path_values.observed_aliases
+        )
         # An unbound alias still resolves by its original name, e.g. getattr.
         binding_rules.union_aliases(
             joined_aliases,
@@ -518,7 +534,8 @@ def _scan_class_loop(
     if items is not None and isinstance(node, (ast.For, ast.AsyncFor)):
         # Python evaluates the entire iterable before the first iteration.
         iterations = [
-            binding_rules.prepared_assignment([node.target], item, values, aliases) for item in items
+            binding_rules.prepared_assignment([node.target], item, values, aliases)
+            for item in items
         ]
         for bindings in iterations:
             iteration = _ClassValues(current)
@@ -613,7 +630,9 @@ def _scan_class_try(
             binding_rules.union_values(handler_start_values, caught_values)
             binding_rules.union_aliases(handler_start_aliases, caught_aliases)
             binding_rules.union_values(handler_start_values, interrupted_handler)
-            binding_rules.union_aliases(handler_start_aliases, interrupted_handler_aliases)
+            binding_rules.union_aliases(
+                handler_start_aliases, interrupted_handler_aliases
+            )
     identical_finally_input = False
     if paths:
         _join_class_paths(values, aliases, paths)
@@ -824,7 +843,9 @@ def _scan_scope(
     values, aliases = _bindings(scope, values, aliases, initial_values)
     if isinstance(scope, ast.Module) and isinstance(values, binding_rules.ScopeValues):
         values.module_bindings = (values, aliases)
-    assigned_names = {name for name, _, _ in binding_rules.assignments(list(_nodes(scope)))}
+    assigned_names = {
+        name for name, _, _ in binding_rules.assignments(list(_nodes(scope)))
+    }
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
     yield from _scan_nodes(
