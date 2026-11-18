@@ -123,7 +123,7 @@ def validate(results: dict) -> None:
     assert set(before["failures"]) == expected, set(before["failures"]) ^ expected
     for case, failure in before["failures"].items():
         if case.endswith("::" + HELPER_NAME):
-            assert "ValueError: too many values to unpack (expected 1)" in failure, failure
+            assert "ValueError: too many values to unpack (expected 1, got 2)" in failure, failure
             assert "[body] = bodies" in failure, failure
         else:
             assert "AssertionError" in failure, failure
