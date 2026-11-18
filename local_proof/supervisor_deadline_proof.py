@@ -67,3 +67,38 @@ assert {case.get("name") for case in cases["mutant"]} == {case.get("name") for c
 assert sum(case.find("failure") is not None for case in cases["mutant"]) == 1
 assert path.read_text() == original
 print("Removing only the post-receive guard fails the at-deadline case; restoring it passes both cases.")
+
+# Keep the production-facing test unchanged; repeat it only in this fork proof
+# so every iteration also runs Core's timer/task cleanup verification.
+readiness_name = "test_a_readiness_timeout_names_a_failed_reconnect"
+test_original = test_path.read_text()
+header = f"async def {readiness_name}(haos: Haos) -> None:"
+assert test_original.count(header) == 1
+repeated = test_original.replace(
+    header,
+    '@pytest.mark.parametrize("iteration", range(40))\n'
+    f"async def {readiness_name}(haos: Haos, iteration: int) -> None:",
+)
+try:
+    test_path.write_text(repeated)
+    (evidence / "readiness-repetition.patch").write_bytes(
+        subprocess.check_output(["git", "diff", "--", str(test_path)])
+    )
+    with (evidence / "readiness-repetition.log").open("w") as log:
+        repeated_result = subprocess.run([
+            "uv", "run", "pytest", str(test_path) + "::" + readiness_name,
+            "-n", "0", "--tb=short", "--maxfail=0", "-v", "-rA",
+            f"--junitxml={evidence / 'readiness-repetition.xml'}",
+        ], stdout=log, stderr=subprocess.STDOUT, check=False)
+finally:
+    test_path.write_text(test_original)
+readiness_cases = ET.parse(evidence / "readiness-repetition.xml").findall(".//testcase")
+assert repeated_result.returncode == 0, repeated_result.returncode
+assert len(readiness_cases) == 40, len(readiness_cases)
+for case in readiness_cases:
+    assert case.find("failure") is None, ET.tostring(case)
+    assert case.find("error") is None, ET.tostring(case)
+    assert case.find("skipped") is None, ET.tostring(case)
+assert len({case.get("name") for case in readiness_cases}) == 40
+assert test_path.read_text() == test_original
+print("All 40 readiness reconnect cases passed with Core cleanup checks enabled.")
