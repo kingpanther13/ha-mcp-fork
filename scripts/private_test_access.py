@@ -391,9 +391,7 @@ def _scan_assignment(
     resolved = _dotted(value, aliases) if value is not None else None
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     for target in targets:
-        yield from _scan_assignment_target(
-            target, resolved, values, aliases, closure
-        )
+        yield from _scan_assignment_target(target, resolved, values, aliases, closure)
     if isinstance(value, ast.Lambda):
         # Defaults ran before assignment. The deferred body sees the new binding,
         # except in a class, whose namespace is not captured by the lambda.
@@ -432,7 +430,9 @@ def _scan_nodes(
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             yield from _scan_assignment(node, values, aliases, closure)
         elif isinstance(node, _SCOPES):
-            yield from _scan_nested_scope(node, values, aliases, closure, assigned_names)
+            yield from _scan_nested_scope(
+                node, values, aliases, closure, assigned_names
+            )
         elif isinstance(node, ast.Call):
             for target in sorted(_targets(node, aliases, values)):
                 if _private(target):
@@ -471,7 +471,11 @@ def _scan_scope(
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
     yield from _scan_nodes(
-        _nodes(scope, descend_assignments=False), values, aliases, closure, assigned_names
+        _nodes(scope, descend_assignments=False),
+        values,
+        aliases,
+        closure,
+        assigned_names,
     )
 
 
