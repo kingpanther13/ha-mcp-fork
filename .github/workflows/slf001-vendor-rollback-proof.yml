@@ -1,0 +1,36 @@
+name: SLF001 vendor rollback proof
+
+on:
+  push:
+    branches: [ci/slf001-vendor-rollback-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROBE_ROOT: /tmp/slf001-vendor-rollback-proof
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.9'
+          python-version: '3.14'
+      - name: Prove current test rejects incomplete rollback
+        run: >-
+          uv run --no-project --with pytest==9.0.3 --with packaging==26.3
+          --python 3.14 python .github/scripts/slf001_vendor_rollback_probe.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: slf001-vendor-rollback-proof
+          path: ${{ env.PROBE_ROOT }}
+          if-no-files-found: error
