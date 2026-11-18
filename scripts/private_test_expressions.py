@@ -34,7 +34,11 @@ class Expression:
         self.snapshots: flow_rules.Env = ({}, {})
 
     def snapshot(
-        self, node: ast.expr, env: flow_rules.Env, *, origin: ast.expr | None = None,
+        self,
+        node: ast.expr,
+        env: flow_rules.Env,
+        *,
+        origin: ast.expr | None = None,
         kind: str = "value",
     ) -> ast.Name:
         source = node if origin is None else origin
@@ -142,7 +146,11 @@ class Expression:
         return self.snapshot(node, env)
 
     def boolean(
-        self, operands: list[ast.expr], operation: ast.boolop, env: flow_rules.Env, closure: flow_rules.Env
+        self,
+        operands: list[ast.expr],
+        operation: ast.boolop,
+        env: flow_rules.Env,
+        closure: flow_rules.Env,
     ) -> Generator[tuple[int, str], None, ast.AST]:
         first, *remaining = operands
         captured = yield from self.evaluate(first, env, closure)
@@ -154,7 +162,9 @@ class Expression:
                 return captured
             return (yield from self.boolean(remaining, operation, env, closure))
         # An unknown condition may skip the remainder, including a known raise.
-        skipped = flow_rules.State(flow_rules.ClassValues(env[0]), dict(env[1]), closure).copy()
+        skipped = flow_rules.State(
+            flow_rules.ClassValues(env[0]), dict(env[1]), closure
+        ).copy()
         branch = skipped.copy()
         effects = flow_rules.Effects([])
         self.context.effects.append(effects)
@@ -184,5 +194,6 @@ class Expression:
         return self.snapshot(
             ast.Name(id="value", ctx=ast.Load()),
             (merged, {"value": merged["value"].callables}),
-            origin=first, kind="boolean",
+            origin=first,
+            kind="boolean",
         )

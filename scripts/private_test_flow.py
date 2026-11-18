@@ -63,9 +63,7 @@ def bindings(
     initial_values: dict[str, Value] | None = None,
 ) -> tuple[dict[str, Value], Aliases]:
     if isinstance(scope, ast.ClassDef):
-        values, aliases = class_bindings(
-            parent_values, parent_aliases, nodes
-        )
+        values, aliases = class_bindings(parent_values, parent_aliases, nodes)
         return ClassValues(values), aliases
     local_names = binding_rules.bound_names(nodes)
     global_names = {
