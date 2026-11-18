@@ -19,8 +19,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
 _SCOPES = (
-    ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
-    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.Lambda,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
 )
 
 
@@ -191,9 +197,9 @@ def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr]]:
             and node.value is not None
         ):
             yield node.target.id, node.value
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(
-            node.target, ast.Name
-        ):
+        elif isinstance(
+            node, (ast.For, ast.AsyncFor, ast.comprehension)
+        ) and isinstance(node.target, ast.Name):
             yield node.target.id, node.iter
 
 
