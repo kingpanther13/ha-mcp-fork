@@ -1,177 +1,66 @@
 #!/usr/bin/env python3
-"""Reject private names reached through strings in unit and app tests.
+"""Reject private names that unit and app tests reach through strings.
 
-Ruff checks attribute syntax and the private-import guard checks imports. This
-checks reflection and patch targets, including lexical constants, concatenation,
-f-strings and patch.multiple keys. It never imports the files it reads and has
-no exemption list. Unknown runtime values still require review; a known private
-segment in an otherwise dynamic f-string is checked too.
+Ruff (SLF001) checks attribute syntax and the private-import guard checks
+imports. This checks the names a test passes as strings: reflection
+(``getattr``, ``hasattr``, ``setattr``, ``delattr``, ``getattr_static``,
+``attrgetter``, ``__getattribute__``), imports (``import_module``,
+``__import__``), patch targets (``patch``, ``patch.object``, ``patch.dict``,
+``patch.multiple``, ``monkeypatch.setattr``/``delattr``/``setitem``) and
+namespace lookups (``vars(x)[...]``, ``x.__dict__[...]``).
 
-Run ``uv run python scripts/private_test_access.py`` from the repository root.
-Fast Checks runs the same command over both complete test trees. It checks
-reflection helpers and patch targets, including patch.object, patch.dict and
-patch.multiple, resolving lexical constants, concatenation, f-strings and static
-keyword dictionaries.
-Real dunder names, the ha_mcp._vendor import-path segment, and the test's own
-self/cls are allowed, matching the attribute/import checks. A replacement's
-value is data, not a target. Runtime-computed names still need review.
+A name counts when it is a string literal, a name the file assigns strings to
+(including loop, ``parametrize`` and local-helper arguments), or a
+concatenation or f-string of those. A name only known at runtime is left to
+review. Dunder names, the ``ha_mcp._vendor`` package and the test's own
+``self``/``cls`` are allowed. There is no exemption list.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-import copy
-from collections.abc import Callable, Generator, Iterator
-from dataclasses import replace
-from functools import partial
+import itertools
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from scripts import private_test_bindings as binding_rules
-    from scripts import private_test_expressions as expression_rules
-    from scripts import private_test_flow as flow_rules
-else:
-    import private_test_bindings as binding_rules
-    import private_test_expressions as expression_rules
-    import private_test_flow as flow_rules
-
 
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
-_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
-_SCOPES = (
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
-    ast.Lambda,
-    *_COMPREHENSIONS,
-)
+UNKNOWN = "\0"
+MAX_ALTERNATIVES = 256
+REFLECTION = {"getattr", "hasattr", "setattr", "delattr"}
+DUNDER_REFLECTION = {"__getattribute__", "__getattr__", "__setattr__", "__delattr__"}
+PATCH_MULTIPLE_OPTIONS = {
+    "target",
+    "spec",
+    "spec_set",
+    "create",
+    "new_callable",
+    "autospec",
+}
+PATCH_DICT_OPTIONS = {"in_dict", "values", "clear"}
+OWN = {"self", "cls"}
+
+Scope = dict[str, list[ast.expr]]
+Seen = frozenset[tuple[int, str]]
+Resolved = tuple[ast.expr, list[Scope], Seen]
+Passed = dict[tuple[str, str], set[str]]
+_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+_DEFINITIONS = (*_FUNCTIONS, ast.Lambda, ast.ClassDef)
+_SEQUENCES = (ast.Tuple, ast.List, ast.Set)
 
 
-_ClassValues = flow_rules.ClassValues
-_State = flow_rules.State
-_Env = flow_rules.Env
+class _Item(ast.expr):
+    """An item a ``for`` takes from ``iterable``, or element ``index`` of it."""
+
+    iterable: ast.expr
+    index: int | None
 
 
-_Deferred = flow_rules.Deferred
-
-
-def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.AST]:
-    """Nodes in one lexical scope, leaving nested bodies to their own scope."""
-    children: Iterator[ast.AST]
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        children = iter(scope.body)
-    elif isinstance(scope, ast.Lambda):
-        children = iter([scope.body])
-    elif isinstance(scope, _COMPREHENSIONS):
-        children = expression_rules.comprehension_nodes(scope)
-    else:
-        children = ast.iter_child_nodes(scope)
-    for child in children:
-        yield child
-        if isinstance(child, _SCOPES) or (
-            not descend_assignments and isinstance(child, (ast.Assign, ast.AnnAssign))
-        ):
-            continue
-        yield from _nodes(
-            child,
-            descend_assignments=descend_assignments,
-        )
-
-
-_headers = expression_rules.scope_headers
-
-
-def _bindings(
-    scope: ast.AST,
-    parent_values: dict[str, binding_rules.Value],
-    parent_aliases: binding_rules.Aliases,
-    initial_values: dict[str, binding_rules.Value] | None = None,
-) -> tuple[dict[str, binding_rules.Value], binding_rules.Aliases]:
-    return flow_rules.bindings(
-        scope, parent_values, parent_aliases, list(_nodes(scope)), initial_values
-    )
-
-
-def _targets(
-    call: ast.Call,
-    aliases: binding_rules.Aliases,
-    values: dict[str, binding_rules.Value],
-) -> set[str]:
-    return set().union(
-        *(
-            _named_targets(call, name, values)
-            for name in binding_rules.dotted(call.func, aliases)
-        )
-    )
-
-
-def _call_kind(name: str) -> str | None:
-    operation = name.rsplit(".", 1)[-1]
-    method = ".".join(name.split(".")[-2:])
-    if method in {"patch.dict", "patch.object", "patch.multiple"}:
-        return method
-    if operation in {"setattr", "delattr"} and name not in {
-        operation,
-        f"builtins.{operation}",
-    }:
-        return f"monkey.{operation}"
-    if operation in {"patch", "getattr", "hasattr", "setattr", "delattr"}:
-        return operation
-    return None
-
-
-def _named_targets(
-    call: ast.Call, name: str, values: dict[str, binding_rules.Value]
-) -> set[str]:
-    kind = _call_kind(name)
-    if kind is None:
-        return set()
-    return set().union(
-        *(
-            _argument_targets(kind, arguments)
-            for arguments in binding_rules.call_arguments(
-                call, values, keyword_target="in_dict" if kind == "patch.dict" else None
-            )
-        )
-    )
-
-
-def _argument_strings(argument: binding_rules.Argument | None) -> set[str]:
-    return argument.strings() if argument is not None else set()
-
-
-def _argument_targets(kind: str, arguments: binding_rules.Arguments) -> set[str]:
-    if kind == "patch.dict":
-        return _argument_strings(arguments.argument(0, "in_dict"))
-    target = arguments.argument(0, "target")
-    if kind == "patch":
-        return _argument_strings(target)
-    if kind in {"patch.object", "patch.multiple"}:
-        targets = _argument_strings(target)
-        if target is not None and target.own_object():
-            return targets
-        if kind == "patch.multiple":
-            return targets | {name for name, _ in arguments.keywords}
-        return targets | _argument_strings(arguments.argument(1, "attribute"))
-    if target is not None and target.own_object():
-        return set()
-    if kind in {"monkey.setattr", "monkey.delattr"}:
-        signature = (2, "value") if kind == "monkey.setattr" else (1, "name")
-        if arguments.argument(*signature) is None:
-            return _argument_strings(target)
-        return _argument_strings(arguments.argument(1, "name"))
-    return _argument_strings(arguments.argument(1, "name"))
-
-
-def _private(target: str) -> bool:
+def private(target: str) -> bool:
     parts = target.replace(":", ".").split(".")
     for index, part in enumerate(parts):
-        if not part.startswith("_") or (
-            len(part) > 4 and part.startswith("__") and part.endswith("__")
-        ):
+        if not part.startswith("_") or (part.startswith("__") and part.endswith("__")):
             continue
         if index == 1 and parts[0] == "ha_mcp" and part == "_vendor":
             continue
@@ -179,781 +68,398 @@ def _private(target: str) -> bool:
     return False
 
 
-def _bind_definition(
-    name: str,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    resolved: frozenset[str] = frozenset({""}),
-) -> None:
-    aliases[name] = resolved
-    values[name] = binding_rules.Value(callables=resolved)
-    if isinstance(values, _ClassValues):
-        _store_class_name(values, aliases, name)
+def _dotted(node: ast.expr, aliases: dict[str, str]) -> str:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return ""
+    parts.append(aliases.get(node.id, node.id))
+    return ".".join(reversed(parts))
 
 
-def _scan_assignment_target(
-    target: ast.expr,
-    resolved: frozenset[str] | None,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
-    context: _Deferred,
-    assigned_value: binding_rules.Value = binding_rules.Value(),
-) -> Iterator[tuple[int, str]]:
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+    return aliases
+
+
+# --- What each scope binds ---------------------------------------------------
+
+
+def _scope_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+    """Nodes in one scope, leaving nested definitions' bodies to their own scope."""
+    for child in ast.iter_child_nodes(scope):
+        yield child
+        if not isinstance(child, _DEFINITIONS):
+            yield from _scope_nodes(child)
+
+
+def _bind(scope: Scope, target: ast.expr, value: ast.expr | None) -> None:
     if isinstance(target, ast.Name):
-        if resolved is not None:
-            aliases[target.id] = resolved
-            values[target.id] = replace(assigned_value, callables=resolved)
-            if isinstance(values, _ClassValues):
-                _store_class_name(values, aliases, target.id)
+        scope.setdefault(target.id, []).append(value or ast.Constant(UNKNOWN))
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        values = value.elts if isinstance(value, (ast.Tuple, ast.List)) else []
+        same_shape = len(values) == len(target.elts)
+        for index, element in enumerate(target.elts):
+            _bind(scope, element, values[index] if same_shape else None)
+
+
+def _bind_loop(scope: Scope, target: ast.expr, iterable: ast.expr) -> None:
+    if isinstance(iterable, _SEQUENCES):
+        for element in iterable.elts:
+            _bind(scope, target, element)
+        return
+    elements = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
+    for index, element in enumerate(elements):
+        item = _Item()
+        item.iterable, item.index = iterable, (None if element is target else index)
+        _bind(scope, element, item)
+
+
+def _runtime_names(node: ast.AST) -> list[str]:
+    """Names a node binds to a value only known at runtime."""
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [(alias.asname or alias.name).split(".")[0] for alias in node.names]
+    if isinstance(node, (*_FUNCTIONS, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, ast.ExceptHandler):
+        return [node.name] if node.name else []
+    if isinstance(node, (ast.AugAssign, ast.withitem)):
+        stores = (n for n in ast.walk(node) if isinstance(n, ast.Name))
+        return [n.id for n in stores if isinstance(n.ctx, ast.Store)]
+    return []
+
+
+def _bind_node(scope: Scope, node: ast.AST) -> None:
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            _bind(scope, target, node.value)
+    elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+        _bind(scope, node.target, node.value)
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        _bind_loop(scope, node.target, node.iter)
     else:
-        yield from _scan_expression(target, values, aliases, closure, context)
-        if resolved is not None and isinstance(target, ast.Attribute):
-            owners = binding_rules.dotted(target.value, aliases)
-            for owner in owners:
-                if owner.startswith("@class:") and "." not in owner:
-                    name = f"{owner}.{target.attr}"
-                    replacement = resolved or frozenset(
-                        {"@inherit" if "/" in owner else ""}
-                    )
-                    stored = replacement
-                    if len(owners) > 1 or owner.endswith("/*"):
-                        stored |= binding_rules.alias_options(name, aliases)
-                    aliases[name] = stored
-                    flow_rules.module_bindings(*closure)[1][name] = stored
+        for name in _runtime_names(node):
+            _bind(scope, ast.Name(name), None)
 
 
-def _scan_assignment(
-    node: ast.Assign | ast.AnnAssign,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
-    context: _Deferred,
-    on_error: Callable[[], None] | None = None,
-) -> Iterator[tuple[int, str]]:
-    value = node.value
-    inputs = (values, aliases)
-    if isinstance(value, ast.Lambda):
-        for header in _headers(value):
-            yield from _scan_expression(header, values, aliases, closure, context)
-    elif value is not None:
-        value, inputs = yield from _scan_expression(
-            value, values, aliases, closure, context
-        )
-    token = (
-        context.register(
-            value,
-            closure,
-            (values, aliases),
-            method=isinstance(values, _ClassValues) and values.scope_kind == "class",
-        )
-        if isinstance(value, ast.Lambda)
-        else None
+def _parametrized(function: ast.FunctionDef | ast.AsyncFunctionDef) -> Scope:
+    """The values ``pytest.mark.parametrize`` gives each argument."""
+    scope: Scope = {}
+    for decorator in function.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and _dotted(decorator.func, {}).endswith("parametrize")
+            and len(decorator.args) >= 2
+        ):
+            continue
+        names, rows = decorator.args[:2]
+        if isinstance(names, ast.Constant) and isinstance(names.value, str):
+            fields = [name.strip() for name in names.value.split(",")]
+        else:
+            elements = names.elts if isinstance(names, _SEQUENCES) else []
+            fields = [str(e.value) for e in elements if isinstance(e, ast.Constant)]
+        for row in rows.elts if isinstance(rows, _SEQUENCES) else []:
+            if isinstance(row, ast.Call) and _dotted(row.func, {}).endswith("param"):
+                cells = list(row.args)
+            elif len(fields) > 1 and isinstance(row, (ast.Tuple, ast.List)):
+                cells = list(row.elts)
+            else:
+                cells = [row]
+            for field, cell in zip(fields, cells, strict=False):
+                scope.setdefault(field, []).append(cell)
+    return scope
+
+
+def _parameters(
+    function: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> list[str]:
+    arguments = function.args
+    every = (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    return [a.arg for a in (*every, *filter(None, (arguments.vararg, arguments.kwarg)))]
+
+
+def _bindings(scope_node: ast.AST, passed: Passed) -> Scope:
+    scope: Scope = {}
+    if isinstance(scope_node, (*_FUNCTIONS, ast.Lambda)):
+        scope = {name: [ast.Constant(UNKNOWN)] for name in _parameters(scope_node)}
+    if isinstance(scope_node, _FUNCTIONS):
+        for name, values in _parametrized(scope_node).items():
+            scope.setdefault(name, []).extend(values)
+        # A local helper's parameter can be any string its callers pass.
+        for name in scope:
+            for value in sorted(passed.get((scope_node.name, name), ())):
+                scope[name].append(ast.Constant(value))
+    for node in _scope_nodes(scope_node):
+        _bind_node(scope, node)
+    return scope
+
+
+# --- The strings an expression can be ----------------------------------------
+
+
+def _lookup(name: str, chain: list[Scope], seen: Seen) -> list[Resolved]:
+    """The expressions ``name`` is bound to, each with the scopes it resolves in."""
+    for depth in range(len(chain) - 1, -1, -1):
+        if name in chain[depth]:
+            key = (depth, name)
+            if key in seen:
+                return []
+            inner = chain[: depth + 1]
+            return [(value, inner, seen | {key}) for value in chain[depth][name]]
+    return []
+
+
+def _sequences(node: ast.expr, chain: list[Scope], seen: Seen) -> list[Resolved]:
+    """The literal tuples, lists and sets an iterable expression can be."""
+    if isinstance(node, _SEQUENCES):
+        return [(node, chain, seen)]
+    if isinstance(node, ast.Name):
+        return [s for v in _lookup(node.id, chain, seen) for s in _sequences(*v)]
+    return []
+
+
+def _items(item: _Item, chain: list[Scope], seen: Seen) -> list[Resolved]:
+    found: list[Resolved] = []
+    for sequence, inner, inner_seen in _sequences(item.iterable, chain, seen):
+        for element in sequence.elts:  # type: ignore[attr-defined]
+            if item.index is None:
+                found.append((element, inner, inner_seen))
+            elif (
+                isinstance(element, (ast.Tuple, ast.List))
+                and len(element.elts) > item.index
+            ):
+                found.append((element.elts[item.index], inner, inner_seen))
+    return found
+
+
+def _parts(node: ast.expr | None) -> list[ast.expr] | None:
+    """The pieces a concatenation or f-string joins, or None for anything else."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [node.left, node.right]
+    if isinstance(node, ast.JoinedStr):
+        return node.values
+    if isinstance(node, ast.FormattedValue):
+        plain = node.conversion == -1 and node.format_spec is None
+        return [node.value] if plain else None
+    return None
+
+
+def strings(
+    node: ast.expr | None, chain: list[Scope], seen: Seen = frozenset()
+) -> set[str]:
+    """Every string the expression can be, with ``UNKNOWN`` for runtime parts."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, (ast.Name, _Item)):
+        if isinstance(node, ast.Name):
+            values = _lookup(node.id, chain, seen)
+        else:
+            values = _items(node, chain, seen)
+        return set().union(*(strings(*value) for value in values)) or {UNKNOWN}
+    if isinstance(node, ast.IfExp):
+        return strings(node.body, chain, seen) | strings(node.orelse, chain, seen)
+    parts = _parts(node)
+    if parts is None:
+        return {UNKNOWN}
+    combos = itertools.product(*(sorted(strings(p, chain, seen)) for p in parts))
+    return {"".join(combo) for combo in itertools.islice(combos, MAX_ALTERNATIVES)}
+
+
+# --- Which arguments name a target --------------------------------------------
+
+
+def _own(node: ast.expr | None) -> bool:
+    return isinstance(node, ast.Name) and node.id in OWN
+
+
+def _namespace(node: ast.expr | None, aliases: dict[str, str]) -> ast.expr | None:
+    """The object behind ``vars(x)`` or ``x.__dict__``, if ``node`` is one."""
+    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+        return node.value
+    if isinstance(node, ast.Call) and node.args:
+        if _dotted(node.func, aliases) in {"vars", "builtins.vars"}:
+            return node.args[0]
+    return None
+
+
+def _argument(call: ast.Call, index: int, keyword: str = "") -> ast.expr | None:
+    leading = call.args[: index + 1]
+    if len(leading) > index and not any(isinstance(a, ast.Starred) for a in leading):
+        return call.args[index]
+    return next((k.value for k in call.keywords if keyword and k.arg == keyword), None)
+
+
+def _keyword_names(call: ast.Call, options: set[str]) -> list[ast.expr]:
+    return [
+        ast.Constant(k.arg) for k in call.keywords if k.arg and k.arg not in options
+    ]
+
+
+def _patch_targets(call: ast.Call, tail: str, aliases: dict[str, str]) -> list:
+    if tail == "object":
+        if _own(_argument(call, 0, "target")):
+            return []
+        return [_argument(call, 1, "attribute")]
+    if tail == "multiple":
+        return [
+            _argument(call, 0, "target"),
+            *_keyword_names(call, PATCH_MULTIPLE_OPTIONS),
+        ]
+    target = _argument(call, 0, "in_dict")
+    if _namespace(target, aliases) is None:
+        return [target]
+    values = _argument(call, 1, "values")
+    keys = values.keys if isinstance(values, ast.Dict) else []
+    return [*keys, *_keyword_names(call, PATCH_DICT_OPTIONS)]
+
+
+def _attribute_targets(call: ast.Call, name: str, tail: str) -> list:
+    """Targets of the setattr/getattr family, builtin or ``monkeypatch``."""
+    first, second = _argument(call, 0, "target"), _argument(call, 1, "name")
+    if tail in DUNDER_REFLECTION:
+        receiver = call.func.value  # type: ignore[attr-defined]
+        if not (isinstance(receiver, ast.Name) and receiver.id in {"object", "type"}):
+            return [] if _own(receiver) else [first]
+    if _own(first):
+        return []
+    builtin = name in {tail, f"builtins.{tail}"}
+    # monkeypatch.setattr("pkg.mod.name", value) names its target in one string.
+    if not builtin and tail in {"setattr", "delattr"}:
+        dotted_form = len(call.args) < (3 if tail == "setattr" else 2)
+        if dotted_form and not any(k.arg == "name" for k in call.keywords):
+            return [first]
+        return [first, second]
+    return [second] if builtin or tail in DUNDER_REFLECTION else []
+
+
+def _namespace_targets(call: ast.Call, tail: str, aliases: dict[str, str]) -> list:
+    """Keys of ``vars(x)``/``x.__dict__`` that ``setitem`` or ``.get`` reach."""
+    if tail in {"setitem", "delitem"}:
+        namespace, key = _namespace(_argument(call, 0), aliases), _argument(call, 1)
+    elif tail in {"get", "pop", "setdefault"} and isinstance(call.func, ast.Attribute):
+        namespace, key = _namespace(call.func.value, aliases), _argument(call, 0)
+    else:
+        return []
+    return [key] if namespace is not None and not _own(namespace) else []
+
+
+def _call_targets(call: ast.Call, aliases: dict[str, str]) -> list:
+    """Expressions in ``call`` that name an attribute, module or patch target."""
+    name = _dotted(call.func, aliases)
+    tail = (
+        call.func.attr
+        if isinstance(call.func, ast.Attribute)
+        else name.rsplit(".", 1)[-1]
     )
-    # Resolve a chained assignment's RHS once, then evaluate and bind targets
-    # left to right: a later target expression can see an earlier new binding.
-    targets: list[ast.expr] = (
-        node.targets if isinstance(node, ast.Assign) else [node.target]
-    )
-    for target, resolved, assigned_value in binding_rules.prepared_assignment(
-        targets, value, *inputs
+    owner = name.rsplit(".", 2)[-2] if name.count(".") else ""
+    if tail in REFLECTION or (
+        tail in DUNDER_REFLECTION and isinstance(call.func, ast.Attribute)
     ):
-        if on_error is not None and not isinstance(target, ast.Name):
-            on_error()
-        yield from _scan_assignment_target(
-            target,
-            frozenset({token}) if token else resolved,
-            values,
-            aliases,
-            closure,
-            context,
-            assigned_value,
-        )
-    if isinstance(node, ast.AnnAssign):
-        if on_error is not None:
-            on_error()
-        yield from _scan_expression(node.annotation, values, aliases, closure, context)
+        return _attribute_targets(call, name, tail)
+    if tail == "getattr_static":
+        return [_argument(call, 1, "attr")]
+    if tail == "attrgetter":
+        return list(call.args)
+    if tail in {"import_module", "__import__"}:
+        return [_argument(call, 0, "name")]
+    if owner == "patch" and tail in {"object", "dict", "multiple"}:
+        return _patch_targets(call, tail, aliases)
+    if tail == "patch":
+        return [_argument(call, 0, "target")]
+    return _namespace_targets(call, tail, aliases)
 
 
-def _scan_nested_scope(
-    node: ast.AST,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
-    context: _Deferred,
-) -> Iterator[tuple[int, str]]:
-    for header in _headers(node):
-        yield from _scan_expression(header, values, aliases, closure, context)
-    yield from expression_rules.scan_annotations(
-        node, (values, aliases), closure, context
-    )
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        token = context.register(
-            node,
-            closure,
-            (values, aliases),
-            method=isinstance(values, _ClassValues) and values.scope_kind == "class",
-        )
-        if not isinstance(node, ast.Lambda):
-            _bind_definition(node.name, values, aliases, frozenset({token}))
-        return
-    yield from _scan_scope(
-        node,
-        *closure,
-        expression_rules.comprehension_values(node, values),
-        context=context,
-    )
+# --- Scanning a file ------------------------------------------------------------
 
 
-_Outcomes = dict[str, _State]
-_Bindings = list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]]
-
-
-_add_outcome = flow_rules.add_outcome
-
-
-def _store_class_name(
-    values: _ClassValues, aliases: binding_rules.Aliases, name: str
-) -> None:
-    if values.scope_kind != "class":
-        owner = (
-            values.closure
-            if values.scope_kind == "function" and name in values.lexical_names
-            else flow_rules.module_bindings(*values.closure)
-        )
-    elif name in values.class_globals:
-        owner = flow_rules.module_bindings(*values.closure)
-    elif name in values.class_nonlocals:
-        owner = values.closure
-    else:
-        values.bound |= {name}
-        values.local_values[name] = values.get(name, binding_rules.Value())
-        values.local_aliases[name] = aliases.get(name, frozenset({name}))
-        return
-    owner[0].pop(name, None)
-    if name in values:
-        owner[0][name] = values[name]
-    owner[1][name] = aliases.get(name, frozenset({name}))
-
-
-def _restore_class_fallback(
-    name: str, values: _ClassValues, aliases: binding_rules.Aliases, closure: _Env
-) -> None:
-    values.pop(name, None)
-    values.bound -= {name}
-    values.local_values.pop(name, None)
-    values.local_aliases.pop(name, None)
-    if values.scope_kind != "class":
-        aliases[name] = frozenset({"" if name in values.lexical_names else name})
-        _store_class_name(values, aliases, name)
-        return
-    if name in values.class_nonlocals | values.class_globals:
-        aliases[name] = frozenset({"" if name in values.class_nonlocals else name})
-        _store_class_name(values, aliases, name)
-        return
-    module = flow_rules.module_bindings(*closure)
-    if name in module[0]:
-        values[name] = module[0][name]
-    aliases[name] = module[1].get(name, frozenset({name}))
-
-
-class _ClassFlow:
-    """Bounded abstract statement execution with separate control-flow outcomes."""
-
-    def __init__(self, context: _Deferred) -> None:
-        self.context = context
-        self.cache: dict[tuple, _Outcomes] = {}
+class _Scanner:
+    def __init__(self, tree: ast.Module) -> None:
+        self.tree = tree
+        self.aliases = _import_aliases(tree)
+        self.signatures = {
+            node.name: _parameters(node)
+            for node in ast.walk(tree)
+            if isinstance(node, _FUNCTIONS)
+        }
+        self.passed: Passed = {}
         self.findings: set[tuple[int, str]] = set()
 
-    def expression(self, node: ast.expr, state: _State) -> tuple[ast.expr, _Env]:
-        scan = _scan_expression(
-            node, state.values, state.aliases, state.closure, self.context
-        )
-        while True:
-            try:
-                self.findings.add(next(scan))
-            except StopIteration as finished:
-                expression, inputs = finished.value
-                return expression, inputs
-
-    def block(
-        self, body: list[ast.stmt], incoming: _State, start: int = 0
-    ) -> _Outcomes:
-        key = (id(body), start, incoming.key())
-        generating = bool(self.context.generating and self.context.generating[-1])
-        if not generating and key in self.cache:
-            return {kind: state.copy() for kind, state in self.cache[key].items()}
-        if len(self.cache) >= 16384:
-            raise ValueError("too many distinct class flow states")
-        outcomes = {"normal": incoming.copy()}
-        for index in range(start, len(body)):
-            node = body[index]
-            state = outcomes.pop("normal", None)
-            if state is None:
+    def run(self) -> list[tuple[int, str]]:
+        # Repeat until helpers passing strings on to other helpers add no more.
+        for _ in range(len(self.signatures) + 1):
+            before = {key: set(values) for key, values in self.passed.items()}
+            self.findings.clear()
+            self.visit(self.tree, [_bindings(self.tree, self.passed)])
+            if self.passed == before:
                 break
-            state.refresh()
-            self.context.remember(state.closure)
-            results = self.statement(node, state)
-            if any(kind in self.context.continuations for kind in results):
-                self.context.chain(
-                    results, partial(self.follow, body=body, start=index + 1)
-                )
-            for kind, result in results.items():
-                _add_outcome(outcomes, kind, result)
-        if not generating:
-            self.cache[key] = {kind: state.copy() for kind, state in outcomes.items()}
-        return outcomes
+        return sorted(self.findings)
 
-    def follow(
-        self, outcomes: _Outcomes, body: list[ast.stmt], start: int = 0
-    ) -> _Outcomes:
-        remaining = dict(outcomes)
-        normal = remaining.pop("normal", None)
-        if normal is not None:
-            for kind, state in self.block(body, normal, start).items():
-                _add_outcome(remaining, kind, state)
-        return remaining
-
-    def statement(self, node: ast.stmt, state: _State) -> _Outcomes:
-        before = state.copy()
-        effects = flow_rules.Effects([])
-        self.context.effects.append(effects)
-        try:
-            outcomes = self.dispatch(node, state)
-        except flow_rules.Interrupted:
-            outcomes = {}
-        finally:
-            self.context.effects.pop()
-        outcomes = flow_rules.apply_effects(outcomes, before, effects)
-        if isinstance(
-            node, (ast.ClassDef, ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match)
-        ):
-            # Evaluating a class header, condition, iterable or subject can fail
-            # before any selected suite runs.
-            _add_outcome(outcomes, "raise", before)
-        return outcomes
-
-    def dispatch(self, node: ast.stmt, state: _State) -> _Outcomes:
-        if (
-            isinstance(node, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return))
-            and isinstance(node.value, ast.Yield)
-            and self.context.generating
-            and self.context.generating[-1]
-        ):
-            return self.yield_statement(node, state)
-        if isinstance(node, ast.ClassDef):
-            return self.definition(node, state)
-        if isinstance(node, ast.If):
-            self.expression(node.test, state)
-            choices = [node.body, node.orelse]
-            if isinstance(node.test, ast.Constant):
-                choices = [node.body if node.test.value else node.orelse]
-            return self.choices(choices, state)
-        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
-            return self.loop(node, state)
-        if isinstance(node, (ast.Try, ast.TryStar)):
-            return self.try_block(node, state)
-        if isinstance(node, ast.Match):
-            return self.match(node, state)
-        if isinstance(node, (ast.With, ast.AsyncWith)):
-            return self.with_items(node.items, node.body, state)
-        if isinstance(node, (ast.Break, ast.Continue)):
-            return {"break" if isinstance(node, ast.Break) else "continue": state}
-        return self.simple_statement(node, state)
-
-    def yield_statement(
-        self, node: ast.Expr | ast.Assign | ast.AnnAssign | ast.Return, state: _State
-    ) -> _Outcomes:
-        assert isinstance(node.value, ast.Yield)
-        yielded = binding_rules.Value()
-        if node.value.value is not None:
-            expression, inputs = self.expression(node.value.value, state)
-            yielded = self.context.capture(expression, inputs)
-        outcomes = self.context.pause(state, self.findings, yielded)
-        if not isinstance(node, ast.Expr):
-            resumed = copy.copy(node)
-            # next() resumes the suspended yield expression with None.
-            resumed.value = ast.copy_location(ast.Constant(value=None), node.value)
-            prepared = self.context.prepared.setdefault(node, resumed)
-            assert isinstance(prepared, ast.stmt)
-            self.context.chain(outcomes, partial(self.follow, body=[prepared]))
-        return outcomes
-
-    def simple_statement(self, node: ast.stmt, state: _State) -> _Outcomes:
-        before = state.copy()
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            outcomes = {"raise": before}
-            self.findings.update(
-                _scan_assignment(
-                    node,
-                    state.values,
-                    state.aliases,
-                    state.closure,
-                    self.context,
-                    lambda: _add_outcome(outcomes, "raise", state),
-                )
-            )
-            outcomes["normal"] = state
-            return outcomes
-        if isinstance(node, ast.Delete):
-            outcomes = {"raise": before}
-            self.delete(node.targets, state, outcomes)
-            outcomes["normal"] = state
-            return outcomes
-        self.findings.update(
-            _scan_node(node, state.values, state.aliases, state.closure, self.context)
-        )
-        if not isinstance(node, _SCOPES):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.expr):
-                    self.expression(child, state)
-        if isinstance(node, ast.Raise):
-            return {"raise": state}
-        if isinstance(node, ast.Return):
-            outcomes = {"return": state}
-            if node.value is not None and not isinstance(node.value, ast.Constant):
-                outcomes["raise"] = before
-            return outcomes
-        # Retain a conservative interrupted path even for an assignment whose
-        # RHS is literal; static analysis does not execute user expressions.
-        return (
-            {"normal": state, "raise": before}
-            if not isinstance(node, (ast.Pass, ast.Global, ast.Nonlocal))
-            else {"normal": state}
-        )
-
-    def definition(self, node: ast.ClassDef, state: _State) -> _Outcomes:
-        for header in _headers(node):
-            self.expression(header, state)
-        values, aliases = _bindings(node, *state.closure)
-        assert isinstance(values, _ClassValues)
-        child = _State(values, aliases, state.closure).copy()
-        outcomes: _Outcomes = {}
-        for kind, result in self.block(node.body, child).items():
-            parent = state.copy()
-            flow_rules.publish_context(parent.closure, result.closure)
-            if kind == "normal":
-                token = f"@class:{id(node)}"
-                members = {
-                    f"{token}.{name}": resolved
-                    for name, resolved in result.values.local_aliases.items()
-                }
-                parent.aliases.update(members)
-                flow_rules.module_bindings(*parent.closure)[1].update(members)
-                _bind_definition(
-                    node.name, parent.values, parent.aliases, frozenset({token})
-                )
-            _add_outcome(outcomes, kind, parent)
-        return outcomes
-
-    def choices(self, bodies: list[list[ast.stmt]], state: _State) -> _Outcomes:
-        outcomes: _Outcomes = {}
-        for body in bodies:
-            for kind, result in self.block(body, state).items():
-                _add_outcome(outcomes, kind, result)
-        return outcomes
-
-    def delete(
-        self, targets: list[ast.expr], state: _State, outcomes: _Outcomes
+    def check(
+        self, line: int, targets: Iterable[ast.expr | None], chain: list[Scope]
     ) -> None:
         for target in targets:
-            _add_outcome(outcomes, "raise", state)
-            if isinstance(target, ast.Name):
-                _restore_class_fallback(
-                    target.id, state.values, state.aliases, state.closure
-                )
-            elif isinstance(target, (ast.Tuple, ast.List)):
-                self.delete(target.elts, state, outcomes)
-            else:
-                self.bind([(target, frozenset(), binding_rules.Value())], state)
-
-    def bind(self, bindings: _Bindings, state: _State) -> None:
-        for target, resolved, value in bindings:
             self.findings.update(
-                _scan_assignment_target(
-                    target,
-                    resolved,
-                    state.values,
-                    state.aliases,
-                    state.closure,
-                    self.context,
-                    value,
-                )
+                (line, s) for s in strings(target, chain) if private(s)
             )
 
-    def loop_plan(
-        self, node: ast.For | ast.AsyncFor | ast.While, state: _State
-    ) -> tuple[list[_Bindings] | None, _Bindings]:
-        expression = node.test if isinstance(node, ast.While) else node.iter
-        self.expression(expression, state)
-        return expression_rules.prepare_loop(node, state, self.context)
-
-    def loop_step(
-        self,
-        node: ast.For | ast.AsyncFor | ast.While,
-        current: _State,
-        bindings: _Bindings,
-        outcomes: _Outcomes,
-        resume: Callable[[_Outcomes], _Outcomes],
-    ) -> _State | None:
-        _add_outcome(outcomes, "raise", current)
-        if isinstance(node, ast.While):
-            self.expression(node.test, current)
-        self.bind(bindings, current)
-        body = self.block(node.body, current)
-        self.context.chain(body, resume)
-        for kind in body:
-            if kind not in {"normal", "continue"}:
-                _add_outcome(
-                    outcomes, "normal" if kind == "break" else kind, body[kind]
-                )
-        carried: _Outcomes = {}
-        for kind in ("normal", "continue"):
-            if kind in body:
-                _add_outcome(carried, "normal", body[kind])
-        return carried.get("normal")
-
-    def loop(
-        self, node: ast.For | ast.AsyncFor | ast.While, state: _State
-    ) -> _Outcomes:
-        iterations, bindings = self.loop_plan(node, state)
-        return self.iterate(node, state, iterations, bindings, 0)
-
-    def iterate(
-        self,
-        node: ast.For | ast.AsyncFor | ast.While,
-        state: _State,
-        iterations: list[_Bindings] | None,
-        bindings: _Bindings,
-        start: int,
-    ) -> _Outcomes:
-        outcomes: _Outcomes = {}
-        exhaustion: _Outcomes = {}
-        current: _State | None = state.copy()
-        names = state.aliases.get(f"@iteration:{id(node)}", frozenset())
-        if not names and iterations is None and binding_rules.loop_may_skip(node):
-            _add_outcome(exhaustion, "normal", state)
-        if (
-            isinstance(node, ast.While)
-            and isinstance(node.test, ast.Constant)
-            and not node.test.value
-        ):
-            iterations = []
-        seen: set[tuple] = set()
-        for index in range(start, len(iterations) if iterations is not None else 256):
-            assert current is not None
-            if names and not expression_rules.advance_iteration(
-                names, current, self.context, self.findings
-            ):
-                _add_outcome(exhaustion, "normal", current)
-                current = None
+    def record_arguments(self, call: ast.Call, chain: list[Scope]) -> None:
+        if not isinstance(call.func, ast.Name) or call.func.id not in self.signatures:
+            return
+        parameters = self.signatures[call.func.id]
+        named = [(k.arg, k.value) for k in call.keywords if k.arg]
+        for index, value in enumerate(call.args):
+            if isinstance(value, ast.Starred) or index >= len(parameters):
                 break
-            step_bindings = iterations[index] if iterations is not None else bindings
-            step_bindings = expression_rules.iteration_bindings(
-                node, names, current, step_bindings, self.context
-            )
-            current = self.loop_step(
-                node,
-                current,
-                step_bindings,
-                outcomes,
-                partial(
-                    self.resume_loop,
-                    node,
-                    iterations=iterations,
-                    bindings=bindings,
-                    start=index + 1,
-                ),
-            )
-            if current is None:
-                break
-            if iterations is None:
-                if not names and not (
-                    isinstance(node, ast.While)
-                    and isinstance(node.test, ast.Constant)
-                    and node.test.value
-                ):
-                    _add_outcome(exhaustion, "normal", current)
-                signature = (
-                    expression_rules.iteration_signature(names, current, self.context)
-                    if names
-                    else current.key()
-                )
-                if signature in seen:
-                    expression_rules.converged_iteration(
-                        names, current, self.context, exhaustion
-                    )
-                    break
-                seen.add(signature)
+            named.append((parameters[index], value))
+        for parameter, value in named:
+            known = strings(value, chain) - {UNKNOWN}
+            self.passed.setdefault((call.func.id, parameter), set()).update(known)
+
+    def visit_definition(self, node: ast.AST, chain: list[Scope]) -> None:
+        header: list[ast.AST] = list(getattr(node, "decorator_list", []))
+        if isinstance(node, ast.ClassDef):
+            header += [*node.bases, *node.keywords]
         else:
-            if iterations is None:
-                raise ValueError("too many static alternatives in a loop")
-        return self.loop_exits(
-            node, outcomes, exhaustion, current, exact=iterations is not None
-        )
-
-    def resume_loop(
-        self,
-        node: ast.For | ast.AsyncFor | ast.While,
-        incoming: _Outcomes,
-        iterations: list[_Bindings] | None,
-        bindings: _Bindings,
-        start: int,
-    ) -> _Outcomes:
-        outcomes: _Outcomes = {}
-        for kind, state in incoming.items():
-            if kind in {"normal", "continue"}:
-                for result_kind, result in self.iterate(
-                    node, state, iterations, bindings, start
-                ).items():
-                    _add_outcome(outcomes, result_kind, result)
-            else:
-                _add_outcome(outcomes, "normal" if kind == "break" else kind, state)
-        expression_rules.clear_iteration(node, outcomes, self.context)
-        return outcomes
-
-    def loop_exits(
-        self,
-        node: ast.For | ast.AsyncFor | ast.While,
-        outcomes: _Outcomes,
-        exhaustion: _Outcomes,
-        current: _State | None,
-        *,
-        exact: bool,
-    ) -> _Outcomes:
-        if exact and current is not None:
-            _add_outcome(exhaustion, "normal", current)
-        if "normal" in exhaustion:
-            for kind, result in self.block(node.orelse, exhaustion["normal"]).items():
-                _add_outcome(outcomes, kind, result)
-        expression_rules.clear_iteration(node, outcomes, self.context)
-        return outcomes
-
-    def handlers(self, node: ast.Try | ast.TryStar, raised: _State) -> _Outcomes:
-        outcomes: _Outcomes = {}
-        _add_outcome(outcomes, "raise", raised)
-        for handler in node.handlers:
-            caught = raised.copy()
-            if handler.type is not None:
-                self.expression(handler.type, caught)
-            if handler.name is not None:
-                self.bind(
-                    [
-                        (
-                            ast.Name(id=handler.name),
-                            frozenset({""}),
-                            binding_rules.Value(),
-                        )
-                    ],
-                    caught,
-                )
-            handled = self.block(handler.body, caught)
-            for kind, result in handled.items():
-                if handler.name is not None:
-                    _restore_class_fallback(
-                        handler.name, result.values, result.aliases, result.closure
-                    )
-                _add_outcome(outcomes, kind, result)
-                if isinstance(node, ast.TryStar):
-                    raised.merge(result)
-        return outcomes
-
-    def try_block(self, node: ast.Try | ast.TryStar, state: _State) -> _Outcomes:
-        body = self.block(node.body, state)
-        return self.finish_try(node, body)
-
-    def finish_try(self, node: ast.Try | ast.TryStar, body: _Outcomes) -> _Outcomes:
-        suspended = {
-            kind: state
-            for kind, state in body.items()
-            if kind in self.context.continuations
-        }
-        self.context.chain(suspended, lambda result: self.finish_try(node, result))
-        outcomes: _Outcomes = {}
-        if "normal" in body:
-            outcomes.update(self.block(node.orelse, body["normal"]))
-        for kind in ("break", "continue", "return"):
-            if kind in body:
-                _add_outcome(outcomes, kind, body[kind])
-        if "raise" in body:
-            for kind, result in self.handlers(node, body["raise"]).items():
-                _add_outcome(outcomes, kind, result)
-        return suspended | self.finish_final(node.finalbody, outcomes)
-
-    def finish_final(self, body: list[ast.stmt], outcomes: _Outcomes) -> _Outcomes:
-        if not body:
-            return outcomes
-        self.context.chain(outcomes, lambda result: self.finish_final(body, result))
-        finished: _Outcomes = {}
-        for previous, incoming in outcomes.items():
-            if previous in self.context.continuations:
-                finished[previous] = incoming
-                continue
-            results = self.block(body, incoming)
-            self.context.chain(
-                results,
-                partial(flow_rules.restore_outcome, previous=previous),
+            arguments = node.args  # type: ignore[attr-defined]
+            header += [*arguments.defaults, *filter(None, arguments.kw_defaults)]
+        for child in header:
+            self.visit(child, chain)
+        inner = [*chain, _bindings(node, self.passed)]
+        body = node.body if isinstance(node.body, list) else [node.body]  # type: ignore[attr-defined]
+        for statement in body:
+            # A method does not see the names its class body binds.
+            method = isinstance(node, ast.ClassDef) and isinstance(
+                statement, _DEFINITIONS
             )
-            for kind, result in results.items():
-                _add_outcome(finished, previous if kind == "normal" else kind, result)
-        return finished
+            self.visit(statement, chain if method else inner)
 
-    def match_case(
-        self,
-        case: ast.match_case,
-        subject: ast.expr,
-        subjects: _State,
-        remaining: _State,
-    ) -> tuple[_State, _State | None, bool]:
-        matched = binding_rules.pattern_matches(case.pattern, subject)
-        if matched is False:
-            return remaining, remaining, False
-        branch = remaining.copy()
-        captures = {
-            name: (binding_rules.Value(), frozenset({""}))
-            for name in binding_rules.bound_names(list(ast.walk(case.pattern)))
-        }
-        captures.update(
-            binding_rules.pattern_bindings(
-                case.pattern, subject, subjects.values, subjects.aliases
-            )
-        )
-        self.bind(
-            [
-                (ast.Name(id=name), aliases, value)
-                for name, (value, aliases) in captures.items()
-            ],
-            branch,
-        )
-        if case.guard is not None:
-            self.expression(case.guard, branch)
-        irrefutable = matched is True
-        guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
-        pending: _Outcomes = {}
-        if not irrefutable:
-            _add_outcome(pending, "normal", remaining)
-        if case.guard is not None and guard is not True:
-            _add_outcome(pending, "normal", branch)
-        return branch, pending.get("normal"), guard is not False
-
-    def match(self, node: ast.Match, state: _State) -> _Outcomes:
-        self.expression(node.subject, state)
-        subjects = state.copy()
-        remaining: _State | None = state
-        outcomes: _Outcomes = {}
-        for case in node.cases:
-            if remaining is None:
-                break
-            branch, remaining, accepted = self.match_case(
-                case, node.subject, subjects, remaining
-            )
-            if accepted:
-                for kind, result in self.block(case.body, branch).items():
-                    _add_outcome(outcomes, kind, result)
-        if remaining is not None:
-            _add_outcome(outcomes, "normal", remaining)
-        return outcomes
-
-    def with_items(
-        self, items: list[ast.withitem], body: list[ast.stmt], state: _State
-    ) -> _Outcomes:
-        if not items:
-            return self.block(body, state)
-        item, *remaining = items
-        self.expression(item.context_expr, state)
-        entry = state.copy()
-        if item.optional_vars is not None:
-            self.bind(
-                binding_rules.prepared_assignment(
-                    [item.optional_vars],
-                    ast.Constant(value=None),
-                    state.values,
-                    state.aliases,
-                ),
-                state,
-            )
-        outcomes = self.with_items(remaining, body, state)
-        # A manager can suppress a body error, but not its own exit error.
-        exit_states = list(outcomes.values())
-        if "raise" in outcomes:
-            _add_outcome(outcomes, "normal", outcomes["raise"])
-        for result in exit_states:
-            _add_outcome(outcomes, "raise", result)
-        _add_outcome(outcomes, "raise", entry)
-        return outcomes
+    def visit(self, node: ast.AST, chain: list[Scope]) -> None:
+        if isinstance(node, _DEFINITIONS):
+            self.visit_definition(node, chain)
+            return
+        if isinstance(node, ast.Call):
+            self.record_arguments(node, chain)
+            self.check(node.lineno, _call_targets(node, self.aliases), chain)
+        elif isinstance(node, ast.Subscript):
+            namespace = _namespace(node.value, self.aliases)
+            if namespace is not None and not _own(namespace):
+                self.check(node.lineno, [node.slice], chain)
+        for child in ast.iter_child_nodes(node):
+            self.visit(child, chain)
 
 
-def _scan_node(
-    node: ast.AST,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
-    context: _Deferred,
-) -> Iterator[tuple[int, str]]:
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        yield from _scan_assignment(node, values, aliases, closure, context)
-    elif isinstance(node, _SCOPES):
-        yield from _scan_nested_scope(node, values, aliases, closure, context)
-    else:
-        imported: binding_rules.Aliases = {}
-        binding_rules.import_aliases([node], imported)
-        aliases.update(imported)
-        if isinstance(values, _ClassValues):
-            for name in imported:
-                values[name] = binding_rules.Value(callables=imported[name])
-                _store_class_name(values, aliases, name)
-    if context.effects and not context.effects[-1].normal:
-        raise flow_rules.Interrupted
-
-
-def _scan_expression(
-    expression: ast.expr,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
-    context: _Deferred,
-) -> Generator[tuple[int, str], None, tuple[ast.expr, _Env]]:
-    evaluator = expression_rules.Expression(
-        context, _scan_node, _targets, _private, _SCOPES
-    )
-    return (yield from evaluator.scan(expression, (values, aliases), closure))
-
-
-def _scan_scope(
-    scope: ast.AST,
-    values: dict[str, binding_rules.Value],
-    aliases: binding_rules.Aliases,
-    initial_values: dict[str, binding_rules.Value] | None = None,
-    *,
-    context: _Deferred | None = None,
-    on_outcomes: Callable[[_Outcomes], None] | None = None,
-) -> Iterator[tuple[int, str]]:
-    context = context or _Deferred(_scan_scope, _scan_expression)
-    context.pending.append(set())
-    values, aliases = _bindings(scope, values, aliases, initial_values)
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        values, aliases = flow_rules.copy_context((values, aliases))
-    if isinstance(scope, ast.Module) and isinstance(values, flow_rules.ScopeValues):
-        values.module_bindings = (values, aliases)
-    closure = (values, aliases)
-    if isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
-        analyzer = _ClassFlow(context)
-        state = _State(_ClassValues(values), aliases, closure).copy()
-        outcomes = analyzer.block(scope.body, state)
-        if on_outcomes is not None:
-            on_outcomes(outcomes)
-        pending = context.pending.pop()
-        yield from sorted(analyzer.findings)
-        for kind in ("normal", "return"):
-            if kind in outcomes:
-                context.remember(outcomes[kind].closure)
-                yield from expression_rules.scan_pending(
-                    pending, outcomes[kind].closure, context
-                )
-        return
-    yield from expression_rules.scan_body(
-        scope, closure, context, on_outcomes, _scan_expression
-    )
+def scan(tree: ast.Module) -> list[tuple[int, str]]:
+    return _Scanner(tree).run()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -961,21 +467,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=REPO)
     args = parser.parse_args(argv)
     violations: list[str] = []
+    scanned = 0
     for tree in TREES:
-        for path in sorted((args.repo / tree).rglob("*.py")):
+        files = sorted((args.repo / tree).rglob("*.py"))
+        if not files:
+            violations.append(f"{tree}: no Python files to check")
+        for path in files:
+            scanned += 1
+            name = path.relative_to(args.repo).as_posix()
             try:
-                source = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-                violations.extend(
-                    f"{path.relative_to(args.repo).as_posix()}:{line}: private string target {target!r}"
-                    for line, target in _scan_scope(source, {}, {})
-                )
-            except (SyntaxError, ValueError) as error:
-                violations.append(f"{path.relative_to(args.repo).as_posix()}: {error}")
+                module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            except SyntaxError as error:
+                violations.append(f"{name}:{error.lineno}: {error.msg}")
+                continue
+            violations.extend(
+                f"{name}:{line}: private name {target!r} reached through a string"
+                for line, target in scan(module)
+            )
     if violations:
-        print("\n".join(dict.fromkeys(violations)))
+        print("\n".join(violations))
         print("Use the public entry point or real configuration; no test is exempt.")
         return 1
-    print("No private string targets in unit or app tests.")
+    print(f"No private string targets in {scanned} unit and app test files.")
     return 0
 
 
