@@ -163,6 +163,8 @@ async def test_a_readiness_timeout_names_a_failed_reconnect(haos: Haos) -> None:
     haos.supervisor.answer("GET", "/supervisor/info", PENDING)
 
     def signed_out_and_cut() -> None:
+        # Finish the client close before revocation starts Core's close handshake.
+        ws.__exit__()
         haos.revoke_login()
         haos.relay.cut()
 

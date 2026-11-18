@@ -500,12 +500,18 @@ Env = tuple[dict[str, Value], Aliases]
 
 
 class ClassValues(ScopeValues):
-    """Class namespace plus the names actually assigned along this path."""
+    """Resolved class lookup plus stored-local alternatives and definite bindings."""
 
     def __init__(self, values: dict[str, Value]) -> None:
         super().__init__(values)
         self.bound: frozenset[str] = (
             values.bound if isinstance(values, ClassValues) else frozenset()
+        )
+        self.local_values: dict[str, Value] = (
+            dict(values.local_values) if isinstance(values, ClassValues) else {}
+        )
+        self.local_aliases: Aliases = (
+            dict(values.local_aliases) if isinstance(values, ClassValues) else {}
         )
         self.closure: Env = (self, {})
 
@@ -560,6 +566,7 @@ class State:
         return (
             namespace_key((self.values, self.aliases)),
             self.values.bound,
+            namespace_key((self.values.local_values, self.values.local_aliases)),
             self.values.class_locals,
             self.values.class_globals,
             self.values.class_nonlocals,
@@ -572,31 +579,46 @@ class State:
         names = (
             self.values.keys()
             | self.aliases.keys()
+            | self.values.local_values.keys()
+            | self.values.local_aliases.keys()
             | module[0].keys()
             | module[1].keys()
             | self.closure[0].keys()
             | self.closure[1].keys()
         )
-        for name in (
-            (names - self.values.bound)
-            | self.values.class_globals
-            | self.values.class_nonlocals
-        ):
-            owner = (
-                module
-                if name in self.values.class_locals | self.values.class_globals
-                else self.closure
-            )
-            self.values.pop(name, None)
-            self.aliases.pop(name, None)
+        for name in names:
+            self.refresh_name(name, module)
+
+    def refresh_name(self, name: str, module: Env) -> None:
+        external = name in self.values.class_globals | self.values.class_nonlocals
+        owner = (
+            module
+            if name in self.values.class_locals | self.values.class_globals
+            else self.closure
+        )
+        self.values.pop(name, None)
+        self.aliases.pop(name, None)
+        if external or name not in self.values.bound:
             if name in owner[0]:
                 self.values[name] = owner[0][name]
             if name in owner[1]:
                 self.aliases[name] = owner[1][name]
+        if external:
+            return
+        # Stored-local alternatives exclude the old fallback value, so a later
+        # owner write can replace that fallback without erasing a bound path.
+        if name in self.values.local_values:
+            union_values(self.values, {name: self.values.local_values[name]})
+        if name in self.values.local_aliases:
+            fallback = frozenset() if name in self.values.bound else frozenset({name})
+            self.aliases[name] = (
+                self.aliases.get(name, fallback) | self.values.local_aliases[name]
+            )
 
     def merge(self, other: State) -> None:
         merge_namespace((self.values, self.aliases), (other.values, other.aliases))
         merge_namespace(self.closure, other.closure)
         merge_namespace(module_bindings(*self.closure), module_bindings(*other.closure))
-        # A mixed bound/unbound path has already joined both lookup alternatives.
-        self.values.bound |= other.values.bound
+        union_values(self.values.local_values, other.values.local_values)
+        union_aliases(self.values.local_aliases, other.values.local_aliases)
+        self.values.bound &= other.values.bound
