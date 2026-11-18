@@ -30,6 +30,9 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 BASELINE = "db84b3148eb761eb81a3c978841fee45d80766c6"
+LOOP_CASE_ID = "loop-compound-tuple-elements-keep-stable-state-reject"
+LOOP_SOURCE_OLD = "ARGS = (mod, '_helper')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n"
+LOOP_SOURCE_NEW = "ARGS = (mod, 'public')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n"
 BASELINE_GROUP_COUNTS = {'test_multiline_private_access_reports_its_call_line': 1, 'test_reflective_private_access_fails_with_a_source_location': 272, 'test_public_targets_and_non_target_strings_are_allowed': 247, 'test_local_definitions_shadow_an_imported_reflection_alias': 3, 'test_definition_headers_and_unshadowed_aliases_still_reject_private_access': 11, 'test_patch_dict_checks_only_its_import_target': 32, 'test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys': 12, 'test_nested_finally_reports_each_source_access_once': 2, 'test_formatted_targets_are_bounded_before_allocation': 2, 'test_oversized_targets_still_fail_after_lazy_binding': 3, 'test_formatter_spy_delegates_ordinary_target_formatting': 1, 'test_nested_finally_reuses_repeated_states': 1, 'test_the_guard_covers_every_python_file_in_both_trees': 2, 'test_invalid_source_fails_instead_of_silently_skipping_a_file': 1, 'test_a_suppression_comment_does_not_exempt_private_access': 1, 'test_only_a_typed_in_server_answer_is_refused': 31, 'test_no_test_types_in_a_server_answer': 1}
 STRONG_REJECT_SOURCE = 'def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):\n    result = _run(tmp_path, source)\n    assert result.returncode == 1, result.stderr\n    assert re.search(\n        r"^tests/src/unit/test_sample\\.py:[1-9]\\d*: private string target ",\n        result.stdout,\n        re.MULTILINE,\n    ), result.stdout'
 LOCATION_TEST_SOURCE = 'def test_multiline_private_access_reports_its_call_line(tmp_path):\n    result = _run(tmp_path, "name = \'_helper\'\\n\\ngetattr(\\n    mod,\\n    name,\\n)\\n")\n    assert result.returncode == 1, result.stdout + result.stderr\n    assert (\n        "tests/src/unit/test_sample.py:3: private string target \'_helper\'"\n        in result.stdout\n    )'
@@ -211,6 +214,10 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
                 additions = parameter_cases(text, group)
                 assert not new.keys() & additions.keys(), (group, "duplicate IDs")
                 new.update(additions)
+        if LOOP_CASE_ID in old:
+            assert old[LOOP_CASE_ID] == LOOP_SOURCE_OLD
+            assert new[LOOP_CASE_ID] == LOOP_SOURCE_NEW
+            old[LOOP_CASE_ID] = LOOP_SOURCE_NEW
         assert old.items() <= new.items(), group
         expected_added = {case["id"]: case["source"] for case in CASE_MANIFEST[section]}
         added = {case_id: value for case_id, value in new.items() if case_id not in old}
@@ -322,6 +329,59 @@ def diagnostic_mutations(root: Path, candidate_source: str) -> dict:
     assert restored["exit_code"] == 0
     assert not restored["failures"] and not restored["exception_types"]
     assert not restored["errors"] and not restored["skips"]
+    return results
+
+
+def loop_body_mutations(root: Path, candidate_source: str) -> dict:
+    """Prove the stronger loop case detects a checker that skips loop bodies."""
+    test_path = Path(GUARD_TEST)
+    candidate_tests = test_path.read_text(encoding="utf-8")
+    matches = [
+        value
+        for node in ast.walk(ast.parse(candidate_tests))
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant) and key.value == LOOP_CASE_ID
+    ]
+    assert len(matches) == 1
+    [value] = matches
+    assert isinstance(value, ast.Constant) and value.value == LOOP_SOURCE_NEW
+    literal = ast.get_source_segment(candidate_tests, value)
+    assert literal is not None and candidate_tests.count(literal) == 1
+    old_tests = candidate_tests.replace(literal, json.dumps(LOOP_SOURCE_OLD), 1)
+    marker = "body = self.block(node.body, current)"
+    assert candidate_source.count(marker) == 1
+    mutant = candidate_source.replace(marker, 'body = {"normal": current}', 1)
+    name = f"{REJECT_NAME}[{LOOP_CASE_ID}]"
+    selected = (f"{GUARD_TEST}::{name}",)
+    results = {}
+    variants = (
+        ("loop-body-old-case", old_tests, mutant, False),
+        ("loop-body-strong-case", candidate_tests, mutant, True),
+        ("loop-body-restored", candidate_tests, candidate_source, False),
+    )
+    for label, tests, guard, fails in variants:
+        try:
+            test_path.write_text(tests, encoding="utf-8")
+            Path(GUARD_PATH).write_text(guard, encoding="utf-8")
+            (root / f"{label}-test-source.py").write_text(tests, encoding="utf-8")
+            (root / f"{label}-guard-source.py").write_text(guard, encoding="utf-8")
+            (root / f"{label}.patch").write_text(
+                git("diff", "--", GUARD_PATH, GUARD_TEST), encoding="utf-8"
+            )
+            data = results[label] = run_variant(root, label, selected)
+        finally:
+            Path(GUARD_PATH).write_text(candidate_source, encoding="utf-8")
+            test_path.write_text(candidate_tests, encoding="utf-8")
+            (root / "loop-body-results.json").write_text(
+                json.dumps(results, indent=2), encoding="utf-8"
+            )
+        assert not git("status", "--porcelain", "--untracked-files=no")
+        assert data["tests"] == 1 and data["case_names"] == [name]
+        assert not data["errors"] and not data["skips"]
+        assert data["exit_code"] == int(fails)
+        assert set(data["failures"]) == ({name} if fails else set())
+        assert data["exception_types"] == ({name: "AssertionError"} if fails else {})
     return results
 
 
@@ -443,6 +503,8 @@ def main() -> None:
             candidate_source = candidate_guards[GUARD_PATH]
             assert isinstance(candidate_source, str)
             results.update(diagnostic_mutations(root, candidate_source))
+            if not diagnostic_only:
+                results.update(loop_body_mutations(root, candidate_source))
     finally:
         restore_sources(candidate_guards)
         (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
