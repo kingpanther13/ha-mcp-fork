@@ -11,7 +11,7 @@ exists), else ``<data dir>/backups`` where the data dir is what
 ``utils.data_paths.get_data_dir`` resolves (``HA_MCP_CONFIG_DIR``,
 ``~/.ha-mcp``, or the tmpdir fallback). Installs that still hold snapshots
 under the pre-#2372 default ``${XDG_DATA_HOME:-~/.local/share}/ha_mcp/backups``
-keep using that directory; see ``_resolve_default_dir``.
+keep using that directory; see ``resolve_default_dir``.
 
 File format
 -----------
@@ -530,7 +530,7 @@ def _holds_files(path: Path) -> bool:
         return False
 
 
-def _resolve_default_dir() -> Path:
+def resolve_default_dir() -> Path:
     """Pick a sane default backup directory for the current deployment mode.
 
     Add-on (Supervisor sets ``SUPERVISOR_TOKEN`` and ``/data`` exists):
@@ -650,7 +650,7 @@ class BackupManager:
         configured = (getattr(self._settings, "auto_backup_dir", "") or "").strip()
         # A disabled write still needs coordination, but must not create storage.
         # Status checks and captures initialize storage in the backup I/O executor.
-        return Path(configured).expanduser() if configured else _resolve_default_dir()
+        return Path(configured).expanduser() if configured else resolve_default_dir()
 
     @property
     def backup_dir(self) -> Path:

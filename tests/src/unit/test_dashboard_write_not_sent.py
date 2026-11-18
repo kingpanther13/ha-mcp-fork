@@ -110,7 +110,7 @@ async def test_legacy_save_with_a_rejected_token_is_an_auth_error(
     async def revoke_before_the_save(*_args: Any) -> None:
         await _revoke_token(hass, core_client)
 
-    monkeypatch.setattr(tools, "_check_dashboard_replace_hash", revoke_before_the_save)
+    monkeypatch.setattr(tools, "check_dashboard_replace_hash", revoke_before_the_save)
     with pytest.raises(ToolError) as caught:
         await tools.ha_config_set_dashboard(
             "test-dashboard",

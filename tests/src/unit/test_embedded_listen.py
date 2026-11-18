@@ -153,11 +153,11 @@ def _worker(
     sys.modules["ha_mcp.config"].get_global_settings().ipv6_allowed_networks = ""
     uvicorn = _Uvicorn(monkeypatch, starts=starts)
     manager = es.EmbeddedServerManager(hass, add_server_entry(hass, options=options))
-    monkeypatch.setattr(manager, "_async_ensure_package", AsyncMock(return_value=None))
-    monkeypatch.setattr(manager, "_async_warn_on_dependency_conflicts", AsyncMock())
-    monkeypatch.setattr(manager, "_async_access_token", AsyncMock(return_value="tok"))
-    monkeypatch.setattr(manager, "_prepare_config_dir", lambda: None)
-    monkeypatch.setattr(es, "_purge_ha_mcp_modules", lambda: None)
+    monkeypatch.setattr(manager, "async_ensure_package", AsyncMock(return_value=None))
+    monkeypatch.setattr(manager, "async_warn_on_dependency_conflicts", AsyncMock())
+    monkeypatch.setattr(manager, "async_access_token", AsyncMock(return_value="tok"))
+    monkeypatch.setattr(manager, "prepare_config_dir", lambda: None)
+    monkeypatch.setattr(es, "purge_ha_mcp_modules", lambda: None)
     return manager, uvicorn
 
 
@@ -203,9 +203,9 @@ async def test_readiness_ignores_another_process_on_the_port(
 ) -> None:
     # Another listener on the port answered the loopback probe, so a server
     # that never started was reported as running.
-    monkeypatch.setattr(es, "_READY_POLL_INTERVAL_SECONDS", 0.05)
-    monkeypatch.setattr(es, "_READY_STALL_TIMEOUT_SECONDS", 1.0)
-    monkeypatch.setattr(es, "_READY_TOTAL_CAP_SECONDS", 10.0)
+    monkeypatch.setattr(es, "READY_POLL_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(es, "READY_STALL_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(es, "READY_TOTAL_CAP_SECONDS", 10.0)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as other:
         other.bind(("127.0.0.1", 0))
         other.listen()

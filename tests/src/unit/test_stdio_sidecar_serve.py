@@ -490,7 +490,9 @@ class TestServedApp:
         """The sidecar mounts the HTTP modes' settings surface; a route added
         there and missing here is a dead button in stdio mode."""
         mcp = FastMCP("test")
-        monkeypatch.setattr("ha_mcp.settings_ui._http_settings_mounted", False)
+        from ha_mcp.settings_ui import reset_http_settings_state
+
+        reset_http_settings_state()
         register_settings_routes(
             mcp, MagicMock(), secret_path=served.prefix, advertise_prefix=False
         )
@@ -567,7 +569,7 @@ class TestShutdownEndpoint:
         urllib's request shape (loopback Host, no Origin): requiring Origin
         would break every replace."""
         # The sidecar runs in this process, so its pid never exits.
-        monkeypatch.setattr(sidecar, "_OLD_SIDECAR_EXIT_WAIT", 0.0)
+        monkeypatch.setattr(sidecar, "OLD_SIDECAR_EXIT_WAIT", 0.0)
         quiet_uvicorn_logging(monkeypatch)
         serving = threading.Event()
         servers: list[uvicorn.Server] = []

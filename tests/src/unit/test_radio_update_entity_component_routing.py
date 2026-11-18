@@ -188,7 +188,7 @@ async def test_update_entity_entities_half_absent_falls_back_to_legacy(
 
     # The component's device_get as an older build answered it.
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.websocket_api._do_device_get",
+        "custom_components.ha_mcp_tools.websocket_api.do_device_get",
         _device_get_without_entities,
     )
     component_ws_api.async_register_commands(hass)
