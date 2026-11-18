@@ -254,3 +254,106 @@ class Expression:
             origin=node,
             kind="conditional",
         )
+
+
+def comprehension_nodes(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+) -> Iterator[ast.AST]:
+    """The first iterable belongs to the outer scope, not this body."""
+    for index, generator in enumerate(scope.generators):
+        if index:
+            yield generator.iter
+        yield generator.target
+        yield from generator.ifs
+    if isinstance(scope, ast.DictComp):
+        yield scope.key
+        yield scope.value
+    else:
+        yield scope.elt
+
+
+def comprehension_values(
+    scope: ast.AST, values: dict[str, binding_rules.Value]
+) -> dict[str, binding_rules.Value]:
+    if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        first = scope.generators[0]
+        if isinstance(first.target, ast.Name):
+            return {first.target.id: binding_rules.iterated_value(first.iter, values)}
+    return {}
+
+
+def scan_annotations(
+    scope: ast.AST, env: flow_rules.Env, closure: flow_rules.Env, context: flow_rules.Deferred
+) -> Iterator[tuple[int, str]]:
+    for annotation in flow_rules.function_annotations(scope):
+        policy = flow_rules.Deferred(context.scan_scope, context.scan_expression)
+        policy.pending.append(set())
+        state = flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure).copy()
+        try:
+            yield from policy.scan_expression(
+                annotation, state.values, state.aliases, state.closure, policy
+            )
+        except flow_rules.Interrupted:
+            continue
+        for token in policy.pending.pop():
+            yield from policy.scan(token, state.closure)
+
+
+def scan_comprehension(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
+    context: flow_rules.Deferred,
+    scan_expression: Callable[..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]],
+) -> Iterator[tuple[int, str]]:
+    values, aliases = env
+    for index, generator in enumerate(scope.generators):
+        if index:
+            iterable, inputs = yield from scan_expression(
+                generator.iter, values, aliases, closure, context
+            )
+            if isinstance(generator.target, ast.Name):
+                values[generator.target.id] = binding_rules.iterated_value(iterable, inputs[0])
+        for name in binding_rules.bound_names([generator.target]):
+            aliases[name] = frozenset({""})
+            closure[0][name] = values.get(name, binding_rules.Value())
+            closure[1][name] = aliases[name]
+        for condition in generator.ifs:
+            yield from scan_expression(condition, values, aliases, closure, context)
+            if isinstance(condition, ast.Constant) and not condition.value:
+                return
+    expressions = [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+    for expression in expressions:
+        yield from scan_expression(expression, values, aliases, closure, context)
+
+
+def scan_body(
+    scope: ast.AST,
+    closure: flow_rules.Env,
+    context: flow_rules.Deferred,
+    on_outcomes: Callable[[dict[str, flow_rules.State]], None] | None,
+    scan_expression: Callable[..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]],
+) -> Iterator[tuple[int, str]]:
+    values, aliases = flow_rules.ClassValues(closure[0]), dict(closure[1])
+    effects = flow_rules.Effects([])
+    context.effects.append(effects)
+    state = flow_rules.State(flow_rules.ClassValues(values), aliases, closure).copy()
+    try:
+        if isinstance(scope, ast.Lambda):
+            yield from scan_expression(scope.body, values, aliases, closure, context)
+        else:
+            assert isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+            yield from scan_comprehension(
+                scope, (values, aliases), closure, context, scan_expression
+            )
+    except flow_rules.Interrupted:
+        effects.normal = False
+    finally:
+        context.effects.pop()
+    final = flow_rules.State(flow_rules.ClassValues(values), aliases, closure).copy()
+    outcomes = flow_rules.apply_effects({"return": final}, state, effects)
+    if on_outcomes is not None:
+        on_outcomes(outcomes)
+    context.remember(closure)
+    for token in context.pending.pop():
+        yield from context.scan(token, closure)

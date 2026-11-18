@@ -65,7 +65,7 @@ def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.
     elif isinstance(scope, ast.Lambda):
         children = iter([scope.body])
     elif isinstance(scope, _COMPREHENSIONS):
-        children = flow_rules.comprehension_nodes(scope)
+        children = expression_rules.comprehension_nodes(scope)
     else:
         children = ast.iter_child_nodes(scope)
     for child in children:
@@ -178,16 +178,6 @@ def _private(target: str) -> bool:
     return False
 
 
-def _comprehension_values(
-    scope: ast.AST, values: dict[str, binding_rules.Value]
-) -> dict[str, binding_rules.Value]:
-    if isinstance(scope, _COMPREHENSIONS):
-        first = scope.generators[0]
-        if isinstance(first.target, ast.Name):
-            return {first.target.id: binding_rules.iterated_value(first.iter, values)}
-    return {}
-
-
 def _bind_definition(
     name: str,
     values: dict[str, binding_rules.Value],
@@ -293,6 +283,7 @@ def _scan_nested_scope(
 ) -> Iterator[tuple[int, str]]:
     for header in _headers(node):
         yield from _scan_expression(header, values, aliases, closure, context)
+    yield from expression_rules.scan_annotations(node, (values, aliases), closure, context)
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         token = context.register(
             node,
@@ -304,7 +295,7 @@ def _scan_nested_scope(
             _bind_definition(node.name, values, aliases, frozenset({token}))
         return
     yield from _scan_scope(
-        node, *closure, _comprehension_values(node, values), context=context
+        node, *closure, expression_rules.comprehension_values(node, values), context=context
     )
 
 
@@ -375,36 +366,39 @@ class _ClassFlow:
             )
         )
 
-    def block(self, body: list[ast.stmt], incoming: _State) -> _Outcomes:
-        key = (tuple(map(id, body)), incoming.key())
+    def block(self, body: list[ast.stmt], incoming: _State, start: int = 0) -> _Outcomes:
+        key = (id(body), start, incoming.key())
         generating = bool(self.context.generating and self.context.generating[-1])
         if not generating and key in self.cache:
             return {kind: state.copy() for kind, state in self.cache[key].items()}
         if len(self.cache) >= 16384:
             raise ValueError("too many distinct class flow states")
         outcomes = {"normal": incoming.copy()}
-        for index, node in enumerate(body):
+        for index in range(start, len(body)):
+            node = body[index]
             state = outcomes.pop("normal", None)
             if state is None:
                 break
             state.refresh()
             self.context.remember(state.closure)
             results = self.statement(node, state)
-            self.context.chain(
-                results,
-                partial(self.follow, body=body[index + 1 :]),
-            )
+            if any(kind in self.context.continuations for kind in results):
+                self.context.chain(
+                    results, partial(self.follow, body=body, start=index + 1)
+                )
             for kind, result in results.items():
                 _add_outcome(outcomes, kind, result)
         if not generating:
             self.cache[key] = {kind: state.copy() for kind, state in outcomes.items()}
         return outcomes
 
-    def follow(self, outcomes: _Outcomes, body: list[ast.stmt]) -> _Outcomes:
+    def follow(
+        self, outcomes: _Outcomes, body: list[ast.stmt], start: int = 0
+    ) -> _Outcomes:
         remaining = dict(outcomes)
         normal = remaining.pop("normal", None)
         if normal is not None:
-            for kind, state in self.block(body, normal).items():
+            for kind, state in self.block(body, normal, start).items():
                 _add_outcome(remaining, kind, state)
         return remaining
 
@@ -933,40 +927,9 @@ def _scan_scope(
                 for token in pending:
                     yield from context.scan(token, outcomes[kind].closure)
         return
-    yield from _scan_expression_body(scope, closure, context, on_outcomes)
-
-
-def _scan_expression_body(
-    scope: ast.AST,
-    closure: _Env,
-    context: _Deferred,
-    on_outcomes: Callable[[_Outcomes], None] | None,
-) -> Iterator[tuple[int, str]]:
-    values, aliases = closure
-    effects = flow_rules.Effects([])
-    context.effects.append(effects)
-    state = _State(_ClassValues(values), aliases, closure).copy()
-    try:
-        assert isinstance(scope, (ast.Lambda, *_COMPREHENSIONS))
-        expressions = (
-            [scope.body]
-            if isinstance(scope, ast.Lambda)
-            else flow_rules.comprehension_nodes(scope)
-        )
-        for node in expressions:
-            if isinstance(node, ast.expr):
-                yield from _scan_expression(node, values, aliases, closure, context)
-    except flow_rules.Interrupted:
-        effects.normal = False
-    finally:
-        context.effects.pop()
-    final = _State(_ClassValues(values), aliases, closure).copy()
-    outcomes = flow_rules.apply_effects({"return": final}, state, effects)
-    if on_outcomes is not None:
-        on_outcomes(outcomes)
-    context.remember(closure)
-    for token in context.pending.pop():
-        yield from context.scan(token, closure)
+    yield from expression_rules.scan_body(
+        scope, closure, context, on_outcomes, _scan_expression
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

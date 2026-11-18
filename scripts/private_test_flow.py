@@ -28,31 +28,18 @@ def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         yield from scope.args.defaults
         yield from (value for value in scope.args.kw_defaults if value is not None)
+
+
+def function_annotations(scope: ast.AST) -> Iterator[ast.expr]:
+    """Annotations are policy inputs, not definition-time effects on Python 3.14."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
         yield from (
             node.annotation
             for node in ast.walk(scope.args)
             if isinstance(node, ast.arg) and node.annotation is not None
         )
-    if (
-        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and scope.returns is not None
-    ):
-        yield scope.returns
-
-
-def comprehension_nodes(
-    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
-) -> Iterator[ast.AST]:
-    """The first iterable belongs to the outer scope, not this body."""
-    if isinstance(scope, ast.DictComp):
-        yield scope.key
-        yield scope.value
-    else:
-        yield scope.elt
-    first, *remaining = scope.generators
-    yield first.target
-    yield from first.ifs
-    yield from remaining
+        if scope.returns is not None:
+            yield scope.returns
 
 
 def bindings(
@@ -457,6 +444,7 @@ class Deferred:
         self.active: set[ast.AST] = set()
         self.cache: dict[tuple, Analysis] = {}
         self.suspended: dict[str, Invocation] = {}
+        self.suspended_sites: dict[str, ast.Call | None] = {}
         self.effects: list[Effects] = []
         self.operands: dict[tuple[ast.expr, str], ast.Name] = {}
         self.prepared: dict[ast.AST, ast.AST] = {}
@@ -583,15 +571,43 @@ class Deferred:
             return None
         return Invocation(token, self.parameters(token, arguments, bound=bound))
 
-    def suspend(self, invocation: Invocation) -> str:
+    def suspend(self, invocation: Invocation, site: ast.Call | None = None, live: set[str] | None = None) -> str:
         for name, existing in self.suspended.items():
-            if existing == invocation:
+            if existing == invocation and self.suspended_sites[name] is site and (live is None or name not in live):
                 return name
         if len(self.suspended) >= 16384:
             raise ValueError("too many suspended call states")
         name = f"@suspended:{len(self.suspended)}"
         self.suspended[name] = invocation
+        self.suspended_sites[name] = site
         return name
+
+    def live_suspensions(self, env: Env, closure: Env) -> set[str]:
+        sources = [env, closure, module_bindings(*closure)]
+        roots = list(sources)
+        for values, aliases in self.frames.values():
+            names = {name for name, owner in values.cell_owners.items() if owner is values.scope_id} if isinstance(values, ScopeValues) else set()
+            roots.append(({name: values[name] for name in names if name in values}, {name: aliases[name] for name in names if name in aliases}))
+        live = set().union(*(names for _, aliases in roots for names in aliases.values()))
+        pending = [value for values, _ in roots for value in values.values()]
+        visited: set[int] = set()
+        while pending:
+            value = pending.pop()
+            if id(value) in visited:
+                continue
+            visited.add(id(value))
+            live.update(value.callables)
+            arguments = [item for option in value.positions for item in option if item is not None]
+            arguments.extend(argument for option in value.mapping_alternatives + value.target_mappings for _, argument in option)
+            for argument in arguments:
+                pending.extend(bound for _, bound in argument.bindings)
+                if argument.resolved is not None:
+                    pending.append(argument.resolved)
+        for _, aliases in [*sources, *self.frames.values()]:
+            for key in list(aliases):
+                if key.startswith("@resume:") and key.removeprefix("@resume:") not in live:
+                    aliases.pop(key)
+        return live
 
     def call(
         self,
@@ -612,8 +628,11 @@ class Deferred:
                 token = self.register(call.func, closure, env)
             self.pending[-1].discard(token)
             names = frozenset({token})
-        if names & {"next", "builtins.next"} and prepared.args:
-            yield from self.resume(prepared.args[0], inputs, closure)
+        if names & {"next", "builtins.next"}:
+            options = [arguments for arguments in self.capture_arguments(prepared, inputs) if arguments.positional]
+            targets = frozenset().union(*(arguments.positional[0].aliases() for arguments in options))
+            defaults = frozenset(len(arguments.positional) > 1 for arguments in options)
+            yield from self.resume_targets(targets, inputs, closure, defaults=defaults)
             return
         classes = binding_rules.class_aliases(prepared.func, inputs[1])
         if classes:
@@ -657,6 +676,7 @@ class Deferred:
             return
         runs: list[Invocation] = []
         suspended: set[str] = set()
+        live: set[str] | None = None
         for arguments in self.capture_arguments(
             *(captured if captured is not None else (call, env))
         ):
@@ -667,6 +687,13 @@ class Deferred:
                 kind = self.scopes[invocation.token].kind
                 if kind == "sync":
                     runs.append(invocation)
+                elif kind == "generator":
+                    if live is None:
+                        live = self.live_suspensions(env, closure)
+                    name = self.suspend(invocation, call, live)
+                    live.add(name)
+                    self.bind_alias(f"@resume:{name}", frozenset({"start"}), env, closure)
+                    suspended.add(name)
                 else:
                     suspended.add(self.suspend(invocation))
         if suspended:
@@ -701,13 +728,19 @@ class Deferred:
         self, expression: ast.expr, env: Env, closure: Env
     ) -> Iterator[tuple[int, str]]:
         names = binding_rules.dotted(expression, env[1])
+        yield from self.resume_targets(names, env, closure)
+
+    def resume_targets(self, names: frozenset[str], env: Env, closure: Env, *, defaults: frozenset[bool] = frozenset({False})) -> Iterator[tuple[int, str]]:
+        generators = {name for name in names & self.suspended.keys() if self.scopes[self.suspended[name].token].kind == "generator"}
+        if generators:
+            self.live_suspensions(env, closure)
         results: list[tuple[Invocation, Analysis]] = []
         for name in names & self.suspended.keys():
             invocation = self.suspended[name]
-            if self.scopes[invocation.token].kind == "generator":
+            if name in generators:
                 results.extend(
                     (invocation, result)
-                    for result in self.resume_generator(name, invocation, env, closure)
+                    for result in self.resume_generator(name, invocation, env, closure, defaults=defaults)
                 )
             else:
                 results.append((invocation, self.analyze(invocation, closure)))
@@ -846,6 +879,7 @@ class Deferred:
         continuation = self.continuations[key]
         state = continuation.state.copy()
         publish_context(module_bindings(*state.closure), module_bindings(*closure))
+        self.refresh_cells(state)
         state.refresh()
         outcomes = {"normal": state}
         suspended: dict[str, State] = {}
@@ -865,8 +899,19 @@ class Deferred:
             self.generating.pop()
         return Analysis(tuple(continuation.findings), outcomes | suspended)
 
+    def refresh_cells(self, state: State) -> None:
+        values = state.closure[0]
+        if not isinstance(values, ScopeValues):
+            return
+        for owner in set(values.cell_owners.values()) - {values.scope_id}:
+            frame = self.frames.get(owner)
+            if frame is not None:
+                names = {name for name, scope in values.cell_owners.items() if scope is owner}
+                replay_names(values, frame[0], names)
+                replay_names(state.closure[1], frame[1], names)
+
     def resume_generator(
-        self, name: str, invocation: Invocation, env: Env, closure: Env
+        self, name: str, invocation: Invocation, env: Env, closure: Env, *, defaults: frozenset[bool] = frozenset({False})
     ) -> list[Analysis]:
         key = f"@resume:{name}"
         stages = env[1].get(key, frozenset({"start"}))
@@ -881,7 +926,7 @@ class Deferred:
             state = State(
                 ClassValues(closure[0]), dict(closure[1]), copy_context(closure)
             )
-            results.append(Analysis((), {"raise": state}))
+            results.append(Analysis((), {"return": state}))
         following: set[str] = set()
         resumed: list[Analysis] = []
         for result in results:
@@ -889,11 +934,10 @@ class Deferred:
             for kind, state in result.outcomes.items():
                 yielded = kind in self.continuations
                 following.add(kind if yielded else "done")
-                destination = "normal" if yielded else "raise"
-                if destination in outcomes:
-                    outcomes[destination].merge(state)
-                else:
-                    outcomes[destination] = state.copy()
+                completed = kind in {"normal", "return"}
+                destinations = {"normal" if yielded or default and completed else "raise" for default in defaults}
+                for destination in destinations:
+                    add_outcome(outcomes, destination, state)
             resumed.append(Analysis(result.findings, outcomes))
         self.bind_alias(key, frozenset(following or {"done"}), env, closure)
         for result in resumed:
