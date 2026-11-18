@@ -12,49 +12,33 @@ import xml.etree.ElementTree as ET
 
 GUARD_PATH = "scripts/private_test_access.py"
 GUARD_SUPPORT = "scripts/private_test_bindings.py"
+GUARD_PATHS = (GUARD_PATH, GUARD_SUPPORT)
 FINALLY_NAME = "test_nested_finally_reports_each_source_access_once"
+BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
+PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
 GUARD_TEST = "tests/src/unit/test_private_test_access.py"
 REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 129,
-    ALLOW_NAME: 110,
+    REJECT_NAME: 164,
+    ALLOW_NAME: 140,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
     MAPPING_NAME: 12,
     FINALLY_NAME: 2,
+    BOUND_NAME: 2,
+    PERFORMANCE_NAME: 1,
     "test_the_guard_covers_every_python_file_in_both_trees": 2,
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 15, ALLOW_NAME: 11, FINALLY_NAME: 1}
-NEW_CASE_COUNTS = {REJECT_NAME: 22, ALLOW_NAME: 23}
-FAILING_CASE_IDS = {
-    REJECT_NAME: {
-        "class-bound-name-uses-module-fallback", "class-bound-alias-uses-module-fallback",
-        "class-literal-unpack-preserves-value", "class-literal-unpack-snapshots-rhs",
-        "class-literal-unpack-preserves-alias", "class-loop-carries-import-alias",
-        "class-except-star-carries-prior-handler", "class-false-match-guard-keeps-private-capture",
-        "class-whole-subject-private-capture", "class-earlier-context-preserves-unbound-target",
-        "class-nested-literal-unpack-preserves-value",
-        "class-deleted-name-uses-module-not-function-fallback",
-        "class-exception-name-uses-module-not-function-fallback",
-        "class-global-name-uses-module-without-local-store",
-        "class-deleted-global-alias-falls-back-to-builtin",
-    },
-    ALLOW_NAME: {
-        "class-bound-name-ignores-private-function-value", "class-bound-alias-ignores-function-reflection",
-        "nonbinding-assignment-does-not-expand-data", "class-single-iteration-value-does-not-run-backwards",
-        "class-for-normal-exit-runs-else", "class-while-normal-exit-runs-else",
-        "class-raised-try-skips-else-before-finally", "class-false-match-guard-keeps-public-capture",
-        "class-global-name-ignores-private-enclosing-value",
-        "class-deleted-global-name-does-not-restore-old-value",
-        "class-deleted-nonlocal-name-does-not-restore-old-value",
-    },
-}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 32, ALLOW_NAME: 11, BOUND_NAME: 2, PERFORMANCE_NAME: 1}
+NEW_CASE_COUNTS = {REJECT_NAME: 35, ALLOW_NAME: 30}
+CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
+CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", BOUND_NAME: "error"}
 EXCEPTION_PLUGIN = '''import json
 import os
 from pathlib import Path
@@ -108,23 +92,26 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
     old_source = source(baseline, GUARD_TEST)
     new_source = source(candidate, GUARD_TEST)
     names = set()
-    for group, count in NEW_CASE_COUNTS.items():
-        old = parameter_cases(old_source, group)
+    for group, section in CASE_GROUPS.items():
+        old = parameter_cases(old_source, group) if group != BOUND_NAME else {}
         new = parameter_cases(new_source, group)
         assert old.items() <= new.items(), group
-        added = set(new) - set(old)
-        assert len(added) == count, (group, added)
-        assert FAILING_CASE_IDS[group] <= added
-        names.update(group + "[" + case_id + "]" for case_id in FAILING_CASE_IDS[group])
-    assert FINALLY_NAME not in old_source
-    [finally_test] = [node for node in ast.parse(new_source).body
-                      if isinstance(node, ast.FunctionDef) and node.name == FINALLY_NAME]
-    decorator = finally_test.decorator_list[0]
-    assert ast.literal_eval(decorator.args[1]) == [False, True]
-    [ids] = [ast.literal_eval(kw.value) for kw in decorator.keywords if kw.arg == "ids"]
-    assert ids == ["public", "private"]
-    names.add(FINALLY_NAME + "[private]")
-    assert len(names) == 27
+        expected_added = {case["id"]: case["source"] for case in CASE_MANIFEST[section]}
+        added = {case_id: value for case_id, value in new.items() if case_id not in old}
+        assert added == expected_added, (group, set(added) ^ set(expected_added))
+        assert len(added) == NEW_CASE_COUNTS.get(group, 2), (group, added)
+        names.update(
+            group + "[" + case["id"] + "]"
+            for case in CASE_MANIFEST[section] if case["baseline_fails"]
+        )
+    assert BOUND_NAME not in old_source
+    assert PERFORMANCE_NAME not in old_source
+    [performance_test] = [node for node in ast.parse(new_source).body
+                         if isinstance(node, ast.FunctionDef) and node.name == PERFORMANCE_NAME]
+    assert not performance_test.decorator_list
+    assert CASE_MANIFEST["performance"] == [{"id": PERFORMANCE_NAME, "baseline_fails": True}]
+    names.add(PERFORMANCE_NAME)
+    assert len(names) == 46
     return names
 
 
@@ -171,11 +158,11 @@ def run_variant(root: Path, label: str) -> dict:
 def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
-        assert data["tests"] == 303, (label, data["tests"])
+        assert data["tests"] == 371, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 303
+        assert len(set(data["case_names"])) == 371
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -201,9 +188,9 @@ def main() -> None:
     root = Path(os.environ["PROBE_ROOT"])
     root.mkdir(parents=True, exist_ok=True)
     (root / "slf001_proof_types.py").write_text(EXCEPTION_PLUGIN, encoding="utf-8")
-    candidate_guard = source(candidate, GUARD_PATH)
-    baseline_guard = source(baseline, GUARD_PATH)
-    assert candidate_guard != baseline_guard or baseline_only
+    candidate_guards = {path: source(candidate, path) for path in GUARD_PATHS}
+    baseline_guards = {path: source(baseline, path) for path in GUARD_PATHS}
+    assert candidate_guards != baseline_guards or baseline_only
     expected = expected_failures(baseline, candidate)
     evidence = {
         "baseline_only": baseline_only,
@@ -225,11 +212,15 @@ def main() -> None:
     (root / "sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     results = {}
     try:
-        Path(GUARD_PATH).write_text(baseline_guard, encoding="utf-8")
-        (root / "baseline-overlay.patch").write_text(git("diff", "--", GUARD_PATH), encoding="utf-8")
+        for path in GUARD_PATHS:
+            Path(path).write_text(baseline_guards[path], encoding="utf-8")
+            (root / f"baseline-{Path(path).name}").write_text(baseline_guards[path], encoding="utf-8")
+            (root / f"candidate-{Path(path).name}").write_text(candidate_guards[path], encoding="utf-8")
+        (root / "baseline-overlay.patch").write_text(git("diff", "--", *GUARD_PATHS), encoding="utf-8")
         results["baseline"] = run_variant(root, "baseline")
     finally:
-        Path(GUARD_PATH).write_text(candidate_guard, encoding="utf-8")
+        for path in GUARD_PATHS:
+            Path(path).write_text(candidate_guards[path], encoding="utf-8")
     assert not git("status", "--porcelain", "--untracked-files=no")
     if not baseline_only:
         results["candidate"] = run_variant(root, "candidate")
@@ -245,7 +236,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 303 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 371 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

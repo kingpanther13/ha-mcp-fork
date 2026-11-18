@@ -1,0 +1,351 @@
+{
+  "reject": [
+    {
+      "id": "unpacked-patch-dict-target",
+      "source": "patch.dict(**{\"in_dict\": \"ha_mcp.module._cache\", \"values\": {}})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "aliased-unpacked-patch-dict-target",
+      "source": "OPTIONS = {\"in_dict\": \"ha_mcp.module._cache\", \"values\": {}}\npatch.dict(**OPTIONS)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "nested-unpacked-patch-dict-target",
+      "source": "patch.dict(**{**{\"in_dict\": \"ha_mcp.module._cache\"}, \"values\": {}})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "unpacked-patch-object-attribute",
+      "source": "patch.object(**{\"target\": obj, \"attribute\": \"_helper\", \"new\": replacement})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "aliased-unpacked-setattr-name",
+      "source": "OPTIONS = {\"target\": obj, \"name\": \"_helper\", \"value\": replacement}\nmonkeypatch.setattr(**OPTIONS)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "literal-sequence-capture",
+      "source": "class Example:\n    match ('_helper',):\n        case [name]:\n            getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "nested-sequence-capture",
+      "source": "class Example:\n    match [('public', '_helper')]:\n        case [[other, name]]:\n            getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "sequence-capture-callable-alias",
+      "source": "from builtins import getattr as read\nclass Example:\n    match (read,):\n        case [lookup]:\n            lookup(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "concatenated-iterable-private-loop",
+      "source": "FIRST = ('public',)\nSECOND = ('_helper',)\nCASES = FIRST + SECOND\nfor name in CASES:\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "concatenated-iterable-private-comprehension",
+      "source": "FIRST = ('public',)\nSECOND = ('_helper',)\nresults = [getattr(mod, name) for name in FIRST + SECOND]\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "conditional-private-string",
+      "source": "name = '_helper' if flag else 'public'\ngetattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "conditional-private-class-string",
+      "source": "class Example:\n    name = 'public' if flag else '_helper'\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "conditional-private-iterable",
+      "source": "names = ('_helper',) if flag else ('public',)\nfor name in names:\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "conditional-private-mapping-key",
+      "source": "options = {'_helper': 1} if flag else {'public': 2}\npatch.multiple(mod, **options)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "conditional-reflection-alias",
+      "source": "from builtins import getattr as read\nlookup = read if flag else callback\nlookup(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-private-fill",
+      "source": "getattr(mod, f\"{'helper':_>7}\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-private-literal-number",
+      "source": "getattr(mod, f'{12:_>3}')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-private-conversion-and-fill",
+      "source": "getattr(mod, f\"{'helper'!r:_>9}\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-private-spec-variable",
+      "source": "SPEC = '_>7'\ngetattr(mod, f\"{'helper':{SPEC}}\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-private-string-conversion",
+      "source": "getattr(mod, f\"{'_helper'!s}\")\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "formatted-unknown-field-private-prefix",
+      "source": "getattr(mod, f'_{runtime!r}')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "function-literal-unpack-private",
+      "source": "def test_it():\n    name, count = ('_helper', 1)\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "function-nested-literal-unpack-private",
+      "source": "def test_it():\n    [other, (name, count)] = ['public', ('_helper', 1)]\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "module-literal-unpack-private",
+      "source": "name, count = ('_helper', 1)\ngetattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-negative-literal-private-fill",
+      "source": "getattr(mod, f'{-1:_>3}')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-positive-unary-literal-private-fill",
+      "source": "getattr(mod, f'{+1:_>2}')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-continue-keeps-live-binding",
+      "source": "class E:\n    NAME = 'public'\n    for item in (0,):\n        NAME = '_helper'\n        continue\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-continue-reaches-loop-else",
+      "source": "class E:\n    NAME = 'public'\n    for item in (0,):\n        NAME = '_helper'\n        continue\n        NAME = 'public'\n    else:\n        getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-except-star-cleanup-restores-builtin",
+      "source": "class E:\n    getattr = public_callback\n    try:\n        raise ExceptionGroup('group', [ValueError(), TypeError()])\n    except* ValueError as getattr:\n        pass\n    except* TypeError:\n        getattr(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-exceptional-finally-reaches-outer-handler",
+      "source": "class E:\n    NAME = 'public'\n    try:\n        try:\n            raise ValueError()\n        finally:\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-global-write-reaches-module",
+      "source": "NAME = 'public'\nclass E:\n    global NAME\n    NAME = '_helper'\ngetattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-nonlocal-write-reaches-function",
+      "source": "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "nested-class-global-write-reaches-parent-class",
+      "source": "NAME = 'public'\nclass E:\n    class Nested:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-conditional-global-write-keeps-private-path",
+      "source": "NAME = 'public'\nclass E:\n    if flag:\n        global NAME\n        NAME = '_helper'\ngetattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-class-global-write-does-not-run-at-definition",
+      "source": "NAME = '_helper'\ndef later():\n    class E:\n        global NAME\n        NAME = 'public'\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    }
+  ],
+  "allow": [
+    {
+      "id": "dispatch-dict-is-not-patch",
+      "source": "dispatch.dict(\"_data\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "dispatch-object-is-not-patch",
+      "source": "dispatch.object(obj, \"_data\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "dispatch-multiple-is-not-patch",
+      "source": "dispatch.multiple(obj, _data=value)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "unpacked-patch-dict-replacement-data",
+      "source": "patch.dict(**{\"in_dict\": \"ha_mcp.module.cache\", \"values\": {\"_data\": \"_value\"}})\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "aliased-unpacked-public-patch-dict",
+      "source": "OPTIONS = {\"in_dict\": \"ha_mcp.module.cache\", \"values\": {\"_data\": 1}}\npatch.dict(**OPTIONS)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "unpacked-own-object-stays-exempt",
+      "source": "patch.object(**{\"target\": self, \"attribute\": \"_own_helper\", \"new\": replacement})\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "literal-sequence-public-capture",
+      "source": "class Example:\n    match ('public', '_data'):\n        case [name, payload]:\n            getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "nested-sequence-public-capture",
+      "source": "class Example:\n    match [('_data', 'public')]:\n        case [[payload, name]]:\n            getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "sequence-public-callable-capture",
+      "source": "class Example:\n    match (callback,):\n        case [lookup]:\n            lookup(mod, '_data')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "conditional-reachable-public-string",
+      "source": "name = '_data' if False else 'public'\ngetattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "conditional-both-public-strings",
+      "source": "name = 'public' if flag else 'other'\ngetattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "conditional-private-data-container",
+      "source": "data = ('_data',) if flag else {'_metadata': 1}\npatch.dict(data, {'_replacement': 2})\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "concatenated-public-iterable",
+      "source": "FIRST = ('pub',)\nSECOND = ('lic',)\nfor name in FIRST + SECOND:\n    getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "concatenated-empty-private-data",
+      "source": "EMPTY = ()\nDATA = EMPTY + ('_data',)\npatch.dict({}, {'payload': DATA})\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "formatted-public-fill",
+      "source": "getattr(mod, f\"{'helper':x>7}\")\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "formatted-repr-quotes-private-looking-value",
+      "source": "getattr(mod, f\"{'_data'!r}\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-ascii-quotes-private-looking-value",
+      "source": "getattr(mod, f\"{'_data'!a}\")\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "function-unpack-private-other-element",
+      "source": "def test_it():\n    name, payload = ('public', '_data')\n    getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "module-unpack-private-other-element",
+      "source": "name, payload = ('public', '_data')\ngetattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "named-tuple-concatenation-does-not-cross-product",
+      "source": "FIRST = ('first_0', 'first_1', 'first_2', 'first_3', 'first_4', 'first_5', 'first_6', 'first_7', 'first_8', 'first_9', 'first_10', 'first_11', 'first_12', 'first_13', 'first_14', 'first_15', 'first_16')\nSECOND = ('second_0', 'second_1', 'second_2', 'second_3', 'second_4', 'second_5', 'second_6', 'second_7', 'second_8', 'second_9', 'second_10', 'second_11', 'second_12', 'second_13', 'second_14', 'second_15', 'second_16')\nCASES = FIRST + SECOND\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-negative-literal-public-fill",
+      "source": "getattr(mod, f'{-1:x>3}')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "formatted-positive-unary-literal-public-fill",
+      "source": "getattr(mod, f'{+1:x>2}')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "class-definite-break-skips-loop-else",
+      "source": "class E:\n    NAME = 'public'\n    for item in (0,):\n        break\n    else:\n        NAME = '_data'\n    getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-continue-skips-private-access",
+      "source": "class E:\n    for item in (0,):\n        continue\n        getattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-break-skips-private-access",
+      "source": "class E:\n    for item in (0,):\n        break\n        getattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-ordinary-write-stays-in-class",
+      "source": "NAME = 'public'\nclass E:\n    NAME = '_data'\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "class-definite-global-write-removes-old-private-value",
+      "source": "NAME = '_data'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-global-branch-does-not-affect-sibling",
+      "source": "NAME = 'public'\nclass E:\n    if flag:\n        global NAME\n        NAME = '_data'\n    else:\n        getattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "class-finally-continue-skips-remainder",
+      "source": "class E:\n    for item in (0,):\n        try:\n            pass\n        finally:\n            continue\n        getattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-nested-break-does-not-skip-outer-else",
+      "source": "class E:\n    NAME = '_data'\n    for item in (0,):\n        for inner in (0,):\n            break\n    else:\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+      "baseline_fails": false
+    }
+  ],
+  "error": [
+    {
+      "id": "formatted-width-bounded-before-allocation",
+      "source": "getattr(mod, f\"{'helper':_>1000000000}\")\n",
+      "contains": "formatted attribute target exceeds the size limit",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-precision-bounded-before-allocation",
+      "source": "getattr(mod, f'{1:.1000000000f}')\n",
+      "contains": "formatted attribute target exceeds the size limit",
+      "baseline_fails": true
+    }
+  ],
+  "performance": [
+    {
+      "id": "test_nested_finally_reuses_repeated_states",
+      "baseline_fails": true
+    }
+  ]
+}
