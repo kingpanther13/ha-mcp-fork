@@ -13,9 +13,26 @@ from __future__ import annotations
 import argparse
 import ast
 from collections.abc import Iterator
-from dataclasses import dataclass
-from itertools import chain, product
+from itertools import chain
 from pathlib import Path
+
+from private_test_bindings import (
+    Aliases as _Aliases,
+    ScopeValues as _ScopeValues,
+    Value as _Value,
+    assignments as _assignments,
+    bound_names as _bound_names,
+    class_bindings as _class_bindings,
+    dotted as _dotted,
+    extend_values as _extend_values,
+    import_aliases as _import_aliases,
+    mapping_keys as _mapping_keys,
+    module_bindings as _module_bindings,
+    prepared_assignment as _prepared_assignment,
+    strings as _strings,
+    union_aliases as _union_aliases,
+    union_values as _union_values,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
@@ -41,18 +58,12 @@ _SCOPES = (
 )
 
 
-@dataclass(frozen=True)
-class _Value:
-    strings: frozenset[str] = frozenset()
-    mapping_keys: frozenset[str] = frozenset()
-
-
-class _ClassValues(dict[str, _Value]):
+class _ClassValues(_ScopeValues):
     """Class namespace values, updated in statement order rather than prebound."""
 
     def __init__(self, values: dict[str, _Value]) -> None:
         super().__init__(values)
-        self.observed_values = dict(values)
+        self.observed_values = _ScopeValues(values)
         self.observed_aliases: _Aliases = {}
         self.has_alias_snapshot = False
 
@@ -68,23 +79,6 @@ class _ClassValues(dict[str, _Value]):
             fallback = frozenset({name})
             previous = self.observed_aliases.get(name, fallback)
             self.observed_aliases[name] = previous | aliases.get(name, fallback)
-
-
-_Aliases = dict[str, frozenset[str]]
-
-
-def _union_values(target: dict[str, _Value], source: dict[str, _Value]) -> None:
-    for name, value in source.items():
-        previous = target.get(name, _Value())
-        target[name] = _Value(
-            previous.strings | value.strings,
-            previous.mapping_keys | value.mapping_keys,
-        )
-
-
-def _union_aliases(target: _Aliases, source: _Aliases) -> None:
-    for name, value in source.items():
-        target[name] = target.get(name, frozenset()) | value
 
 
 def _comprehension_nodes(
@@ -157,90 +151,21 @@ def _headers(scope: ast.AST) -> Iterator[ast.expr]:
         yield scope.returns
 
 
-def _dotted(node: ast.expr, aliases: _Aliases) -> frozenset[str]:
-    if isinstance(node, ast.Name):
-        return aliases.get(node.id, frozenset({node.id}))
-    if isinstance(node, ast.Attribute):
-        return frozenset(f"{name}.{node.attr}" for name in _dotted(node.value, aliases))
-    return frozenset({""})
-
-
-def _joined(parts: list[set[str]]) -> set[str]:
-    # Only tiny expressions are useful targets. Bound the cross product of
-    # branch alternatives so source input cannot make a CI guard exponential.
-    if any(not part for part in parts):
-        return set()
-    size = 1
-    for part in parts:
-        size *= len(part)
-        if size > 256:
-            raise ValueError("too many static alternatives in an attribute target")
-    return {"".join(items) for items in product(*parts)}
-
-
-def _strings(node: ast.expr | None, values: dict[str, _Value]) -> set[str]:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return {node.value}
-    if isinstance(node, ast.Name):
-        return set(values.get(node.id, _Value()).strings)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _joined(
-            [
-                _strings(node.left, values) or {"?"},
-                _strings(node.right, values) or {"?"},
-            ]
-        )
-    if isinstance(node, ast.JoinedStr):
-        return _joined(
-            [
-                _strings(part.value, values) or {"?"}
-                if isinstance(part, ast.FormattedValue)
-                else _strings(part, values)
-                for part in node.values
-            ]
-        )
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return set().union(*(_strings(item, values) for item in node.elts))
-    return set()
-
-
-def _mapping_keys(node: ast.expr, values: dict[str, _Value]) -> set[str]:
-    if isinstance(node, ast.Name):
-        return set(values.get(node.id, _Value()).mapping_keys)
-    if isinstance(node, ast.Dict):
-        return set().union(
-            *(
-                _mapping_keys(value, values) if key is None else _strings(key, values)
-                for key, value in zip(node.keys, node.values, strict=True)
-            )
-        )
-    return set()
-
-
 def _bindings(
     scope: ast.AST,
     parent_values: dict[str, _Value],
     parent_aliases: _Aliases,
     initial_values: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, _Value], _Aliases]:
-    if isinstance(scope, ast.ClassDef):
-        return _ClassValues(parent_values), dict(parent_aliases)
-    values = dict(parent_values)
-    aliases = dict(parent_aliases)
     nodes = list(_nodes(scope))
-    local_names = {
-        node.id
-        for node in nodes
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-    }
-    local_names.update(
-        node.name
-        for node in nodes
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
+    if isinstance(scope, ast.ClassDef):
+        values, aliases = _class_bindings(parent_values, parent_aliases, nodes)
+        return _ClassValues(values), aliases
+    local_names = _bound_names(nodes)
+    values = _ScopeValues(parent_values)
+    aliases = dict(parent_aliases)
     imported: _Aliases = {}
     _import_aliases(nodes, imported)
-    local_names.update(imported)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         parameters = [
             *scope.args.posonlyargs,
@@ -262,65 +187,6 @@ def _bindings(
     )
     _extend_values(list(_assignments(nodes)), values, aliases)
     return values, aliases
-
-
-def _import_aliases(nodes: list[ast.AST], aliases: _Aliases) -> None:
-    for node in nodes:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                aliases[alias.asname or alias.name.split(".")[0]] = frozenset(
-                    {alias.name if alias.asname else alias.name.split(".")[0]}
-                )
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                aliases[alias.asname or alias.name] = frozenset(
-                    {f"{node.module}.{alias.name}"}
-                )
-
-
-def _extend_values(
-    assignments: list[tuple[str, ast.expr, bool]],
-    values: dict[str, _Value],
-    aliases: _Aliases,
-) -> None:
-    # A lexical constant can refer to one declared later; union alternatives
-    # rather than letting a later assignment hide an earlier private target.
-    for _ in range(len(assignments) + 1):
-        changed = False
-        for target, expression, iterated in assignments:
-            previous = values.get(target, _Value())
-            strings = _strings(expression, values)
-            keys = _mapping_keys(expression, values)
-            current = _Value(
-                previous.strings | strings | (keys if iterated else set()),
-                previous.mapping_keys | (set() if iterated else keys),
-            )
-            changed |= current != previous
-            values[target] = current
-            if isinstance(expression, (ast.Name, ast.Attribute)):
-                resolved = _dotted(expression, aliases)
-                changed |= aliases.get(target) != resolved
-                aliases[target] = resolved
-        if not changed:
-            break
-
-
-def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr, bool]]:
-    for node in nodes:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    yield target.id, node.value, False
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.value is not None
-        ):
-            yield node.target.id, node.value, False
-        elif isinstance(
-            node, (ast.For, ast.AsyncFor, ast.comprehension)
-        ) and isinstance(node.target, ast.Name):
-            yield node.target.id, node.iter, True
 
 
 def _argument(call: ast.Call, index: int, name: str) -> ast.expr | None:
@@ -460,13 +326,10 @@ def _scan_assignment(
         yield from _scan_expression(value, values, aliases, closure)
     # Resolve a chained assignment's RHS once, then evaluate and bind targets
     # left to right: a later target expression can see an earlier new binding.
-    resolved = _dotted(value, aliases) if value is not None else None
-    assigned_value = _Value(
-        frozenset(_strings(value, values)),
-        frozenset(_mapping_keys(value, values)) if value is not None else frozenset(),
-    )
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    for target in targets:
+    for target, resolved, assigned_value in _prepared_assignment(
+        targets, value, values, aliases
+    ):
         yield from _scan_assignment_target(
             target, resolved, values, aliases, closure, assigned_value
         )
@@ -548,6 +411,79 @@ def _scan_class_choices(
     _join_class_paths(values, aliases, paths)
 
 
+def _loop_has_break(body: list[ast.stmt]) -> bool:
+    pending: list[ast.AST] = list(body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Break):
+            return True
+        if not isinstance(node, (*_SCOPES, ast.For, ast.AsyncFor, ast.While)):
+            pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _loop_literal_items(node: ast.expr) -> list[ast.expr] | None:
+    if isinstance(node, (ast.List, ast.Tuple)) and not any(
+        isinstance(item, ast.Starred) for item in node.elts
+    ):
+        return list(node.elts)
+    return None
+
+
+def _scan_loop_iteration(
+    node: ast.For | ast.AsyncFor | ast.While,
+    values: _ClassValues,
+    aliases: _Aliases,
+    closure: tuple[dict[str, _Value], _Aliases],
+    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]],
+) -> Iterator[tuple[int, str]]:
+    if isinstance(node, ast.While):
+        yield from _scan_expression(node.test, values, aliases, closure)
+    for target, resolved, assigned_value in bindings:
+        yield from _scan_assignment_target(
+            target, resolved, values, aliases, closure, assigned_value
+        )
+    yield from _scan_class_block(node.body, values, aliases, closure)
+
+
+def _loop_may_skip(node: ast.For | ast.AsyncFor | ast.While) -> bool:
+    if isinstance(node, ast.While):
+        return True
+    if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)):
+        return not any(not isinstance(item, ast.Starred) for item in node.iter.elts)
+    if isinstance(node.iter, ast.Dict):
+        return not any(key is not None for key in node.iter.keys)
+    return True
+
+
+def _scan_repeated_loop(
+    node: ast.For | ast.AsyncFor | ast.While,
+    values: _ClassValues,
+    aliases: _Aliases,
+    closure: tuple[dict[str, _Value], _Aliases],
+    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]],
+    break_paths: list[tuple[_ClassValues, _Aliases]],
+) -> Iterator[tuple[int, str]]:
+    current, current_aliases = _ClassValues(values), dict(aliases)
+    exits = [(current, current_aliases)] if _loop_may_skip(node) else []
+    has_break = _loop_has_break(node.body)
+    # Revisit with carried state: imports become visible only on later trips.
+    for _ in range(256):
+        iteration, iteration_aliases = _ClassValues(current), dict(current_aliases)
+        yield from _scan_loop_iteration(node, iteration, iteration_aliases, closure, bindings)
+        exits.append((iteration, iteration_aliases))
+        if has_break:
+            break_paths.append((_ClassValues(iteration.observed_values), dict(iteration.observed_aliases)))
+        joined, joined_aliases = _ClassValues(current), dict(current_aliases)
+        _join_class_paths(joined, joined_aliases, [(current, current_aliases), (iteration, iteration_aliases)])
+        if joined == current and joined_aliases == current_aliases:
+            break
+        current, current_aliases = joined, joined_aliases
+    else:
+        raise ValueError("too many static alternatives in a loop")
+    _join_class_paths(values, aliases, exits)
+
+
 def _scan_class_loop(
     node: ast.For | ast.AsyncFor | ast.While,
     values: _ClassValues,
@@ -556,42 +492,32 @@ def _scan_class_loop(
 ) -> Iterator[tuple[int, str]]:
     expression = node.test if isinstance(node, ast.While) else node.iter
     yield from _scan_expression(expression, values, aliases, closure)
-    body_values, body_aliases = _ClassValues(values), dict(aliases)
-    # A later iteration can see assignments from the body. Seed alternatives,
-    # then let definite assignments replace them in source order within it.
-    seeded_aliases = dict(aliases)
-    body_nodes = list(_nodes(ast.Module(body=node.body, type_ignores=[])))
-    _extend_values(list(_assignments(body_nodes)), body_values, seeded_aliases)
-    _union_aliases(body_aliases, seeded_aliases)
-    if not isinstance(node, ast.While):
-        iterated = _Value(
-            frozenset(_strings(node.iter, values) | _mapping_keys(node.iter, values))
-        )
-        yield from _scan_assignment_target(
-            node.target, frozenset({""}), body_values, body_aliases, closure, iterated
-        )
-    body_values = _ClassValues(body_values)
-    yield from _scan_class_block(node.body, body_values, body_aliases, closure)
-    paths = [(body_values, body_aliases)]
-    if isinstance(node, ast.While) or not _definitely_nonempty(node.iter):
-        paths.append((_ClassValues(values), dict(aliases)))
-    if any(isinstance(part, (ast.Break, ast.Continue)) for part in body_nodes):
-        paths.append(
-            (_ClassValues(body_values.observed_values), body_values.observed_aliases)
-        )
-    _join_class_paths(values, aliases, paths)
+    items = None if isinstance(node, ast.While) else _loop_literal_items(node.iter)
+    current, current_aliases = _ClassValues(values), dict(aliases)
+    break_paths: list[tuple[_ClassValues, _Aliases]] = []
+    has_break = _loop_has_break(node.body)
+    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]] = []
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        bindings = _prepared_assignment([node.target], ast.Constant(value=None), values, aliases)
+        if isinstance(node.target, ast.Name):
+            bindings = [(node.target, frozenset({""}), _Value(frozenset(
+                _strings(node.iter, values) | _mapping_keys(node.iter, values)
+            )))]
+    if items is not None and isinstance(node, (ast.For, ast.AsyncFor)):
+        # Python evaluates the entire iterable before the first iteration.
+        iterations = [_prepared_assignment([node.target], item, values, aliases) for item in items]
+        for bindings in iterations:
+            iteration = _ClassValues(current)
+            yield from _scan_loop_iteration(node, iteration, current_aliases, closure, bindings)
+            current = iteration
+            if has_break:
+                break_paths.append((_ClassValues(current.observed_values), dict(current.observed_aliases)))
+    else:
+        yield from _scan_repeated_loop(node, current, current_aliases, closure, bindings, break_paths)
     if isinstance(node, ast.While):
-        yield from _scan_expression(node.test, values, aliases, closure)
-    # Retain the break path as well as the normal-completion else block.
-    yield from _scan_class_choices([[], node.orelse], values, aliases, closure)
-
-
-def _definitely_nonempty(node: ast.expr) -> bool:
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return any(not isinstance(item, ast.Starred) for item in node.elts)
-    if isinstance(node, ast.Dict):
-        return any(key is not None for key in node.keys)
-    return False
+        yield from _scan_expression(node.test, current, current_aliases, closure)
+    yield from _scan_class_block(node.orelse, current, current_aliases, closure)
+    _join_class_paths(values, aliases, [(current, current_aliases), *break_paths])
 
 
 def _restore_class_fallback(
@@ -600,9 +526,15 @@ def _restore_class_fallback(
     aliases: _Aliases,
     closure: tuple[dict[str, _Value], _Aliases],
 ) -> None:
-    outer_values, outer_aliases = closure
     values.pop(name, None)
     aliases.pop(name, None)
+    if name in values.class_nonlocals:
+        # Deleting a closure cell leaves it unbound, not a module lookup.
+        aliases[name] = frozenset({""})
+        return
+    if name in values.class_globals:
+        return
+    outer_values, outer_aliases = _module_bindings(*closure)
     if name in outer_values:
         values[name] = outer_values[name]
     if name in outer_aliases:
@@ -618,15 +550,15 @@ def _scan_class_try(
     body_values, body_aliases = _ClassValues(values), dict(aliases)
     yield from _scan_class_block(node.body, body_values, body_aliases, closure)
     # An exception can arise between assignments, not only at the body's end.
-    interrupted_values = dict(body_values.observed_values)
+    interrupted_values = _ScopeValues(body_values.observed_values)
     interrupted_aliases = dict(body_values.observed_aliases)
-    handler_start_values = dict(interrupted_values)
+    handler_start_values = _ScopeValues(interrupted_values)
     handler_start_aliases = dict(interrupted_aliases)
-    yield from _scan_class_block(node.orelse, body_values, body_aliases, closure)
-    _union_values(interrupted_values, body_values.observed_values)
-    _union_aliases(interrupted_aliases, body_values.observed_aliases)
     paths: list[tuple[_ClassValues, _Aliases]] = []
     if not node.body or not isinstance(node.body[-1], ast.Raise):
+        yield from _scan_class_block(node.orelse, body_values, body_aliases, closure)
+        _union_values(interrupted_values, body_values.observed_values)
+        _union_aliases(interrupted_aliases, body_values.observed_aliases)
         paths.append((body_values, body_aliases))
     for handler in node.handlers:
         caught_values = _ClassValues(handler_start_values)
@@ -654,14 +586,24 @@ def _scan_class_try(
             )
         _union_values(interrupted_values, interrupted_handler)
         _union_aliases(interrupted_aliases, interrupted_handler_aliases)
+        if isinstance(node, ast.TryStar):
+            _union_values(handler_start_values, caught_values)
+            _union_aliases(handler_start_aliases, caught_aliases)
+            _union_values(handler_start_values, interrupted_handler)
+            _union_aliases(handler_start_aliases, interrupted_handler_aliases)
+    identical_finally_input = False
     if paths:
         _join_class_paths(values, aliases, paths)
+        identical_finally_input = (
+            values == interrupted_values and aliases == interrupted_aliases
+        )
         yield from _scan_class_block(node.finalbody, values, aliases, closure)
     # A nonmatching or handler-raised exception still executes finally, but
     # cannot reach the statements after try. Scan that path without joining it.
-    yield from _scan_class_block(
-        node.finalbody, _ClassValues(interrupted_values), interrupted_aliases, closure
-    )
+    if not identical_finally_input:
+        yield from _scan_class_block(
+            node.finalbody, _ClassValues(interrupted_values), interrupted_aliases, closure
+        )
 
 
 def _scan_class_match(
@@ -671,26 +613,36 @@ def _scan_class_match(
     closure: tuple[dict[str, _Value], _Aliases],
 ) -> Iterator[tuple[int, str]]:
     yield from _scan_expression(node.subject, values, aliases, closure)
+    subject_value = _Value(
+        frozenset(_strings(node.subject, values)),
+        frozenset(_mapping_keys(node.subject, values)),
+    )
+    subject_aliases = _dotted(node.subject, aliases)
     paths: list[tuple[_ClassValues, _Aliases]] = []
-    if not any(
-        case.guard is None
-        and isinstance(case.pattern, ast.MatchAs)
-        and case.pattern.pattern is None
-        for case in node.cases
-    ):
-        paths.append((_ClassValues(values), dict(aliases)))
+    remaining = [(_ClassValues(values), dict(aliases))]
     for case in node.cases:
-        branch_values, branch_aliases = _ClassValues(values), dict(aliases)
+        if not remaining:
+            break
+        pending_values, pending_aliases = _ClassValues(values), dict(aliases)
+        _join_class_paths(pending_values, pending_aliases, remaining)
+        branch_values, branch_aliases = _ClassValues(pending_values), dict(pending_aliases)
         for name in _pattern_names(case.pattern):
             branch_values[name] = _Value()
             branch_aliases[name] = frozenset({""})
+        if isinstance(case.pattern, ast.MatchAs) and case.pattern.name is not None:
+            branch_values[case.pattern.name] = subject_value
+            branch_aliases[case.pattern.name] = subject_aliases
         if case.guard is not None:
-            yield from _scan_expression(
-                case.guard, branch_values, branch_aliases, closure
-            )
-        yield from _scan_class_block(case.body, branch_values, branch_aliases, closure)
-        paths.append((branch_values, branch_aliases))
-    _join_class_paths(values, aliases, paths)
+            yield from _scan_expression(case.guard, branch_values, branch_aliases, closure)
+        irrefutable = isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        guard = case.guard.value if isinstance(case.guard, ast.Constant) else None
+        remaining = [] if irrefutable else [(pending_values, pending_aliases)]
+        if case.guard is not None and guard is not True:
+            remaining.append((_ClassValues(branch_values), dict(branch_aliases)))
+        if guard is not False:
+            yield from _scan_class_block(case.body, branch_values, branch_aliases, closure)
+            paths.append((branch_values, branch_aliases))
+    _join_class_paths(values, aliases, paths + remaining)
 
 
 def _pattern_names(pattern: ast.pattern) -> Iterator[str]:
@@ -707,15 +659,19 @@ def _scan_class_with(
     aliases: _Aliases,
     closure: tuple[dict[str, _Value], _Aliases],
 ) -> Iterator[tuple[int, str]]:
-    for item in node.items:
-        yield from _scan_expression(item.context_expr, values, aliases, closure)
-        if item.optional_vars is not None:
-            yield from _scan_assignment_target(
-                item.optional_vars, frozenset({""}), values, aliases, closure
-            )
+    item, *remaining = node.items
+    yield from _scan_expression(item.context_expr, values, aliases, closure)
+    if item.optional_vars is not None:
+        yield from _scan_assignment_target(
+            item.optional_vars, frozenset({""}), values, aliases, closure
+        )
+    body = node.body
+    if remaining:
+        # Earlier managers can suppress a later manager's entry failure, before
+        # its optional target is bound. Nested blocks retain that exit state.
+        body = [type(node)(items=remaining, body=body, type_comment=None)]
     body_values, body_aliases = _ClassValues(values), dict(aliases)
-    yield from _scan_class_block(node.body, body_values, body_aliases, closure)
-    # A context manager may suppress an exception between body assignments.
+    yield from _scan_class_block(body, body_values, body_aliases, closure)
     _join_class_paths(
         values,
         aliases,
@@ -831,6 +787,8 @@ def _scan_scope(
 ) -> Iterator[tuple[int, str]]:
     closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
+    if isinstance(scope, ast.Module) and isinstance(values, _ScopeValues):
+        values.module_bindings = (values, aliases)
     assigned_names = {name for name, _, _ in _assignments(list(_nodes(scope)))}
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
@@ -863,7 +821,7 @@ def main(argv: list[str] | None = None) -> int:
             except (SyntaxError, ValueError) as error:
                 violations.append(f"{path.relative_to(args.repo)}: {error}")
     if violations:
-        print("\n".join(violations))
+        print("\n".join(dict.fromkeys(violations)))
         print("Use the public entry point or real configuration; no test is exempt.")
         return 1
     print("No private string targets in unit or app tests.")

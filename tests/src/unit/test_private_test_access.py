@@ -281,6 +281,22 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             'NAME = "_helper"\ndef outer():\n    NAME = "public"\n    class Example:\n        try:\n            raise ValueError()\n        except ValueError as NAME:\n            pass\n        getattr(mod, NAME)\n',
             id="class-exception-name-uses-module-not-function-fallback",
         ),
+        pytest.param(
+            'NAMES = ("_helper",)\nclass Example:\n    for name in NAMES:\n        getattr(mod, name)\n',
+            id="class-loop-uses-named-iterable-summary",
+        ),
+        pytest.param(
+            'NAME = "_helper"\ndef outer():\n    NAME = "public"\n    class Example:\n        global NAME\n        getattr(mod, NAME)\n',
+            id="class-global-name-uses-module-without-local-store",
+        ),
+        pytest.param(
+            'NAME = "public"\ndef outer():\n    NAME = "_helper"\n    class Example:\n        nonlocal NAME\n        getattr(mod, NAME)\n        NAME = "public"\n',
+            id="class-nonlocal-name-keeps-enclosing-value",
+        ),
+        pytest.param(
+            'getattr = public_callback\nclass Example:\n    global getattr\n    del getattr\n    getattr(mod, "_helper")\n',
+            id="class-deleted-global-alias-falls-back-to-builtin",
+        ),
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -515,6 +531,34 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         pytest.param(
             'class Example:\n    NAME = "_data"\n    OTHER = "public"\n    NAME, OTHER = (OTHER, NAME)\n    getattr(mod, NAME)\n',
             id="class-literal-unpack-swap-keeps-public-result",
+        ),
+        pytest.param(
+            'NAME = "public"\nclass Example:\n    for item in (NAME, NAME):\n        getattr(mod, item)\n        NAME = "_data"\n',
+            id="class-loop-evaluates-literal-iterable-once",
+        ),
+        pytest.param(
+            'NAME = "_data"\nclass Example:\n    for NAME in {"public", "also_public"}:\n        pass\n    getattr(mod, NAME)\n',
+            id="class-nonempty-set-loop-replaces-inherited-value",
+        ),
+        pytest.param(
+            'NAME = "public"\ndef outer():\n    NAME = "_data"\n    class Example:\n        global NAME\n        getattr(mod, NAME)\n',
+            id="class-global-name-ignores-private-enclosing-value",
+        ),
+        pytest.param(
+            'NAME = "_data"\ndef outer():\n    NAME = "public"\n    class Example:\n        nonlocal NAME\n        getattr(mod, NAME)\n        NAME = "public"\n',
+            id="class-nonlocal-name-ignores-private-module-value",
+        ),
+        pytest.param(
+            'def outer():\n    getattr = public_callback\n    class Example:\n        nonlocal getattr\n        del getattr\n        getattr(None, "_data")\n',
+            id="class-deleted-nonlocal-alias-stays-unbound",
+        ),
+        pytest.param(
+            'NAME = "_data"\nclass Example:\n    global NAME\n    del NAME\n    getattr(mod, NAME)\n',
+            id="class-deleted-global-name-does-not-restore-old-value",
+        ),
+        pytest.param(
+            'NAME = "public"\ndef outer():\n    NAME = "_data"\n    class Example:\n        nonlocal NAME\n        del NAME\n        getattr(mod, NAME)\n',
+            id="class-deleted-nonlocal-name-does-not-restore-old-value",
         ),
     ],
 )
