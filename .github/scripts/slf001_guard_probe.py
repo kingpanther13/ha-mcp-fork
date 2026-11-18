@@ -19,8 +19,8 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 125,
-    ALLOW_NAME: 103,
+    REJECT_NAME: 129,
+    ALLOW_NAME: 110,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -30,8 +30,8 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 13, ALLOW_NAME: 8, FINALLY_NAME: 1}
-NEW_CASE_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 16}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 15, ALLOW_NAME: 11, FINALLY_NAME: 1}
+NEW_CASE_COUNTS = {REJECT_NAME: 22, ALLOW_NAME: 23}
 FAILING_CASE_IDS = {
     REJECT_NAME: {
         "class-bound-name-uses-module-fallback", "class-bound-alias-uses-module-fallback",
@@ -42,12 +42,17 @@ FAILING_CASE_IDS = {
         "class-nested-literal-unpack-preserves-value",
         "class-deleted-name-uses-module-not-function-fallback",
         "class-exception-name-uses-module-not-function-fallback",
+        "class-global-name-uses-module-without-local-store",
+        "class-deleted-global-alias-falls-back-to-builtin",
     },
     ALLOW_NAME: {
         "class-bound-name-ignores-private-function-value", "class-bound-alias-ignores-function-reflection",
         "nonbinding-assignment-does-not-expand-data", "class-single-iteration-value-does-not-run-backwards",
         "class-for-normal-exit-runs-else", "class-while-normal-exit-runs-else",
         "class-raised-try-skips-else-before-finally", "class-false-match-guard-keeps-public-capture",
+        "class-global-name-ignores-private-enclosing-value",
+        "class-deleted-global-name-does-not-restore-old-value",
+        "class-deleted-nonlocal-name-does-not-restore-old-value",
     },
 }
 EXCEPTION_PLUGIN = '''import json
@@ -119,7 +124,7 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
     [ids] = [ast.literal_eval(kw.value) for kw in decorator.keywords if kw.arg == "ids"]
     assert ids == ["public", "private"]
     names.add(FINALLY_NAME + "[private]")
-    assert len(names) == 22
+    assert len(names) == 27
     return names
 
 
@@ -166,11 +171,11 @@ def run_variant(root: Path, label: str) -> dict:
 def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
-        assert data["tests"] == 292, (label, data["tests"])
+        assert data["tests"] == 303, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 292
+        assert len(set(data["case_names"])) == 303
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -240,7 +245,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 292 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 303 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":
