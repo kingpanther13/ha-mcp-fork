@@ -80,7 +80,7 @@ def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.
         )
 
 
-_headers = flow_rules.scope_headers
+_headers = expression_rules.scope_headers
 
 
 def _bindings(
@@ -283,7 +283,9 @@ def _scan_nested_scope(
 ) -> Iterator[tuple[int, str]]:
     for header in _headers(node):
         yield from _scan_expression(header, values, aliases, closure, context)
-    yield from expression_rules.scan_annotations(node, (values, aliases), closure, context)
+    yield from expression_rules.scan_annotations(
+        node, (values, aliases), closure, context
+    )
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         token = context.register(
             node,
@@ -295,7 +297,10 @@ def _scan_nested_scope(
             _bind_definition(node.name, values, aliases, frozenset({token}))
         return
     yield from _scan_scope(
-        node, *closure, expression_rules.comprehension_values(node, values), context=context
+        node,
+        *closure,
+        expression_rules.comprehension_values(node, values),
+        context=context,
     )
 
 
@@ -366,7 +371,9 @@ class _ClassFlow:
             )
         )
 
-    def block(self, body: list[ast.stmt], incoming: _State, start: int = 0) -> _Outcomes:
+    def block(
+        self, body: list[ast.stmt], incoming: _State, start: int = 0
+    ) -> _Outcomes:
         key = (id(body), start, incoming.key())
         generating = bool(self.context.generating and self.context.generating[-1])
         if not generating and key in self.cache:
