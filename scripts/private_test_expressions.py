@@ -79,6 +79,8 @@ class Expression:
             return (yield from self.call(node, env, closure))
         elif isinstance(node, ast.BoolOp):
             return (yield from self.boolean(node.values, node.op, env, closure))
+        elif isinstance(node, ast.IfExp):
+            return (yield from self.conditional(node, env, closure))
         elif isinstance(node, ast.Await):
             value = yield from self.evaluate(node.value, env, closure)
             assert isinstance(value, ast.expr)
@@ -181,11 +183,7 @@ class Expression:
             self.context.effects.pop()
         if effects.normal:
             skipped.merge(branch)
-        flow_rules.publish_context(closure, skipped.closure)
-        env[0].clear()
-        env[0].update(skipped.values)
-        env[1].clear()
-        env[1].update(skipped.aliases)
+        self.publish(skipped, env, closure)
         if self.context.effects:
             self.context.effects[-1].raised.extend(effects.raised)
         assert isinstance(captured, ast.expr) and isinstance(result, ast.expr)
@@ -198,4 +196,61 @@ class Expression:
             (merged, {"value": merged["value"].callables}),
             origin=first,
             kind="boolean",
+        )
+
+    @staticmethod
+    def publish(
+        state: flow_rules.State, env: flow_rules.Env, closure: flow_rules.Env
+    ) -> None:
+        flow_rules.publish_context(closure, state.closure)
+        env[0].clear()
+        env[0].update(state.values)
+        env[1].clear()
+        env[1].update(state.aliases)
+
+    def conditional(
+        self, node: ast.IfExp, env: flow_rules.Env, closure: flow_rules.Env
+    ) -> Generator[tuple[int, str], None, ast.AST]:
+        yield from self.evaluate(node.test, env, closure)
+        if isinstance(node.test, ast.Constant):
+            selected = node.body if node.test.value else node.orelse
+            return (yield from self.evaluate(selected, env, closure))
+        before = flow_rules.State(
+            flow_rules.ClassValues(env[0]), dict(env[1]), closure
+        ).copy()
+        normal: list[flow_rules.State] = []
+        raised: list[flow_rules.Env] = []
+        merged: dict[str, binding_rules.Value] = {}
+        for arm in (node.body, node.orelse):
+            branch = before.copy()
+            effects = flow_rules.Effects([])
+            self.context.effects.append(effects)
+            try:
+                result = yield from self.evaluate(
+                    arm, (branch.values, branch.aliases), branch.closure
+                )
+                assert isinstance(result, ast.expr)
+                value = self.context.capture(result, self.snapshots)
+            except flow_rules.Interrupted:
+                effects.normal = False
+            finally:
+                self.context.effects.pop()
+            raised.extend(effects.raised)
+            if effects.normal:
+                normal.append(branch)
+                binding_rules.union_values(merged, {"value": value})
+        if self.context.effects:
+            self.context.effects[-1].raised.extend(raised)
+            self.context.effects[-1].normal &= bool(normal)
+        if not normal:
+            raise flow_rules.Interrupted
+        combined, *remaining = normal
+        for branch in remaining:
+            combined.merge(branch)
+        self.publish(combined, env, closure)
+        return self.snapshot(
+            ast.Name(id="value", ctx=ast.Load()),
+            (merged, {"value": merged["value"].callables}),
+            origin=node,
+            kind="conditional",
         )
