@@ -11,7 +11,6 @@ real Core with the Supervisor stand-in behind ``supervisor/api``
 from __future__ import annotations
 
 import json
-import threading
 from typing import Any
 
 import pytest
@@ -624,30 +623,32 @@ async def test_a_core_version_that_never_arrives_is_reported(haos: Haos) -> None
 async def test_the_right_core_version_is_accepted_only_before_the_deadline(
     haos: Haos, elapsed: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    core_requested = threading.Event()
-    receive_started = threading.Event()
+    core_request_id: int | None = None
     real_send = ClientConnection.send
     real_recv = ClientConnection.recv
 
     def send(self: ClientConnection, message: Any, *args: Any, **kwargs: Any) -> None:
-        if json.loads(message).get("endpoint") == "/core/info":
-            core_requested.set()
+        nonlocal core_request_id
+        payload = json.loads(message)
+        if payload.get("endpoint") == "/core/info":
+            core_request_id = payload["id"]
         real_send(self, message, *args, **kwargs)
 
     def recv(self: ClientConnection, *args: Any, **kwargs: Any) -> Any:
-        if core_requested.is_set():
-            receive_started.set()
-        return real_recv(self, *args, **kwargs)
-
-    async def answer_after_receive_starts() -> None:
-        assert await haos.hass.async_add_executor_job(receive_started.wait, 5.0)
-        haos.clock.advance(elapsed)
+        frame = real_recv(self, *args, **kwargs)
+        payload = json.loads(frame)
+        if (
+            core_request_id is not None
+            and payload.get("type") == "result"
+            and payload.get("id") == core_request_id
+        ):
+            haos.clock.advance(elapsed)
+        return frame
 
     monkeypatch.setattr(ClientConnection, "send", send)
     monkeypatch.setattr(ClientConnection, "recv", recv)
     haos.supervisor.answer("GET", "/supervisor/info", supervisor_info())
     haos.supervisor.answer("GET", "/core/info", CORE_NEW)
-    haos.supervisor.when("GET", "/core/info", answer_after_receive_starts)
     ws = await haos.connected()
 
     if elapsed:

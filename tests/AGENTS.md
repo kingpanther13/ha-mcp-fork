@@ -272,14 +272,6 @@ Private access and typing checks also cover both complete trees:
   The vendored packages' import path (`ha_mcp._vendor`) and
   the test trees' own helper modules are exempt; a private name inside a
   vendored package is not.
-  `uv run python scripts/private_test_access.py` checks the private names that strings
-  reach: reflection (`getattr`, `hasattr`, `setattr`, `delattr`) and patch
-  targets, including `patch.object`, `patch.dict` and `patch.multiple`. Fast Checks runs it
-  over both complete trees with no exemption list. It resolves lexical string
-  constants, concatenation, f-strings and static keyword dictionaries; runtime
-  computed names still need review. Only real dunder names, the `_vendor`
-  import-path segment and access to the test's own `self`/`cls` are allowed,
-  as in the attribute/import checks. A replacement's value is not a target.
 - mypy checks both trees against Core's real types
   (`uv run mypy tests/src/unit/ tests/addon/`). A `None` or a placeholder
   assigned where Core declares a type is an error wherever mypy knows the
