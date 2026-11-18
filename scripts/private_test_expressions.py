@@ -324,8 +324,7 @@ def scan_annotations(
             )
         except flow_rules.Interrupted:
             continue
-        for token in policy.pending.pop():
-            yield from policy.scan(token, state.closure)
+        yield from scan_pending(policy.pending.pop(), state.closure, policy)
 
 
 def scan_comprehension(
