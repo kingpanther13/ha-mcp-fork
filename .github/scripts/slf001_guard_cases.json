@@ -108,6 +108,18 @@
       "id": "starred-generator-next-checks-before-first-yield",
       "source": "NAME = '_helper'\ndef items():\n    getattr(mod, NAME)\n    yield None\npending = items()\nnext(*(pending, None))\nNAME = 'public'\n",
       "baseline_fails": true
+    },
+    {
+      "id": "generator-live-captured-parameter-preserves-inner-cursor",
+      "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(saved):\n    next(saved)\n    yield None\nfor member in ('_helper', 'public'):\n    pending = inner(member)\n    next(pending)\n    if unknown:\n        holder = outer(pending)\nnext(holder)\n",
+      "baseline_fails": false,
+      "boundary_fails": true
+    },
+    {
+      "id": "generator-live-continuation-local-preserves-inner-cursor",
+      "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('_helper', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
+      "baseline_fails": false,
+      "boundary_fails": true
     }
   ],
   "allow": [
@@ -224,6 +236,18 @@
       "id": "starred-generator-next-default-keeps-real-exception",
       "source": "def items():\n    yield None\n    raise ValueError()\npending = items()\nnext(pending)\nnext(*(pending, None))\ngetattr(mod, '_data')\n",
       "baseline_fails": true
+    },
+    {
+      "id": "generator-live-captured-parameter-public-control",
+      "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(saved):\n    next(saved)\n    yield None\nfor member in ('visible', 'public'):\n    pending = inner(member)\n    next(pending)\n    if unknown:\n        holder = outer(pending)\nnext(holder)\n",
+      "baseline_fails": false,
+      "boundary_fails": false
+    },
+    {
+      "id": "generator-live-continuation-local-public-control",
+      "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('visible', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
+      "baseline_fails": false,
+      "boundary_fails": false
     }
   ],
   "error": []

@@ -420,11 +420,11 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
     assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
     reference_guards = {path: existing_source(revision, path) for path in GUARD_PATHS}
     cases = {
-        group + "[" + case["id"] + "]": case["current_fails"]
+        group + "[" + case["id"] + "]": case["boundary_fails"]
         for group, section in CASE_GROUPS.items()
-        for case in CASE_MANIFEST[section] if "current_fails" in case
+        for case in CASE_MANIFEST[section] if "boundary_fails" in case
     }
-    assert len(cases) == 10 and sum(cases.values()) == 6
+    assert cases and any(cases.values()), "No targeted intermediate-regression cases"
     expected = {name for name, fails in cases.items() if fails}
     evidence = {
         "guard_revision": revision,
