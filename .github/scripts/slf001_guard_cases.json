@@ -119,6 +119,18 @@
       "id": "patch-dict-large-string-precision-retains-short-private-target-key",
       "source": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
       "baseline_fails": true
+    },
+    {
+      "id": "helper-bound-method-argument-resolves-live-method",
+      "source": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
+      "baseline_fails": true,
+      "current_fails": true
+    },
+    {
+      "id": "helper-tuple-argument-preserves-ordered-shape",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nlookup(args)\n",
+      "baseline_fails": true,
+      "current_fails": true
     }
   ],
   "allow": [
@@ -211,6 +223,18 @@
       "id": "patch-dict-large-width-key-keeps-private-looking-replacement-data",
       "source": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
       "baseline_fails": true
+    },
+    {
+      "id": "helper-bound-method-argument-keeps-public-target",
+      "source": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
+      "baseline_fails": false,
+      "current_fails": false
+    },
+    {
+      "id": "helper-tuple-argument-keeps-public-target",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nlookup(args)\n",
+      "baseline_fails": false,
+      "current_fails": false
     }
   ],
   "error": []

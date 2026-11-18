@@ -315,9 +315,37 @@ def restore_sources(sources: dict[str, str | None]) -> None:
             Path(path).write_text(text, encoding="utf-8")
 
 
+def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
+    """Reproduce only the new boundary cases on an exact, unchanged guard."""
+    assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
+    reference_guards = {path: existing_source(revision, path) for path in GUARD_PATHS}
+    assert candidate_guards == reference_guards, "boundary guard differs from reference"
+    cases = {
+        group + "[" + case["id"] + "]": case["current_fails"]
+        for group, section in CASE_GROUPS.items()
+        for case in CASE_MANIFEST[section] if "current_fails" in case
+    }
+    assert len(cases) == 4 and sum(cases.values()) == 2
+    expected = {name for name, fails in cases.items() if fails}
+    evidence = {
+        "guard_revision": revision,
+        "guard_blobs": {path: git("rev-parse", f"{revision}:{path}") for path in GUARD_PATHS},
+        "expected_failure_names": sorted(expected),
+    }
+    (root / "boundary-sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    data = run_variant(root, "boundary", tuple(f"{GUARD_TEST}::{name}" for name in cases))
+    (root / "boundary-results.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert data["tests"] == 4 and set(data["case_names"]) == set(cases)
+    assert data["exit_code"] == 1 and set(data["failures"]) == expected
+    assert data["exception_types"] == {name: "AssertionError" for name in expected}
+    assert not data["errors"] and not data["skips"]
+
+
 def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
     diagnostic_only = os.environ.get("PROBE_DIAGNOSTIC_LINES_ONLY", "false") == "true"
+    boundary_baseline = os.environ.get("PROBE_BOUNDARY_BASELINE", "")
+    assert not boundary_baseline or baseline_only
     assert not (baseline_only and diagnostic_only)
     baseline = os.environ["PROBE_BASELINE"]
     assert baseline == BASELINE, (baseline, BASELINE)
@@ -340,6 +368,7 @@ def main() -> None:
     evidence = {
         "baseline_only": baseline_only,
         "diagnostic_lines_only": diagnostic_only,
+        "boundary_baseline": boundary_baseline,
         "baseline": baseline,
         "candidate": candidate,
         "driver": git("-C", "../proof", "rev-parse", "HEAD"),
@@ -372,6 +401,8 @@ def main() -> None:
                 (root / f"{label}-{Path(path).name}").write_text(text, encoding="utf-8")
     results = {}
     try:
+        if boundary_baseline:
+            boundary_proof(root, boundary_baseline, candidate_guards)
         if not diagnostic_only:
             try:
                 restore_sources(baseline_guards)

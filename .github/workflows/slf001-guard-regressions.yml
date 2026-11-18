@@ -16,6 +16,10 @@ on:
         description: Prove baseline failures before implementation is ready
         type: boolean
         default: false
+      boundary_baseline:
+        description: Optional exact guard SHA for focused pre-fix boundary proof
+        type: string
+        default: ""
       diagnostic_lines_only:
         description: Prove missing and incorrect CLI source lines fail the focused test
         type: boolean
@@ -33,6 +37,7 @@ jobs:
       PROBE_ROOT: /tmp/slf001-review-proof
       PROBE_BASELINE: ${{ inputs.baseline }}
       PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
+      PROBE_BOUNDARY_BASELINE: ${{ inputs.boundary_baseline }}
       PROBE_DIAGNOSTIC_LINES_ONLY: ${{ inputs.diagnostic_lines_only }}
       PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
