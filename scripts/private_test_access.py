@@ -274,7 +274,6 @@ def _private(target: str) -> bool:
     return False
 
 
-
 def _comprehension_values(
     scope: ast.AST, values: dict[str, binding_rules.Value]
 ) -> dict[str, binding_rules.Value]:
@@ -319,7 +318,9 @@ def _scan_assignment_target(
             for owner in owners:
                 if owner.startswith("@class:") and "." not in owner:
                     name = f"{owner}.{target.attr}"
-                    replacement = resolved or frozenset({"@inherit" if "/" in owner else ""})
+                    replacement = resolved or frozenset(
+                        {"@inherit" if "/" in owner else ""}
+                    )
                     stored = replacement
                     if len(owners) > 1:
                         stored |= binding_rules.alias_options(name, aliases)
@@ -537,7 +538,9 @@ class _ClassFlow:
             nodes = iter([node])
         for child in nodes:
             self.findings.update(
-                _scan_node(child, state.values, state.aliases, state.closure, self.context)
+                _scan_node(
+                    child, state.values, state.aliases, state.closure, self.context
+                )
             )
         if isinstance(node, ast.Raise):
             return {"raise": state}
@@ -572,7 +575,9 @@ class _ClassFlow:
                 }
                 parent.aliases.update(members)
                 binding_rules.module_bindings(*parent.closure)[1].update(members)
-                _bind_definition(node.name, parent.values, parent.aliases, frozenset({token}))
+                _bind_definition(
+                    node.name, parent.values, parent.aliases, frozenset({token})
+                )
             _add_outcome(outcomes, kind, parent)
         return outcomes
 
@@ -930,9 +935,7 @@ def _scan_scope(
     if isinstance(scope, ast.Module) and isinstance(values, binding_rules.ScopeValues):
         values.module_bindings = (values, aliases)
     closure = (values, aliases)
-    if isinstance(
-        scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)
-    ):
+    if isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
         analyzer = _ClassFlow(context)
         state = _State(_ClassValues(values), aliases, closure).copy()
         outcomes = analyzer.block(scope.body, state)
