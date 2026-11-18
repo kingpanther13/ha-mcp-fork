@@ -841,7 +841,9 @@ class Deferred:
         self.cache[key] = result
         return result
 
-    def pause(self, state: State, findings: set[tuple[int, str]], yielded: Value) -> dict[str, State]:
+    def pause(
+        self, state: State, findings: set[tuple[int, str]], yielded: Value
+    ) -> dict[str, State]:
         if len(self.continuations) >= 16384:
             raise ValueError("too many generator continuations")
         key = f"yield:{len(self.continuations)}"
@@ -856,8 +858,12 @@ class Deferred:
         for name in names:
             for stage in cursors.get(f"@resume:{name}", frozenset()):
                 continuation = self.continuations.get(stage)
-                value = continuation.yielded if continuation is not None else (
-                    default if stage == "done" and default is not None else Value()
+                value = (
+                    continuation.yielded
+                    if continuation is not None
+                    else (
+                        default if stage == "done" and default is not None else Value()
+                    )
                 )
                 binding_rules.union_values(merged, {"yielded": value})
         return merged["yielded"]
