@@ -230,7 +230,7 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             id="class-literal-unpack-preserves-alias",
         ),
         pytest.param(
-            'matrix["cases"] = getattr(mod, "_helper")\n',
+            'matrix["cases"] = (getattr(mod, "_helper"), \'a0\', \'a1\', \'a2\', \'a3\', \'a4\', \'a5\', \'a6\', \'a7\', \'a8\', \'a9\', \'a10\', \'a11\', \'a12\', \'a13\', \'a14\', \'a15\', \'a16\') + (\'b0\', \'b1\', \'b2\', \'b3\', \'b4\', \'b5\', \'b6\', \'b7\', \'b8\', \'b9\', \'b10\', \'b11\', \'b12\', \'b13\', \'b14\', \'b15\', \'b16\')\n',
             id="nonbinding-assignment-still-scans-rhs",
         ),
         pytest.param(
@@ -268,6 +268,18 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         pytest.param(
             'from contextlib import suppress\nclass Example:\n    NAME = "_helper"\n    with suppress(ValueError), fail() as NAME:\n        pass\n    getattr(mod, NAME)\n',
             id="class-earlier-context-preserves-unbound-target",
+        ),
+        pytest.param(
+            'class Example:\n    NAME, (count, other) = ("_helper", (1, "public"))\n    getattr(mod, NAME)\n',
+            id="class-nested-literal-unpack-preserves-value",
+        ),
+        pytest.param(
+            'NAME = "_helper"\ndef outer():\n    NAME = "public"\n    class Example:\n        NAME = "public"\n        del NAME\n        getattr(mod, NAME)\n',
+            id="class-deleted-name-uses-module-not-function-fallback",
+        ),
+        pytest.param(
+            'NAME = "_helper"\ndef outer():\n    NAME = "public"\n    class Example:\n        try:\n            raise ValueError()\n        except ValueError as NAME:\n            pass\n        getattr(mod, NAME)\n',
+            id="class-exception-name-uses-module-not-function-fallback",
         ),
     ],
 )
@@ -499,6 +511,10 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         pytest.param(
             'from contextlib import suppress\nclass Example:\n    NAME = "public"\n    with suppress(ValueError), fail() as NAME:\n        pass\n    getattr(mod, NAME)\n',
             id="class-earlier-context-keeps-public-target",
+        ),
+        pytest.param(
+            'class Example:\n    NAME = "_data"\n    OTHER = "public"\n    NAME, OTHER = (OTHER, NAME)\n    getattr(mod, NAME)\n',
+            id="class-literal-unpack-swap-keeps-public-result",
         ),
     ],
 )
