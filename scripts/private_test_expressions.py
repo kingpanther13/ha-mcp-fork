@@ -15,6 +15,32 @@ else:
     import private_test_flow as flow_rules
 
 
+def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
+    """Decorators, bases and defaults execute before entering the new scope."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield from scope.decorator_list
+    if isinstance(scope, ast.ClassDef):
+        yield from scope.bases
+        yield from (keyword.value for keyword in scope.keywords)
+    if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        yield scope.generators[0].iter
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        yield from scope.args.defaults
+        yield from (value for value in scope.args.kw_defaults if value is not None)
+
+
+def function_annotations(scope: ast.AST) -> Iterator[ast.expr]:
+    """Annotations are policy inputs, not definition-time effects on Python 3.14."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        yield from (
+            node.annotation
+            for node in ast.walk(scope.args)
+            if isinstance(node, ast.arg) and node.annotation is not None
+        )
+        if scope.returns is not None:
+            yield scope.returns
+
+
 class Expression:
     """Evaluate operand effects in order while retaining already captured values."""
 
@@ -283,9 +309,12 @@ def comprehension_values(
 
 
 def scan_annotations(
-    scope: ast.AST, env: flow_rules.Env, closure: flow_rules.Env, context: flow_rules.Deferred
+    scope: ast.AST,
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
+    context: flow_rules.Deferred,
 ) -> Iterator[tuple[int, str]]:
-    for annotation in flow_rules.function_annotations(scope):
+    for annotation in function_annotations(scope):
         policy = flow_rules.Deferred(context.scan_scope, context.scan_expression)
         policy.pending.append(set())
         state = flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure).copy()
@@ -304,7 +333,9 @@ def scan_comprehension(
     env: flow_rules.Env,
     closure: flow_rules.Env,
     context: flow_rules.Deferred,
-    scan_expression: Callable[..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]],
+    scan_expression: Callable[
+        ..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]
+    ],
 ) -> Iterator[tuple[int, str]]:
     values, aliases = env
     for index, generator in enumerate(scope.generators):
@@ -313,7 +344,9 @@ def scan_comprehension(
                 generator.iter, values, aliases, closure, context
             )
             if isinstance(generator.target, ast.Name):
-                values[generator.target.id] = binding_rules.iterated_value(iterable, inputs[0])
+                values[generator.target.id] = binding_rules.iterated_value(
+                    iterable, inputs[0]
+                )
         for name in binding_rules.bound_names([generator.target]):
             aliases[name] = frozenset({""})
             closure[0][name] = values.get(name, binding_rules.Value())
@@ -322,7 +355,9 @@ def scan_comprehension(
             yield from scan_expression(condition, values, aliases, closure, context)
             if isinstance(condition, ast.Constant) and not condition.value:
                 return
-    expressions = [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+    expressions = (
+        [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+    )
     for expression in expressions:
         yield from scan_expression(expression, values, aliases, closure, context)
 
@@ -332,7 +367,9 @@ def scan_body(
     closure: flow_rules.Env,
     context: flow_rules.Deferred,
     on_outcomes: Callable[[dict[str, flow_rules.State]], None] | None,
-    scan_expression: Callable[..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]],
+    scan_expression: Callable[
+        ..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]
+    ],
 ) -> Iterator[tuple[int, str]]:
     values, aliases = flow_rules.ClassValues(closure[0]), dict(closure[1])
     effects = flow_rules.Effects([])
@@ -342,7 +379,9 @@ def scan_body(
         if isinstance(scope, ast.Lambda):
             yield from scan_expression(scope.body, values, aliases, closure, context)
         else:
-            assert isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+            assert isinstance(
+                scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+            )
             yield from scan_comprehension(
                 scope, (values, aliases), closure, context, scan_expression
             )

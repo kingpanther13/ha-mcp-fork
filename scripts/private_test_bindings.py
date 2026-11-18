@@ -190,6 +190,8 @@ def alias_options(name: str, aliases: Aliases) -> frozenset[str]:
     """Keep inheritance live through conditional stores and namespace joins."""
     if name in aliases:
         return aliases[name]
+    if name.startswith("@resume:"):
+        return frozenset({"start"})
     inherited = name.startswith("@class:") and "/" in name and "." in name
     return frozenset({"@inherit" if inherited else name})
 
@@ -380,7 +382,7 @@ def _position_snapshot(value: Value) -> Value:
     while pending:
         current, depth = pending.pop()
         visited += 1
-        for child in _snapshot_children(current):
+        for child in snapshot_children(current):
             if depth >= 16 or visited + len(pending) >= 256:
                 errors = frozenset({"nested argument snapshot exceeds the size limit"})
                 return replace(
@@ -394,7 +396,7 @@ def _position_snapshot(value: Value) -> Value:
     return snapshot
 
 
-def _snapshot_children(value: Value | Argument) -> Iterator[Value | Argument]:
+def snapshot_children(value: Value | Argument) -> Iterator[Value | Argument]:
     if isinstance(value, Argument):
         yield from (bound for _, bound in value.bindings)
         if value.resolved is not None:
@@ -971,3 +973,18 @@ def loop_may_skip(node: ast.For | ast.AsyncFor | ast.While) -> bool:
         isinstance(node.iter, ast.Dict)
         and any(key is not None for key in node.iter.keys)
     )
+
+
+def body_nodes(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> Iterator[ast.AST]:
+    pending: list[ast.AST] = (
+        [node.body] if isinstance(node, ast.Lambda) else list(node.body)
+    )
+    while pending:
+        child = pending.pop()
+        yield child
+        if not isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            pending.extend(ast.iter_child_nodes(child))
