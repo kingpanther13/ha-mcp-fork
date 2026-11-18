@@ -1,4 +1,4 @@
-name: SLF001 guard and helper regression proof
+name: SLF001 guard regression proof
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: 1a743871ab23b0d46e375045ac54276219c9a556
+        default: d9bd11eac43a7f5679f363333b9e787ba41eb6fa
 
 permissions:
   contents: read
