@@ -156,7 +156,7 @@ async def test_read_only_mount_is_named_not_a_raw_errno(
 ) -> None:
     target = Path(hass.config.path("www/read-only.txt"))
     target.parent.mkdir(exist_ok=True)
-    target.write_text("original")
+    await hass.async_add_executor_job(target.write_text, "original")
     call = await make_file_service(hass)
     method = "write_bytes" if build == "write" else "unlink"
     original = getattr(Path, method)
@@ -179,4 +179,4 @@ async def test_read_only_mount_is_named_not_a_raw_errno(
         "error": "www/read-only.txt is on a read-only mount in Home Assistant Core"
         " on this install",
     }
-    assert target.read_text() == "original"
+    assert await hass.async_add_executor_job(target.read_text) == "original"

@@ -81,7 +81,9 @@ class Supervisor:
         if "state" in changes:
             changes["state"] = AddonState(changes["state"])
         if "ip_address" in changes:
-            changes["ip_address"] = IPv4Address(changes["ip_address"]) if changes["ip_address"] else None
+            changes["ip_address"] = (
+                IPv4Address(changes["ip_address"]) if changes["ip_address"] else None
+            )
         return app_info(**changes)
 
     def get(self, path: str) -> dict[str, Any] | None:
@@ -89,7 +91,11 @@ class Supervisor:
         if not self.reachable:
             return None
         if path == "/addons":
-            return {"addons": [self.model_fields(item) for item in self.addons]} if self.lists_addons else None
+            return (
+                {"addons": [self.model_fields(item) for item in self.addons]}
+                if self.lists_addons
+                else None
+            )
         slug = path.removeprefix("/addons/").removesuffix("/info")
         if not path.endswith("/info") or slug not in self.info:
             return None
@@ -103,7 +109,6 @@ class Supervisor:
         self.posts.append((path, data))
         return self.accepts_options
 
-
     async def serve(self, request: web.Request) -> web.Response:
         path = "/" + request.match_info["path"]
         if request.method == "POST":
@@ -111,9 +116,13 @@ class Supervisor:
             return web.json_response({"result": "ok"}, status=200 if accepted else 503)
         if request.headers.get("Accept") == "text/plain":
             body = self.get_text(path)
-            return web.Response(text=body or "", status=200 if body is not None else 404)
+            return web.Response(
+                text=body or "", status=200 if body is not None else 404
+            )
         data = self.get(path)
-        return web.json_response({"result": "ok", "data": data}, status=200 if data is not None else 503)
+        return web.json_response(
+            {"result": "ok", "data": data}, status=200 if data is not None else 503
+        )
 
 
 @dataclass
@@ -376,17 +385,25 @@ async def connect_core(
     # router, so an integration set up after boot (as the app's config flow
     # does) can still bind views. The test server does not run start().
     monkeypatch.setattr(hass.http.app.router, "freeze", lambda: None)
-    hass.http.app.router.add_route("*", "/test-supervisor/{path:.*}", app.supervisor.serve)
+    hass.http.app.router.add_route(
+        "*", "/test-supervisor/{path:.*}", app.supervisor.serve
+    )
     server = await hass_client()
     link = CoreLink(base_url=str(server.make_url("")).rstrip("/"))
 
     def urlopen(request: urllib.request.Request, timeout: float) -> Any:
         url = request.full_url
-        assert url.startswith("http://supervisor/"), f"unexpected Supervisor request {url}"
+        assert url.startswith("http://supervisor/"), (
+            f"unexpected Supervisor request {url}"
+        )
         if not url.startswith(CORE_API):
             routed = urllib.request.Request(
-                link.base_url + "/test-supervisor" + url.removeprefix("http://supervisor"),
-                data=request.data, headers=dict(request.header_items()), method=request.get_method(),
+                link.base_url
+                + "/test-supervisor"
+                + url.removeprefix("http://supervisor"),
+                data=request.data,
+                headers=dict(request.header_items()),
+                method=request.get_method(),
             )
             return link.send(routed, timeout)
         path = url.removeprefix(CORE_API)
