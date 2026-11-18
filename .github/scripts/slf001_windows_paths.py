@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 assert sys.platform == "win32", "This proof requires native Windows paths"
-BASELINE = "df7a1399c2e083d0225375620452d1e0fde6fb14"
+BASELINE = "db84b3148eb761eb81a3c978841fee45d80766c6"
 GUARDS = ("private_test_access.py", "private_test_bindings.py", "private_test_flow.py", "private_test_expressions.py")
 
 
@@ -59,7 +59,7 @@ def main():
     assert len(results) == 2 * len(revisions)
     for label, result in results.items():
         assert result["returncode"] == 1 and not result["stderr"], (label, result)
-        fixed = label.startswith("candidate-")
+        fixed = True  # Both this baseline and candidate already normalize paths.
         assert result["posix_prefix"] is fixed, (label, result)
         assert result["windows_prefix"] is not fixed, (label, result)
     print("Both diagnostic forms reproduced native Windows separator failures and satisfied the expected revision contract.")

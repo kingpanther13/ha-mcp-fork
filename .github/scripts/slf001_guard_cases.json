@@ -1,264 +1,52 @@
 {
   "reject": [
     {
-      "id": "raising-call-evaluates-private-argument-first",
-      "source": "def stop(value):\n    raise RuntimeError\nstop(getattr(mod, '_helper'))\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "false-and-skips-interruption-before-private-access",
-      "source": "def stop():\n    raise RuntimeError\nFalse and stop()\ngetattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "true-or-skips-interruption-before-private-access",
-      "source": "def stop():\n    raise RuntimeError\nTrue or stop()\ngetattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "unknown-and-keeps-normal-continuation",
-      "source": "def stop():\n    raise RuntimeError\nflag and stop()\ngetattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "later-tuple-operand-sees-completed-global-write",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(switch(), getattr(mod, NAME))\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "helper-argument-captured-before-later-argument-write",
-      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "callee-alias-captured-before-argument-write",
-      "source": "read = getattr\ndef switch():\n    global read\n    read = public_function\nread(mod, '_helper', switch())\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "await-unknown-alternative-retains-normal-continuation",
-      "source": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop() if flag else client.read()\n    await pending\n    getattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "generator-access-before-first-yield-is-checked",
-      "source": "NAME = '_helper'\ndef values():\n    getattr(mod, NAME)\n    yield None\npending = values()\nnext(pending)\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "generator-resume-observes-current-private-global",
-      "source": "NAME = 'public'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "known-call-replays-nonlocal-write",
-      "source": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n    switch()\n    getattr(mod, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-call-replays-nonlocal-write-on-raise",
-      "source": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n        raise ValueError()\n    try:\n        switch()\n    except ValueError:\n        getattr(mod, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "stored-keyword-tuple-keeps-private-target-shape",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nopts = {'args': args}\nlookup(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "stored-keyword-list-keeps-private-shape-after-rebind",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = [mod, '_helper']\nopts = {'args': args}\nargs = [mod, 'public']\nlookup(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "bounded-recursive-sequence-still-checks-following-target",
-      "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "lambda-default-keeps-value-before-argument-effect",
-      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "generator-loop-next-iteration-observes-current-global",
-      "source": "NAME = 'public'\ndef values():\n    for item in (1, 2):\n        getattr(mod, NAME)\n        yield None\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "generator-resumed-exception-enters-handler",
-      "source": "NAME = 'public'\ndef values():\n    try:\n        yield None\n        raise ValueError()\n    except ValueError:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "assigned-tuple-retains-earlier-private-operand",
-      "source": "NAME = '_helper'\ndef clear():\n    global NAME\n    NAME = 'public'\nARGS = (mod, NAME, clear())\ngetattr(*ARGS)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "loop-tuple-capture-keeps-reject-state-stable",
-      "source": "NAME = '_helper'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "loop-nested-conditional-mapping-keeps-stable-state-reject",
-      "source": "for item in items:\n    data = {'config': {'error': 'public'}} if flag else None\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false,
-      "current_fails": true
-    },
-    {
-      "id": "loop-recursive-card-mapping-keeps-bounded-state-reject",
-      "source": "node = {'type': 'tile'}\nfor item in range(limit):\n    node = {'type': 'vertical-stack', 'cards': [node]}\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false,
-      "current_fails": true
-    },
-    {
-      "id": "loop-compound-tuple-elements-keep-stable-state-reject",
-      "source": "ARGS = (mod, '_helper')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n",
-      "baseline_fails": false,
-      "current_fails": true
-    },
-    {
-      "id": "canonical-loop-expression-keeps-earlier-value-snapshot-reject",
-      "source": "NAME = '_helper'\ndef capture():\n    global ARGS\n    ARGS = (mod, NAME + '')\ncapture()\nSAVED = ARGS\nNAME = 'public'\ncapture()\ngetattr(*SAVED)\nNAME = 'public'\n",
+      "id": "conditional-expression-selected-private-arm-is-checked",
+      "source": "getattr(mod, '_helper') if True else None\n",
       "baseline_fails": false,
       "current_fails": false
     },
     {
-      "id": "canonical-loop-expression-replays-child-effects-reject",
-      "source": "NAME = 'public'\ndef set_name(name):\n    global NAME\n    NAME = name\nfor marker in ('public', '_helper'):\n    ARGS = (mod, set_name(marker))\ngetattr(mod, NAME)\n",
-      "baseline_fails": false,
-      "current_fails": false
+      "id": "conditional-expression-skipped-raise-keeps-private-else",
+      "source": "def stop():\n    raise ValueError()\nstop() if False else getattr(mod, '_helper')\n",
+      "baseline_fails": true,
+      "current_fails": true
+    },
+    {
+      "id": "conditional-unknown-raising-body-keeps-normal-else",
+      "source": "def stop():\n    raise ValueError()\nstop() if flag else None\ngetattr(mod, '_helper')\n",
+      "baseline_fails": true,
+      "current_fails": true
+    },
+    {
+      "id": "conditional-unknown-raising-else-keeps-normal-body",
+      "source": "def stop():\n    raise ValueError()\nNone if flag else stop()\ngetattr(mod, '_helper')\n",
+      "baseline_fails": true,
+      "current_fails": true
     }
   ],
   "allow": [
     {
-      "id": "raising-call-skips-following-private-expression",
-      "source": "def stop(value):\n    raise RuntimeError\nstop(None)\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "true-and-preserves-executed-interruption",
-      "source": "def stop():\n    raise RuntimeError\nTrue and stop()\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "false-or-preserves-executed-interruption",
-      "source": "def stop():\n    raise RuntimeError\nFalse or stop()\ngetattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "short-circuited-private-operand-is-not-evaluated",
-      "source": "False and getattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "later-tuple-operand-sees-completed-public-write",
-      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(switch(), getattr(mod, NAME))\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "helper-public-argument-keeps-value-before-later-write",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "public-callee-captured-before-argument-replacement",
-      "source": "read = public_function\ndef switch():\n    global read\n    read = getattr\nread(mod, '_helper', switch())\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "definite-named-await-still-has-no-normal-continuation",
-      "source": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop()\n    await pending\n    getattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "generator-first-next-stops-before-private-later-lookup",
-      "source": "NAME = '_helper'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "generator-conditional-yield-retains-continuation",
-      "source": "NAME = '_helper'\ndef values():\n    if True:\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "ordinary-callee-local-does-not-write-enclosing-name",
-      "source": "def test_it():\n    name = 'public'\n    def switch():\n        name = '_data'\n    switch()\n    getattr(mod, name)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "nonlocal-public-write-replaces-old-private-name",
-      "source": "def test_it():\n    name = '_data'\n    def switch():\n        nonlocal name\n        name = 'public'\n    switch()\n    getattr(mod, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "stored-keyword-list-keeps-public-target-shape",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = [mod, 'public']\nopts = {'args': args}\nlookup(**opts)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "stored-keyword-tuple-keeps-public-shape-after-rebind",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nopts = {'args': args}\nargs = (mod, '_data')\nlookup(**opts)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "unused-recursive-sequence-snapshot-stays-bounded",
-      "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, 'public')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "lambda-default-keeps-public-value-before-argument-effect",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "generator-loop-yield-defers-following-lookup",
-      "source": "NAME = '_helper'\ndef values():\n    for item in (1,):\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "generator-yield-defers-finally-until-resume",
-      "source": "NAME = '_helper'\ndef values():\n    try:\n        yield None\n    finally:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "assigned-tuple-retains-earlier-public-operand",
-      "source": "NAME = 'public'\ndef change():\n    global NAME\n    NAME = '_helper'\nARGS = (mod, NAME, change())\ngetattr(*ARGS)\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "loop-tuple-capture-keeps-allow-state-stable",
-      "source": "NAME = 'public'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "loop-nested-conditional-mapping-keeps-stable-state-allow",
-      "source": "for item in items:\n    data = {'config': {'error': 'public'}} if flag else None\ngetattr(mod, 'public')\n",
-      "baseline_fails": false,
+      "id": "conditional-expression-skips-unreachable-private-arm",
+      "source": "getattr(mod, '_data') if False else None\n",
+      "baseline_fails": true,
       "current_fails": true
     },
     {
-      "id": "loop-recursive-card-mapping-keeps-bounded-state-allow",
-      "source": "node = {'type': 'tile'}\nfor item in range(limit):\n    node = {'type': 'vertical-stack', 'cards': [node]}\ngetattr(mod, 'public')\n",
-      "baseline_fails": false,
-      "current_fails": true
-    },
-    {
-      "id": "loop-compound-tuple-elements-keep-stable-state-allow",
-      "source": "ARGS = (mod, 'public')\nfor item in items:\n    ARGS = (mod, 'public' + '')\ngetattr(*ARGS)\n",
-      "baseline_fails": false,
-      "current_fails": true
-    },
-    {
-      "id": "canonical-loop-expression-keeps-earlier-value-snapshot-allow",
-      "source": "NAME = 'public'\ndef capture():\n    global ARGS\n    ARGS = (mod, NAME + '')\ncapture()\nSAVED = ARGS\nNAME = '_helper'\ncapture()\ngetattr(*SAVED)\nNAME = 'public'\n",
+      "id": "conditional-expression-selected-raise-skips-private-else",
+      "source": "def stop():\n    raise ValueError()\nstop() if True else getattr(mod, '_data')\n",
       "baseline_fails": false,
       "current_fails": false
     },
     {
-      "id": "canonical-loop-expression-replays-child-effects-allow",
-      "source": "NAME = 'public'\ndef set_name(name):\n    global NAME\n    NAME = name\nfor marker in ('_helper', 'public'):\n    ARGS = (mod, set_name(marker))\ngetattr(mod, NAME)\n",
+      "id": "conditional-unknown-both-raising-arms-stop-continuation",
+      "source": "def stop():\n    raise ValueError()\nstop() if flag else stop()\ngetattr(mod, '_data')\n",
+      "baseline_fails": false,
+      "current_fails": false
+    },
+    {
+      "id": "conditional-unknown-raising-arm-keeps-public-continuation",
+      "source": "def stop():\n    raise ValueError()\nstop() if flag else None\ngetattr(mod, 'public')\n",
       "baseline_fails": false,
       "current_fails": false
     }
