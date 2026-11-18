@@ -16,6 +16,10 @@ on:
         description: Prove baseline failures before implementation is ready
         type: boolean
         default: false
+      windows_only:
+        description: Run only the native Windows path proof
+        type: boolean
+        default: false
       boundary_baseline:
         description: Optional exact guard SHA for focused pre-fix boundary proof
         type: string
@@ -30,7 +34,7 @@ permissions:
 
 jobs:
   proof:
-    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    if: github.repository == 'kingpanther13/ha-mcp-fork' && !inputs.windows_only
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -70,5 +74,42 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: slf001-review-regression-proof
+          path: ${{ env.PROBE_ROOT }}
+          if-no-files-found: error
+
+  windows-paths:
+    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PROBE_BASELINE: ${{ inputs.baseline }}
+      PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
+      PROBE_CANDIDATE: ${{ inputs.revision }}
+      PROBE_ROOT: ${{ runner.temp }}/slf001-windows-paths
+    steps:
+      - name: Check out the isolated proof driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: proof
+          persist-credentials: false
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: candidate
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.9'
+          python-version: '3.14'
+      - name: Prove both CLI diagnostic paths on native Windows
+        working-directory: candidate
+        run: uv run --no-project python ../proof/.github/scripts/slf001_windows_paths.py
+      - name: Preserve Windows source and CLI evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: slf001-windows-paths
           path: ${{ env.PROBE_ROOT }}
           if-no-files-found: error
