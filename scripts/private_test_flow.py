@@ -393,6 +393,7 @@ class Deferred:
         self.cache: dict[tuple, Analysis] = {}
         self.suspended: dict[str, Invocation] = {}
         self.effects: list[Effects] = []
+        self.operands: dict[tuple[ast.expr, str], ast.Name] = {}
         self.generating: list[bool] = []
         self.continuations: dict[str, Continuation] = {}
 
@@ -807,12 +808,20 @@ class Expression:
         self.scopes = scopes
         self.snapshots: Env = ({}, {})
 
-    def snapshot(self, node: ast.expr, env: Env) -> ast.Name:
-        name = f"@operand:{len(self.snapshots[0])}"
+    def snapshot(
+        self, node: ast.expr, env: Env, *, origin: ast.expr | None = None,
+        kind: str = "value",
+    ) -> ast.Name:
+        source = node if origin is None else origin
+        name = f"@operand:{id(source)}:{kind}"
         value = self.context.capture(node, env)
         self.snapshots[0][name] = value
         self.snapshots[1][name] = value.callables
-        return ast.copy_location(ast.Name(id=name, ctx=ast.Load()), node)
+        # Argument/state equality includes AST identity; repeated loop visits
+        # must retain the same proxy while each value keeps its own snapshot.
+        return self.context.operands.setdefault(
+            (source, kind), ast.copy_location(ast.Name(id=name, ctx=ast.Load()), source)
+        )
 
     @staticmethod
     def refresh(env: Env, closure: Env) -> None:
@@ -853,7 +862,8 @@ class Expression:
             raise Interrupted
         if isinstance(prepared, ast.Attribute):
             self.snapshots[1].update(env[1])
-            return self.snapshot(prepared, self.snapshots)
+            assert isinstance(node, ast.Attribute)
+            return self.snapshot(prepared, self.snapshots, origin=node)
         return prepared
 
     def children(
@@ -950,4 +960,5 @@ class Expression:
         return self.snapshot(
             ast.Name(id="value", ctx=ast.Load()),
             (merged, {"value": merged["value"].callables}),
+            origin=first, kind="boolean",
         )
