@@ -18,170 +18,40 @@ _SERVER_ANSWERS = "no-typed-in-server-answers"
 @pytest.mark.parametrize(
     ("source", "refused"),
     [
-        pytest.param(
-            'patch("ha_mcp.tools.x.get_component_caps", return_value={"caps": []})\n',
-            True,
-            id="patch-return-value",
-        ),
-        pytest.param(
-            'patch.object(update_check, "get_update_info", AsyncMock(return_value=None))\n',
-            True,
-            id="patch-object-mock",
-        ),
-        pytest.param(
-            'monkeypatch.setattr(helper_flows, "fetch_helper_flow_types", lambda *_: [])\n',
-            True,
-            id="setattr-lambda",
-        ),
-        pytest.param(
-            'patch(target="ha_mcp.update_check.get_update_info", return_value=None)\n',
-            True,
-            id="patch-target-keyword",
-        ),
-        pytest.param(
-            'patch.object(update_check, attribute="get_update_info", return_value=None)\n',
-            True,
-            id="patch-object-attribute-keyword",
-        ),
-        pytest.param(
-            'monkeypatch.setattr(update_check, name="get_update_info", value=lambda: None)\n',
-            True,
-            id="setattr-name-keyword",
-        ),
-        pytest.param(
-            'with patch(target="ha_mcp.update_check.get_update_info") as info:\n'
-            "    info.return_value = None\n",
-            True,
-            id="bare-patch-target-keyword",
-        ),
-        pytest.param(
-            'patch.object(target=update_check, attribute="get_update_info")\n',
-            True,
-            id="bare-patch-object-keywords",
-        ),
-        pytest.param(
-            'patch(target="ha_mcp.paths.get_data_dir", return_value="get_update_info")\n',
-            False,
-            id="another-function-by-target-keyword",
-        ),
-        pytest.param(
-            'patch.object(renderer, "label", name="get_update_info", return_value=None)\n',
-            False,
-            id="patch-object-name-keyword-names-the-mock",
-        ),
-        pytest.param(
-            "patch.multiple(update_check, get_update_info=AsyncMock(return_value=None))\n",
-            True,
-            id="patch-multiple-keyword",
-        ),
-        pytest.param(
-            "patch.multiple(update_check, get_update_info=DEFAULT)\n",
-            True,
-            id="patch-multiple-default-mock",
-        ),
-        pytest.param(
-            "patch.multiple(\n"
-            "    mod, get_update_info=mod.get_update_info, helper=Mock(return_value=None)\n"
-            ")\n",
-            False,
-            id="patch-multiple-answer-on-another-keyword",
-        ),
-        pytest.param(
-            'with patch("ha_mcp.tools.component_api.get_component_caps") as caps:\n'
-            '    caps.return_value = {"available": True}\n',
-            True,
-            id="bare-patch-answered-through-its-alias",
-        ),
-        pytest.param(
-            'with patch.object(update_check, "get_update_info") as info:\n'
-            "    info.return_value = None\n",
-            True,
-            id="bare-patch-object",
-        ),
-        pytest.param(
-            'patch.object(tools_addons, "get_addon_info", wraps=tools_addons.get_addon_info)\n',
-            False,
-            id="spy",
-        ),
-        pytest.param(
-            'patch.object(update_check, "fetch_latest", side_effect=TimeoutError)\n',
-            False,
-            id="failure",
-        ),
-        pytest.param(
-            'patch.object(paths, "get_data_dir", return_value=tmp_path)\n',
-            False,
-            id="another-function",
-        ),
-        pytest.param(
-            'patch.object(renderer, "label", return_value="get_update_info")\n',
-            False,
-            id="another-function-returning-a-listed-name",
-        ),
-        pytest.param(
-            'patch.object(renderer, "label", new=Mock(get_update_info=lambda: 1))\n',
-            False,
-            id="another-function-with-a-listed-keyword-inside",
-        ),
-        pytest.param(
-            "from unittest.mock import patch as replace\n",
-            True,
-            id="patch-imported-under-another-name",
-        ),
-        pytest.param(
-            "from unittest.mock import AsyncMock as Fake, patch\n"
-            "import unittest.mock as mock\n",
-            False,
-            id="other-import-aliases",
-        ),
-        pytest.param(
-            'getattr(update_check, "get_update_info")\n'
-            'getattr(update_check, "get_update_info", lambda: None)\n'
-            'import_module("ha_mcp.tools.fetch_helper")\n',
-            False,
-            id="reading-a-listed-name",
-        ),
-        pytest.param(
-            'with nullcontext(resolve_name("ha_mcp.update_check.get_update_info")):\n'
-            "    pass\n",
-            False,
-            id="reading-a-listed-name-inside-a-with",
-        ),
-        pytest.param(
-            'monkeypatch.setattr("ha_mcp.update_check.get_update_info", lambda: None)\n',
-            True,
-            id="setattr-dotted-target",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", wraps=real_get_update_info)\n',
-            False,
-            id="spy-on-the-real-function-by-name",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", wraps=lambda: real_get_update_info())\n',
-            True,
-            id="spy-lambda-that-calls-through",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", wraps=lambda: dict(latest="1"))\n',
-            True,
-            id="spy-lambda-calling-something-else",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", wraps=lambda: fetch_fake())\n',
-            True,
-            id="spy-lambda-calling-a-helper-with-a-listed-name",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", wraps=lambda: {"latest": "1"})\n',
-            True,
-            id="spy-lambda-with-a-typed-in-answer",
-        ),
-        pytest.param(
-            'patch("ha_mcp.update_check.get_update_info", side_effect=lambda: {"latest": "1"})\n',
-            True,
-            id="side-effect-lambda",
-        ),
+        pytest.param(source, refused, id=case_id)
+        for case_id, (source, refused) in {
+            "patch-return-value": ("patch(\"ha_mcp.tools.x.get_component_caps\", return_value={\"caps\": []})\n", True),
+            "patch-object-mock": ("patch.object(update_check, \"get_update_info\", AsyncMock(return_value=None))\n", True),
+            "setattr-lambda": ("monkeypatch.setattr(helper_flows, \"fetch_helper_flow_types\", lambda *_: [])\n", True),
+            "patch-target-keyword": ("patch(target=\"ha_mcp.update_check.get_update_info\", return_value=None)\n", True),
+            "patch-object-attribute-keyword": ("patch.object(update_check, attribute=\"get_update_info\", return_value=None)\n", True),
+            "setattr-name-keyword": ("monkeypatch.setattr(update_check, name=\"get_update_info\", value=lambda: None)\n", True),
+            "bare-patch-target-keyword": ("with patch(target=\"ha_mcp.update_check.get_update_info\") as info:\n    info.return_value = None\n", True),
+            "bare-patch-object-keywords": ("patch.object(target=update_check, attribute=\"get_update_info\")\n", True),
+            "another-function-by-target-keyword": ("patch(target=\"ha_mcp.paths.get_data_dir\", return_value=\"get_update_info\")\n", False),
+            "patch-object-name-keyword-names-the-mock": ("patch.object(renderer, \"label\", name=\"get_update_info\", return_value=None)\n", False),
+            "patch-multiple-keyword": ("patch.multiple(update_check, get_update_info=AsyncMock(return_value=None))\n", True),
+            "patch-multiple-default-mock": ("patch.multiple(update_check, get_update_info=DEFAULT)\n", True),
+            "patch-multiple-answer-on-another-keyword": ("patch.multiple(\n    mod, get_update_info=mod.get_update_info, helper=Mock(return_value=None)\n)\n", False),
+            "bare-patch-answered-through-its-alias": ("with patch(\"ha_mcp.tools.component_api.get_component_caps\") as caps:\n    caps.return_value = {\"available\": True}\n", True),
+            "bare-patch-object": ("with patch.object(update_check, \"get_update_info\") as info:\n    info.return_value = None\n", True),
+            "spy": ("patch.object(tools_addons, \"get_addon_info\", wraps=tools_addons.get_addon_info)\n", False),
+            "failure": ("patch.object(update_check, \"fetch_latest\", side_effect=TimeoutError)\n", False),
+            "another-function": ("patch.object(paths, \"get_data_dir\", return_value=tmp_path)\n", False),
+            "another-function-returning-a-listed-name": ("patch.object(renderer, \"label\", return_value=\"get_update_info\")\n", False),
+            "another-function-with-a-listed-keyword-inside": ("patch.object(renderer, \"label\", new=Mock(get_update_info=lambda: 1))\n", False),
+            "patch-imported-under-another-name": ("from unittest.mock import patch as replace\n", True),
+            "other-import-aliases": ("from unittest.mock import AsyncMock as Fake, patch\nimport unittest.mock as mock\n", False),
+            "reading-a-listed-name": ("getattr(update_check, \"get_update_info\")\ngetattr(update_check, \"get_update_info\", lambda: None)\nimport_module(\"ha_mcp.tools.fetch_helper\")\n", False),
+            "reading-a-listed-name-inside-a-with": ("with nullcontext(resolve_name(\"ha_mcp.update_check.get_update_info\")):\n    pass\n", False),
+            "setattr-dotted-target": ("monkeypatch.setattr(\"ha_mcp.update_check.get_update_info\", lambda: None)\n", True),
+            "spy-on-the-real-function-by-name": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=real_get_update_info)\n", False),
+            "spy-lambda-that-calls-through": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: real_get_update_info())\n", True),
+            "spy-lambda-calling-something-else": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: dict(latest=\"1\"))\n", True),
+            "spy-lambda-calling-a-helper-with-a-listed-name": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: fetch_fake())\n", True),
+            "spy-lambda-with-a-typed-in-answer": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: {\"latest\": \"1\"})\n", True),
+            "side-effect-lambda": ("patch(\"ha_mcp.update_check.get_update_info\", side_effect=lambda: {\"latest\": \"1\"})\n", True),
+        }.items()
     ],
 )
 def test_only_a_typed_in_server_answer_is_refused(
@@ -497,6 +367,9 @@ runpy.run_path(script, run_name="__main__")
                 "later-tuple-operand-sees-completed-global-write": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(switch(), getattr(mod, NAME))\nNAME = 'public'\n",
                 "helper-argument-captured-before-later-argument-write": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\n",
                 "callee-alias-captured-before-argument-write": "read = getattr\ndef switch():\n    global read\n    read = public_function\nread(mod, '_helper', switch())\n",
+                "lambda-default-keeps-value-before-argument-effect": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
+                "generator-loop-next-iteration-observes-current-global": "NAME = 'public'\ndef values():\n    for item in (1, 2):\n        getattr(mod, NAME)\n        yield None\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+                "generator-resumed-exception-enters-handler": "NAME = 'public'\ndef values():\n    try:\n        yield None\n        raise ValueError()\n    except ValueError:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
                 "await-unknown-alternative-retains-normal-continuation": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop() if flag else client.read()\n    await pending\n    getattr(mod, '_helper')\n",
                 "generator-access-before-first-yield-is-checked": "NAME = '_helper'\ndef values():\n    getattr(mod, NAME)\n    yield None\npending = values()\nnext(pending)\nNAME = 'public'\n",
                 "generator-resume-observes-current-private-global": "NAME = 'public'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
@@ -754,6 +627,9 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "later-tuple-operand-sees-completed-public-write": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(switch(), getattr(mod, NAME))\n",
                 "helper-public-argument-keeps-value-before-later-write": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\nNAME = 'public'\n",
                 "public-callee-captured-before-argument-replacement": "read = public_function\ndef switch():\n    global read\n    read = getattr\nread(mod, '_helper', switch())\n",
+                "lambda-default-keeps-public-value-before-argument-effect": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
+                "generator-loop-yield-defers-following-lookup": "NAME = '_helper'\ndef values():\n    for item in (1,):\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+                "generator-yield-defers-finally-until-resume": "NAME = '_helper'\ndef values():\n    try:\n        yield None\n    finally:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
                 "definite-named-await-still-has-no-normal-continuation": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop()\n    await pending\n    getattr(mod, '_helper')\n",
                 "generator-first-next-stops-before-private-later-lookup": "NAME = '_helper'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
                 "generator-conditional-yield-retains-continuation": "NAME = '_helper'\ndef values():\n    if True:\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
