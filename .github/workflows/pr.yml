@@ -82,7 +82,7 @@ jobs:
           uv run python scripts/test_only_public_names.py > /tmp/public-names.txt 2>&1 || failed=1
           uv run python scripts/stand_in_lists_ratchet.py --base "$BASE" > /tmp/stand-ins.txt 2>&1 || failed=1
           if test -f scripts/private_test_access.py; then
-            timeout 300 uv run python -c 'import ast, faulthandler, runpy, time; faulthandler.dump_traceback_later(60, repeat=True); original=ast.parse; ast.parse=lambda source, filename="<unknown>", **kwargs: (print(time.monotonic(), filename, flush=True), original(source, filename=filename, **kwargs))[1]; runpy.run_path("scripts/private_test_access.py", run_name="__main__")' > /tmp/private-access.txt 2>&1 || failed=1
+            timeout 300 uv run python -c 'import ast, faulthandler, runpy, sys, time; sys.path.insert(0, "scripts"); faulthandler.dump_traceback_later(60, repeat=True); original=ast.parse; ast.parse=lambda source, filename="<unknown>", **kwargs: (print(time.monotonic(), filename, flush=True), original(source, filename=filename, **kwargs))[1]; runpy.run_path("scripts/private_test_access.py", run_name="__main__")' > /tmp/private-access.txt 2>&1 || failed=1
             mkdir -p /tmp/slf001-base
             git archive "$BASE" tests/src/unit tests/addon | tar -x -C /tmp/slf001-base
             if timeout 300 uv run python scripts/private_test_access.py --repo /tmp/slf001-base > /tmp/private-access-baseline.txt 2>&1; then
