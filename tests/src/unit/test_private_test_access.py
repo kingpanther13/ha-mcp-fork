@@ -137,6 +137,10 @@ runpy.run_path(script, run_name="__main__")
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "known-class-reflection-member-is-a-target-helper": "class Example:\n    lookup = getattr\nExample.lookup(mod, '_helper')\n",
+                "instance-member-store-keeps-class-method-intact": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\nExample.run()\nNAME = 'public'\n",
+                "instance-member-delete-restores-class-method": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ndel instance.run\ninstance.run()\nNAME = 'public'\n",
+                "uncertain-instance-member-store-keeps-unmodified-alternative": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\nfirst = Example()\nsecond = Example()\nselected = first if flag else second\nselected.run = callback\nfirst.run()\nsecond.run()\nNAME = 'public'\n",
                 "known-class-static-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nExample.run()\nNAME = 'public'\n",
                 "immediate-known-instance-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample().run()\nNAME = 'public'\n",
                 "copied-known-instance-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ninvoke = instance.run\ninvoke()\nNAME = 'public'\n",
@@ -352,6 +356,9 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "known-local-class-patch-is-not-unittest-patch": "class Example:\n    @staticmethod\n    def patch(data):\n        pass\nExample.patch('_data')\n",
+                "class-member-store-replaces-deferred-method": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\nExample.run = callback\nExample.run()\nNAME = 'public'\n",
+                "instance-member-store-replaces-only-that-method": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ninstance.run()\nNAME = 'public'\n",
                 "known-class-method-keeps-public-call-time-global": "NAME = '_data'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = 'public'\nExample.run()\n",
                 "unrelated-class-call-does-not-run-another-method": "NAME = '_data'\nclass First:\n    def run(self):\n        getattr(mod, NAME)\nclass Second:\n    def run(self):\n        getattr(mod, 'public')\nSecond().run()\nNAME = 'public'\n",
                 "rebound-class-name-is-not-the-old-constructor": "NAME = '_data'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample = factory\nExample().run()\nNAME = 'public'\n",
