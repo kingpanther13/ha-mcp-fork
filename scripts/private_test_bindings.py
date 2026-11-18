@@ -10,12 +10,45 @@ from itertools import product
 
 
 @dataclass(frozen=True)
+class Argument:
+    """An unevaluated call value with its assignment-time scalar bindings."""
+
+    expression: ast.expr
+    bindings: tuple[tuple[str, Value], ...]
+
+    def strings(self) -> set[str]:
+        return strings(self.expression, dict(self.bindings))
+
+    def object_kinds(self) -> frozenset[str]:
+        return _object_kinds(self.expression, dict(self.bindings))
+
+    def own_object(self) -> bool:
+        kinds = self.object_kinds()
+        return bool(kinds) and kinds <= {"self", "cls"} and not self.strings()
+
+
+@dataclass(frozen=True)
+class Arguments:
+    positional: tuple[Argument, ...]
+    keywords: tuple[tuple[str, Argument], ...]
+
+    def argument(self, index: int, name: str) -> Argument | None:
+        if len(self.positional) > index:
+            return self.positional[index]
+        return dict(self.keywords).get(name)
+
+
+@dataclass(frozen=True)
 class Value:
     strings: frozenset[str] = frozenset()
     mapping_keys: frozenset[str] = frozenset()
     iterable_elements: frozenset[str] = frozenset()
-    mapping_strings: tuple[tuple[str, frozenset[str]], ...] = ()
+    mapping_alternatives: tuple[tuple[tuple[str, Argument], ...], ...] = ()
     is_iterable: bool = False
+    object_kinds: frozenset[str] = frozenset()
+    errors: frozenset[str] = frozenset()
+    mapping_errors: frozenset[str] = frozenset()
+    iteration_errors: frozenset[str] = frozenset()
 
 
 Aliases = dict[str, frozenset[str]]
@@ -38,6 +71,10 @@ class ScopeValues(dict[str, Value]):
         self.class_locals: frozenset[str] = (
             values.class_locals if isinstance(values, ScopeValues) else frozenset()
         )
+        self.scope_kind = values.scope_kind if isinstance(values, ScopeValues) else "module"
+        self.lexical_names: frozenset[str] = (
+            values.lexical_names if isinstance(values, ScopeValues) else frozenset()
+        )
 
 
 def module_bindings(
@@ -52,6 +89,7 @@ def class_bindings(
     parent_values: dict[str, Value], parent_aliases: Aliases, nodes: list[ast.AST]
 ) -> tuple[ScopeValues, Aliases]:
     values = ScopeValues(parent_values)
+    values.scope_kind = "class"
     values.class_globals = frozenset(_declared_names(nodes, ast.Global))
     values.class_nonlocals = frozenset(_declared_names(nodes, ast.Nonlocal))
     values.class_locals = (
@@ -108,15 +146,16 @@ def union_values(target: dict[str, Value], source: dict[str, Value]) -> None:
 
 
 def _merged_value(left: Value, right: Value) -> Value:
-    entries = dict(left.mapping_strings)
-    for key, strings in right.mapping_strings:
-        entries[key] = entries.get(key, frozenset()) | strings
     return Value(
         left.strings | right.strings,
         left.mapping_keys | right.mapping_keys,
         left.iterable_elements | right.iterable_elements,
-        tuple(sorted(entries.items())),
+        tuple(dict.fromkeys(left.mapping_alternatives + right.mapping_alternatives)),
         left.is_iterable or right.is_iterable,
+        left.object_kinds | right.object_kinds,
+        left.errors | right.errors,
+        left.mapping_errors | right.mapping_errors,
+        left.iteration_errors | right.iteration_errors,
     )
 
 
@@ -232,7 +271,10 @@ def strings(node: ast.expr | None, values: dict[str, Value]) -> set[str]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.Name):
-        return set(values.get(node.id, Value()).strings)
+        value = values.get(node.id, Value())
+        if value.errors:
+            raise ValueError(sorted(value.errors)[0])
+        return set(value.strings)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _concatenated_strings(node, values)
     if isinstance(node, ast.JoinedStr):
@@ -253,7 +295,10 @@ def _iterable_elements(node: ast.expr | None, values: dict[str, Value]) -> set[s
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         return set().union(*(strings(item, values) for item in node.elts))
     if isinstance(node, ast.Name):
-        return set(values.get(node.id, Value()).iterable_elements)
+        value = values.get(node.id, Value())
+        if value.iteration_errors:
+            raise ValueError(sorted(value.iteration_errors)[0])
+        return set(value.iterable_elements)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _iterable_elements(node.left, values) | _iterable_elements(
             node.right, values
@@ -273,7 +318,10 @@ def iterable_strings(node: ast.expr, values: dict[str, Value]) -> set[str]:
 
 def mapping_keys(node: ast.expr, values: dict[str, Value]) -> set[str]:
     if isinstance(node, ast.Name):
-        return set(values.get(node.id, Value()).mapping_keys)
+        value = values.get(node.id, Value())
+        if value.mapping_errors:
+            raise ValueError(sorted(value.mapping_errors)[0])
+        return set(value.mapping_keys)
     if isinstance(node, ast.Dict):
         return set().union(
             *(
@@ -286,52 +334,120 @@ def mapping_keys(node: ast.expr, values: dict[str, Value]) -> set[str]:
     return set()
 
 
-def _mapping_strings(
-    node: ast.expr, values: dict[str, Value]
-) -> dict[str, frozenset[str]]:
-    if isinstance(node, ast.Name):
-        return dict(values.get(node.id, Value()).mapping_strings)
-    entries: dict[str, frozenset[str]] = {}
-    if isinstance(node, ast.Dict):
-        for key, value in zip(node.keys, node.values, strict=True):
-            if key is None:
-                entries.update(_mapping_strings(value, values))
-            else:
-                entries.update(
-                    (name, frozenset(strings(value, values)))
-                    for name in strings(key, values)
-                )
-    elif isinstance(node, ast.IfExp):
-        for arm in _arms(node):
-            for entry_name, candidates in _mapping_strings(arm, values).items():
-                entries[entry_name] = entries.get(entry_name, frozenset()) | candidates
-    return entries
+def _capture_argument(node: ast.expr, values: dict[str, Value]) -> Argument:
+    names = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+    # A requested keyword needs scalar expression inputs, not recursively nested
+    # mapping payloads. This also prevents self-referencing data from growing
+    # snapshots during fixed-point analysis.
+    snapshot = tuple(
+        (name, Value(value.strings, value.mapping_keys, value.iterable_elements,
+                     (), value.is_iterable, value.object_kinds, value.errors,
+                     value.mapping_errors, value.iteration_errors))
+        for name in sorted(names)
+        if (value := values.get(name)) is not None
+    )
+    return Argument(node, snapshot)
 
 
-def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
-    return Value(
-        frozenset(strings(node, values)),
-        frozenset(mapping_keys(node, values)) if node is not None else frozenset(),
-        frozenset(_iterable_elements(node, values)),
-        tuple(sorted(_mapping_strings(node, values).items()))
-        if node is not None
-        else (),
-        _is_iterable(node, values),
+Mapping = tuple[tuple[str, Argument], ...]
+
+
+def _bounded_mappings(options: Iterator[Mapping]) -> tuple[Mapping, ...]:
+    unique: dict[Mapping, None] = {}
+    for option in options:
+        unique[option] = None
+        if len(unique) > 256:
+            raise ValueError("too many static alternatives in keyword arguments")
+    return tuple(unique)
+
+
+def _overlay_mappings(left: tuple[Mapping, ...], right: tuple[Mapping, ...]) -> tuple[Mapping, ...]:
+    return _bounded_mappings(
+        tuple(sorted((dict(before) | dict(after)).items()))
+        for before in left for after in right
     )
 
 
-def argument_strings(
-    call: ast.Call, index: int, name: str, values: dict[str, Value]
-) -> set[str]:
-    if len(call.args) > index:
-        return strings(call.args[index], values)
-    candidates: set[str] = set()
+def _mapping_alternatives(node: ast.expr, values: dict[str, Value]) -> tuple[Mapping, ...]:
+    if isinstance(node, ast.Name):
+        value = values.get(node.id, Value())
+        if value.mapping_errors:
+            raise ValueError(sorted(value.mapping_errors)[0])
+        return value.mapping_alternatives or ((),)
+    if isinstance(node, ast.IfExp):
+        return _bounded_mappings(
+            mapping for arm in _arms(node) for mapping in _mapping_alternatives(arm, values)
+        )
+    if not isinstance(node, ast.Dict):
+        return ((),)
+    options: tuple[Mapping, ...] = ((),)
+    for key, value in zip(node.keys, node.values, strict=True):
+        additions = (
+            _mapping_alternatives(value, values)
+            if key is None
+            else tuple(((name, _capture_argument(value, values)),) for name in strings(key, values))
+        )
+        options = _overlay_mappings(options, additions or ((),))
+    return options
+
+
+def _object_kinds(node: ast.expr | None, values: dict[str, Value]) -> frozenset[str]:
+    if isinstance(node, ast.Name):
+        value = values.get(node.id)
+        if value is not None:
+            return value.object_kinds or (frozenset() if value.strings else frozenset({""}))
+        return frozenset({node.id if node.id in {"self", "cls"} else ""})
+    if isinstance(node, ast.IfExp):
+        return frozenset().union(*(_object_kinds(arm, values) for arm in _arms(node)))
+    if isinstance(node, (ast.JoinedStr, ast.Constant)):
+        return frozenset() if isinstance(node, ast.JoinedStr) or isinstance(node.value, str) else frozenset({""})
+    return frozenset() if strings(node, values) else frozenset({""})
+
+
+def _deferred[T](resolve: Callable[[], T], empty: T) -> tuple[T, frozenset[str]]:
+    try:
+        return resolve(), frozenset()
+    except ValueError as error:
+        return empty, frozenset({str(error)})
+
+
+def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
+    scalar, errors = _deferred(lambda: strings(node, values), set[str]())
+    keys, key_errors = _deferred(
+        lambda: mapping_keys(node, values) if node is not None else set(), set[str]()
+    )
+    elements, iteration_errors = _deferred(
+        lambda: _iterable_elements(node, values), set[str]()
+    )
+    mappings, mapping_errors = _deferred(
+        lambda: _mapping_alternatives(node, values) if node is not None else (), ()
+    )
+    kinds, _ = _deferred(lambda: _object_kinds(node, values), frozenset[str]())
+    return Value(
+        frozenset(scalar), frozenset(keys), frozenset(elements), mappings,
+        _is_iterable(node, values), kinds, errors,
+        key_errors | mapping_errors, iteration_errors,
+    )
+
+
+def iterated_value(node: ast.expr, values: dict[str, Value]) -> Value:
+    try:
+        return Value(frozenset(iterable_strings(node, values)))
+    except ValueError as error:
+        return Value(errors=frozenset({str(error)}))
+
+
+def call_arguments(call: ast.Call, values: dict[str, Value]) -> list[Arguments]:
+    positional = tuple(_capture_argument(expression, values) for expression in call.args)
+    options: tuple[Mapping, ...] = ((),)
     for keyword in call.keywords:
-        if keyword.arg == name:
-            candidates.update(strings(keyword.value, values))
-        elif keyword.arg is None:
-            candidates.update(_mapping_strings(keyword.value, values).get(name, ()))
-    return candidates
+        additions = (
+            _mapping_alternatives(keyword.value, values)
+            if keyword.arg is None
+            else (((keyword.arg, _capture_argument(keyword.value, values)),),)
+        )
+        options = _overlay_mappings(options, additions)
+    return [Arguments(positional, kwargs) for kwargs in options]
 
 
 def import_aliases(nodes: list[ast.AST], aliases: Aliases) -> None:
@@ -360,7 +476,7 @@ def extend_values(
         for target, expression, iterated in assignments:
             previous = values.get(target, Value())
             assigned = (
-                Value(frozenset(iterable_strings(expression, values)))
+                iterated_value(expression, values)
                 if iterated
                 else value_of(expression, values)
             )
@@ -570,6 +686,8 @@ class State:
             self.values.class_locals,
             self.values.class_globals,
             self.values.class_nonlocals,
+            self.values.scope_kind,
+            self.values.lexical_names,
             namespace_key(self.closure),
             namespace_key(module_bindings(*self.closure)),
         )
@@ -590,6 +708,9 @@ class State:
             self.refresh_name(name, module)
 
     def refresh_name(self, name: str, module: Env) -> None:
+        if self.values.scope_kind != "class":
+            self.refresh_lexical_name(name, module)
+            return
         external = name in self.values.class_globals | self.values.class_nonlocals
         owner = (
             module
@@ -615,6 +736,19 @@ class State:
                 self.aliases.get(name, fallback) | self.values.local_aliases[name]
             )
 
+    def refresh_lexical_name(self, name: str, module: Env) -> None:
+        owner = (
+            self.closure
+            if self.values.scope_kind == "function" and name in self.values.lexical_names
+            else module
+        )
+        self.values.pop(name, None)
+        self.aliases.pop(name, None)
+        if name in owner[0]:
+            self.values[name] = owner[0][name]
+        if name in owner[1]:
+            self.aliases[name] = owner[1][name]
+
     def merge(self, other: State) -> None:
         merge_namespace((self.values, self.aliases), (other.values, other.aliases))
         merge_namespace(self.closure, other.closure)
@@ -622,3 +756,62 @@ class State:
         union_values(self.values.local_values, other.values.local_values)
         union_aliases(self.values.local_aliases, other.values.local_aliases)
         self.values.bound &= other.values.bound
+
+
+def literal_iterations(expression: ast.expr, aliases: Aliases) -> list[ast.expr] | None:
+    """Snapshot short literal iterables without executing fixture code."""
+    if isinstance(expression, (ast.List, ast.Tuple)) and not any(
+        isinstance(item, ast.Starred) for item in expression.elts
+    ):
+        return list(expression.elts)
+    if not isinstance(expression, ast.Call) or expression.keywords:
+        return None
+    names = dotted(expression.func, aliases)
+    if not names or not names <= {"range", "builtins.range"}:
+        return None
+    try:
+        arguments = [ast.literal_eval(item) for item in expression.args]
+        if not 1 <= len(arguments) <= 3 or not all(
+            isinstance(item, int) for item in arguments
+        ):
+            return None
+        items = range(*arguments)
+        if len(items) > 256:
+            return None
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return [ast.Constant(value=item) for item in items]
+
+
+def pattern_matches(pattern: ast.pattern, subject: ast.expr) -> bool | None:
+    """Reject definite literal mismatches; retain both paths for unknown values."""
+    if isinstance(pattern, ast.MatchAs):
+        return True if pattern.pattern is None else pattern_matches(pattern.pattern, subject)
+    if isinstance(pattern, ast.MatchOr):
+        alternatives = [pattern_matches(item, subject) for item in pattern.patterns]
+        return True if True in alternatives else (None if None in alternatives else False)
+    try:
+        value = ast.literal_eval(subject)
+        if isinstance(pattern, ast.MatchValue):
+            return value == ast.literal_eval(pattern.value)
+        if isinstance(pattern, ast.MatchSingleton):
+            return value is pattern.value
+    except (ValueError, TypeError):
+        return None
+    if isinstance(pattern, ast.MatchSequence):
+        return _sequence_matches(pattern, value)
+    return None
+
+
+def _sequence_matches(pattern: ast.MatchSequence, value: object) -> bool | None:
+    if not isinstance(value, (tuple, list)):
+        return False
+    if any(isinstance(item, ast.MatchStar) for item in pattern.patterns):
+        return None
+    if len(value) != len(pattern.patterns):
+        return False
+    alternatives = [
+        pattern_matches(item, ast.Constant(value=element))
+        for item, element in zip(pattern.patterns, value, strict=True)
+    ]
+    return False if False in alternatives else (None if None in alternatives else True)
