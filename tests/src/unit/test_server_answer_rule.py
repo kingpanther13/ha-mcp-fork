@@ -448,6 +448,9 @@ runpy.run_path(script, run_name="__main__")
                 "definitely-infinite-generator-tuple-reject": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\ntuple(endless())\n",
                 "definitely-infinite-generator-for-reject": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\nfor _ in endless():\n    pass\n",
                 "mixed-next-eager-raise-preserves-next-normal-branch": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, '_data')\n",
+                "generator-yielded-current-binding-for-reject": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nfor name in items:\n    getattr(mod, name)\nNAME = 'public'\n",
+                "generator-yielded-current-binding-next-reject": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nname = next(items)\ngetattr(mod, name)\nNAME = 'public'\n",
+                "generator-yielded-current-binding-comprehension-reject": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nresults = [getattr(mod, name) for name in items]\nNAME = 'public'\n",
             }.items()
         ),
     ],
@@ -774,6 +777,9 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "definitely-infinite-generator-tuple-allow": "def endless():\n    while True:\n        yield None\ntuple(endless())\ngetattr(mod, '_helper')\n",
                 "definitely-infinite-generator-for-allow": "def endless():\n    while True:\n        yield None\nfor _ in endless():\n    pass\ngetattr(mod, '_helper')\n",
                 "mixed-next-eager-raise-public-control": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, 'public')\n",
+                "generator-yielded-current-binding-for-allow": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nfor name in items:\n    getattr(mod, name)\nNAME = 'public'\n",
+                "generator-yielded-current-binding-next-allow": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nname = next(items)\ngetattr(mod, name)\nNAME = 'public'\n",
+                "generator-yielded-current-binding-comprehension-allow": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nresults = [getattr(mod, name) for name in items]\nNAME = 'public'\n",
             }.items()
         ),
     ],
