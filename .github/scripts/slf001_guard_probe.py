@@ -1,131 +1,192 @@
-"""Run only the 17 added guard cases against immutable old/new guard sources."""
+"""Prove 47 guard cases and one repeat-call regression with real Core fixtures."""
 
 import ast
-import copy
+from collections import Counter
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-PREVIOUS = "8d69144aef38da25569d5ec6a33b09155c86b0cf"
-PREVIOUS_REBASED = "18fe48257e013cee99e5521e53a7c7121639e62a"
-CURRENT = "992c971257f8297ffa69ffad4772f4513bb24f14"
-TEST_PATH = "tests/src/unit/test_private_test_access.py"
 GUARD_PATH = "scripts/private_test_access.py"
-PREVIOUS_BLOBS = {
-    GUARD_PATH: "c0e263121d4bda2f43fc088ceaf5469c95f0e650",
-    TEST_PATH: "3fde9416a0d059c88d5f50d19d225c4fcceabce3",
+GUARD_TEST = "tests/src/unit/test_private_test_access.py"
+HELPER_TEST = "tests/src/unit/test_tools_addons_array_patch.py"
+GROUP_COUNTS = {
+    "test_local_definitions_shadow_an_imported_reflection_alias": 3,
+    "test_defined_names_do_not_retain_inherited_private_targets": 5,
+    "test_definition_headers_and_unshadowed_aliases_still_reject_private_access": 4,
+    "test_patch_dict_checks_only_its_import_target": 32,
+    "test_patch_dict_mapping_contents_are_data": 3,
+    "test_repeated_calls_capture_only_their_own_post": 1,
 }
-TEST_NAMES = {
-    "test_reflective_private_access_fails_with_a_source_location",
-    "test_public_targets_and_non_target_strings_are_allowed",
-}
+GUARD_NAMES = list(GROUP_COUNTS)[:-1]
+HELPER_NAME = list(GROUP_COUNTS)[-1]
+NODE_IDS = [f"{GUARD_TEST}::{name}" for name in GUARD_NAMES] + [
+    f"{HELPER_TEST}::TestApplyArrayOps::{HELPER_NAME}"
+]
+
+
+def git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def source(revision: str, path: str) -> str:
-    if revision == PREVIOUS:
-        # The stack was rebased. Verify exact original blobs, rather than
-        # treating an absent, superseded commit as a regression-test failure.
-        revision = PREVIOUS_REBASED
-        blob = subprocess.run(
-            ["git", "rev-parse", f"{revision}:{path}"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        assert blob == PREVIOUS_BLOBS[path], (path, blob)
     return subprocess.run(
         ["git", "show", f"{revision}:{path}"],
         check=True, capture_output=True, text=True,
     ).stdout
 
 
-def cases(module: ast.Module) -> dict[str, list[str]]:
-    return {
-        node.name: ast.literal_eval(node.decorator_list[0].args[1])
-        for node in module.body
-        if isinstance(node, ast.FunctionDef) and node.name in TEST_NAMES
-    }
+def helper_span(text: str) -> tuple[int, int]:
+    nodes = [
+        node for node in ast.parse(text).body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_patch_array"
+    ]
+    assert len(nodes) == 1 and not nodes[0].decorator_list
+    node = nodes[0]
+    assert node.end_lineno is not None
+    return node.lineno - 1, node.end_lineno
 
 
-def selected_test_source() -> tuple[str, dict[str, list[str]]]:
-    previous = cases(ast.parse(source(PREVIOUS, TEST_PATH)))
-    module = ast.parse(source(CURRENT, TEST_PATH))
-    added = {
-        name: [item for item in items if item not in previous[name]]
-        for name, items in cases(module).items()
-    }
-    assert sum(map(len, added.values())) == 17, added
-    selected = []
-    for node in module.body:
-        if isinstance(node, ast.FunctionDef):
-            if node.name == "_run":
-                selected.append(node)
-            elif node.name in TEST_NAMES:
-                node = copy.deepcopy(node)
-                node.decorator_list[0].args[1] = ast.List(
-                    elts=[ast.Constant(value=item) for item in added[node.name]],
-                    ctx=ast.Load(),
-                )
-                selected.append(node)
-        else:
-            selected.append(node)
-    module.body = selected
-    return ast.unparse(ast.fix_missing_locations(module)), added
+def old_helper_in_new_tests(candidate: str, baseline: str) -> str:
+    """Replace only the helper's source span, retaining every candidate test."""
+    start, end = helper_span(candidate)
+    old_start, old_end = helper_span(baseline)
+    lines = candidate.splitlines(keepends=True)
+    lines[start:end] = baseline.splitlines(keepends=True)[old_start:old_end]
+    return "".join(lines)
 
 
-def run_variant(root: Path, label: str, revision: str, test_source: str) -> dict:
-    repo = root / label
-    (repo / "scripts").mkdir(parents=True)
-    tests = repo / "tests/src/unit"
-    tests.mkdir(parents=True)
-    (repo / GUARD_PATH).write_text(source(revision, GUARD_PATH), encoding="utf-8")
-    (repo / TEST_PATH).write_text(test_source, encoding="utf-8")
+def run_variant(root: Path, label: str) -> dict:
     junit = root / f"{label}.xml"
+    command = [
+        sys.executable, "-m", "pytest", "--maxfail=0", "--tb=short", "-v",
+        f"--junitxml={junit}", *NODE_IDS,
+    ]
+    # Use the candidate's complete pytest configuration and Core plugins.
+    # No isolated/minimal pytest environment or conftest bypass is used.
+    env = os.environ.copy()
+    env.pop("UNIT_TEST_SHARD", None)
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-c", "/dev/null",
-         "--confcutdir", str(tests), "--maxfail=0", "--tb=short", "-v",
-         f"--junitxml={junit}", str(repo / TEST_PATH)],
-        cwd=repo, env=os.environ | {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
-        check=False, capture_output=True, text=True, timeout=120,
+        command, env=env, check=False, capture_output=True, text=True, timeout=300
     )
     (root / f"{label}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     print(result.stdout, flush=True)
     print(result.stderr, file=sys.stderr, flush=True)
     report = ET.parse(junit).getroot()
-    testcases = report.findall(".//testcase")
-    failures = report.findall(".//failure")
-    errors = report.findall(".//error")
-    assert len(testcases) == 17, len(testcases)
-    assert not errors, [item.attrib for item in errors]
-    assert not report.findall(".//skipped")
-    assert all("AssertionError" in (item.text or "") for item in failures)
-    expected_failures = 12 if label == "previous" else 0
-    assert len(failures) == expected_failures, (label, len(failures))
-    assert result.returncode == (1 if expected_failures else 0), result.returncode
-    return {
-        "revision": revision, "tests": len(testcases), "failures": len(failures),
-        "passed": len(testcases) - len(failures), "errors": len(errors),
-        "exit_code": result.returncode,
+    cases = report.findall(".//testcase")
+    case_ids = [f"{case.get('classname')}::{case.get('name')}" for case in cases]
+    failures = {
+        case_id: failure.get("message", "") + "\n" + (failure.text or "")
+        for case_id, case in zip(case_ids, cases, strict=True)
+        if (failure := case.find("failure")) is not None
     }
+    return {
+        "command": command,
+        "exit_code": result.returncode,
+        "tests": len(cases),
+        "groups": dict(Counter(case.get("name", "").split("[", 1)[0] for case in cases)),
+        "case_ids": case_ids,
+        "failures": failures,
+        "errors": [dict(item.attrib) for item in report.findall(".//error")],
+        "skips": [dict(item.attrib) for item in report.findall(".//skipped")],
+    }
+
+
+def expected_failure(case_id: str) -> bool:
+    name = case_id.rsplit("::", 1)[1]
+    return (
+        name.startswith(GUARD_NAMES[0] + "[")
+        or name.startswith(GUARD_NAMES[1] + "[")
+        # The innermost parametrize decorator is private=[False, True].
+        or name.startswith("test_patch_dict_checks_only_its_import_target[True-")
+        or name == HELPER_NAME
+    )
+
+
+def validate(results: dict) -> None:
+    for label, data in results.items():
+        assert data["tests"] == 48, (label, data["tests"])
+        assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
+        assert not data["errors"], (label, data["errors"])
+        assert not data["skips"], (label, data["skips"])
+        assert len(set(data["case_ids"])) == 48
+    before = results["baseline"]
+    after = results["candidate"]
+    assert set(before["case_ids"]) == set(after["case_ids"])
+    expected = {case for case in before["case_ids"] if expected_failure(case)}
+    assert len(expected) == 25, expected
+    assert set(before["failures"]) == expected, set(before["failures"]) ^ expected
+    for case, failure in before["failures"].items():
+        if case.endswith("::" + HELPER_NAME):
+            assert "ValueError: too many values to unpack (expected 1)" in failure, failure
+            assert "[body] = bodies" in failure, failure
+        else:
+            assert "AssertionError" in failure, failure
+    assert before["exit_code"] == 1, before["exit_code"]
+    assert not after["failures"], after["failures"]
+    assert after["exit_code"] == 0, after["exit_code"]
 
 
 def main() -> None:
+    baseline = os.environ["PROBE_BASELINE"]
+    candidate = os.environ["PROBE_CANDIDATE"]
+    assert re.fullmatch(r"[0-9a-f]{40}", baseline), baseline
+    assert re.fullmatch(r"[0-9a-f]{40}", candidate), candidate
+    assert git("rev-parse", "HEAD") == candidate
+    assert not git("status", "--porcelain", "--untracked-files=no")
     root = Path(os.environ["PROBE_ROOT"])
-    root.mkdir(parents=True)
-    test_source, added = selected_test_source()
-    (root / "selected-cases.json").write_text(json.dumps(added, indent=2), encoding="utf-8")
-    results = {
-        label: run_variant(root, label, revision, test_source)
-        for label, revision in (("previous", PREVIOUS), ("current", CURRENT))
+    root.mkdir(parents=True, exist_ok=True)
+    candidate_guard = source(candidate, GUARD_PATH)
+    candidate_tests = source(candidate, HELPER_TEST)
+    baseline_guard = source(baseline, GUARD_PATH)
+    baseline_tests = source(baseline, HELPER_TEST)
+    assert candidate_guard != baseline_guard
+    replaced_helper = old_helper_in_new_tests(candidate_tests, baseline_tests)
+    assert replaced_helper != candidate_tests
+    evidence = {
+        "baseline": baseline,
+        "candidate": candidate,
+        "driver": git("-C", "../proof", "rev-parse", "HEAD"),
+        "blobs": {
+            revision: {
+                path: git("rev-parse", f"{revision}:{path}")
+                for path in (GUARD_PATH, GUARD_TEST, HELPER_TEST)
+            } for revision in (baseline, candidate)
+        },
+        "selected_nodes": NODE_IDS,
+        "expected_group_counts": GROUP_COUNTS,
+        "expected_baseline_failures": {"guard_assertions": 24, "helper_value_error": 1},
     }
-    results["previous"]["rebased_source_commit"] = PREVIOUS_REBASED
-    results["previous"]["verified_original_blobs"] = PREVIOUS_BLOBS
-    summary = json.dumps(results, indent=2)
-    (root / "results.json").write_text(summary, encoding="utf-8")
-    print(summary)
+    (root / "sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    results = {}
+    try:
+        Path(GUARD_PATH).write_text(baseline_guard, encoding="utf-8")
+        Path(HELPER_TEST).write_text(replaced_helper, encoding="utf-8")
+        (root / "baseline-overlay.patch").write_text(git("diff", "--", GUARD_PATH, HELPER_TEST), encoding="utf-8")
+        results["baseline"] = run_variant(root, "baseline")
+    finally:
+        Path(GUARD_PATH).write_text(candidate_guard, encoding="utf-8")
+        Path(HELPER_TEST).write_text(candidate_tests, encoding="utf-8")
+    assert not git("diff", "--", GUARD_PATH, GUARD_TEST, HELPER_TEST)
+    results["candidate"] = run_variant(root, "candidate")
+    (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    validate(results)
+    summary = {
+        label: {"tests": data["tests"], "failures": len(data["failures"]),
+                "passed": data["tests"] - len(data["failures"]),
+                "errors": len(data["errors"]), "skips": len(data["skips"]),
+                "exit_code": data["exit_code"]}
+        for label, data in results.items()
+    }
+    rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
+    print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Guard regression proof: 17 newly added cases\n\n```json\n" + summary + "\n```\n")
+        handle.write("Regression proof: 47 guard cases and one repeated-call helper case\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

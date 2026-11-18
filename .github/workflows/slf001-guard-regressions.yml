@@ -1,9 +1,17 @@
-name: SLF001 guard regression proof
+name: SLF001 guard and helper regression proof
 
 on:
-  push:
-    branches: [ci/slf001-guard-regressions]
   workflow_dispatch:
+    inputs:
+      revision:
+        description: Full candidate commit SHA containing the regression tests
+        required: true
+        type: string
+      baseline:
+        description: Full pre-fix commit SHA
+        required: true
+        type: string
+        default: 1a743871ab23b0d46e375045ac54276219c9a556
 
 permissions:
   contents: read
@@ -12,24 +20,40 @@ jobs:
   proof:
     if: github.repository == 'kingpanther13/ha-mcp-fork'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
-      PROBE_ROOT: /tmp/slf001-guard-proof
+      PROBE_ROOT: /tmp/slf001-review-proof
+      PROBE_BASELINE: ${{ inputs.baseline }}
+      PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out the isolated proof driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          path: proof
           fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: candidate
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+          submodules: true
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.9'
           python-version: '3.14'
-      - name: Prove assertion failures before and passing cases after
-        run: uv run --no-project --with pytest==9.0.3 --python 3.14 python .github/scripts/slf001_guard_probe.py
-      - name: Preserve full logs and JUnit reports
+      - name: Install full development dependencies for real Core fixtures
+        working-directory: candidate
+        run: uv sync --all-extras --dev
+      - name: Prove exact failures before and all cases passing after
+        working-directory: candidate
+        run: uv run python ../proof/.github/scripts/slf001_guard_probe.py
+      - name: Preserve source evidence, logs, and JUnit reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: slf001-guard-regression-proof
+          name: slf001-review-regression-proof
           path: ${{ env.PROBE_ROOT }}
           if-no-files-found: error
