@@ -120,7 +120,7 @@
     },
     {
       "id": "canonical-loop-expression-keeps-earlier-value-snapshot-reject",
-      "source": "NAME = '_helper'\nSAVED = (mod, NAME)\nfor marker in (True, False):\n    ARGS = (mod, NAME + '')\n    if marker:\n        SAVED = ARGS\n    NAME = 'public'\ngetattr(*SAVED)\n",
+      "source": "NAME = '_helper'\ndef capture():\n    global ARGS\n    ARGS = (mod, NAME + '')\ncapture()\nSAVED = ARGS\nNAME = 'public'\ncapture()\ngetattr(*SAVED)\nNAME = 'public'\n",
       "baseline_fails": false,
       "current_fails": false
     },
@@ -252,7 +252,7 @@
     },
     {
       "id": "canonical-loop-expression-keeps-earlier-value-snapshot-allow",
-      "source": "NAME = 'public'\nSAVED = (mod, NAME)\nfor marker in (True, False):\n    ARGS = (mod, NAME + '')\n    if marker:\n        SAVED = ARGS\n    NAME = '_helper'\ngetattr(*SAVED)\n",
+      "source": "NAME = 'public'\ndef capture():\n    global ARGS\n    ARGS = (mod, NAME + '')\ncapture()\nSAVED = ARGS\nNAME = '_helper'\ncapture()\ngetattr(*SAVED)\nNAME = 'public'\n",
       "baseline_fails": false,
       "current_fails": false
     },

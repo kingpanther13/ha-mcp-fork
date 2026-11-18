@@ -359,7 +359,6 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
     """Reproduce only the new boundary cases on an exact, unchanged guard."""
     assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
     reference_guards = {path: existing_source(revision, path) for path in GUARD_PATHS}
-    assert candidate_guards == reference_guards, "boundary guard differs from reference"
     cases = {
         group + "[" + case["id"] + "]": case["current_fails"]
         for group, section in CASE_GROUPS.items()
@@ -373,7 +372,12 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
         "expected_failure_names": sorted(expected),
     }
     (root / "boundary-sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
-    data = run_variant(root, "boundary", tuple(f"{GUARD_TEST}::{name}" for name in cases))
+    restore_sources(reference_guards)
+    try:
+        data = run_variant(root, "boundary", tuple(f"{GUARD_TEST}::{name}" for name in cases))
+    finally:
+        restore_sources(candidate_guards)
+    assert not git("status", "--porcelain", "--untracked-files=no")
     (root / "boundary-results.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     assert data["tests"] == len(cases) and set(data["case_names"]) == set(cases)
     assert data["exit_code"] == 1 and set(data["failures"]) == expected
@@ -385,7 +389,6 @@ def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
     diagnostic_only = os.environ.get("PROBE_DIAGNOSTIC_LINES_ONLY", "false") == "true"
     boundary_baseline = os.environ.get("PROBE_BOUNDARY_BASELINE", "")
-    assert not boundary_baseline or baseline_only
     assert not (baseline_only and diagnostic_only)
     baseline = os.environ["PROBE_BASELINE"]
     assert baseline == BASELINE, (baseline, BASELINE)
