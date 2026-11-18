@@ -9,8 +9,9 @@ segment in an otherwise dynamic f-string is checked too.
 
 Run ``uv run python scripts/private_test_access.py`` from the repository root.
 Fast Checks runs the same command over both complete test trees. It checks
-getattr/hasattr/setattr/delattr and patch/object/dict/multiple targets, resolving
-lexical constants, concatenation, f-strings and static keyword dictionaries.
+reflection helpers and patch targets, including patch.object, patch.dict and
+patch.multiple, resolving lexical constants, concatenation, f-strings and static
+keyword dictionaries.
 Real dunder names, the ha_mcp._vendor import-path segment, and the test's own
 self/cls are allowed, matching the attribute/import checks. A replacement's
 value is data, not a target. Runtime-computed names still need review.
@@ -143,7 +144,9 @@ def _bindings(
         )
         return _ClassValues(values), aliases
     local_names = binding_rules.bound_names(nodes)
-    global_names = {name for node in nodes if isinstance(node, ast.Global) for name in node.names}
+    global_names = {
+        name for node in nodes if isinstance(node, ast.Global) for name in node.names
+    }
     local_names -= global_names
     values = binding_rules.ScopeValues(parent_values)
     aliases = dict(parent_aliases)
@@ -162,7 +165,8 @@ def _bindings(
         )
     values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
     values.lexical_names = (
-        frozenset() if isinstance(scope, ast.Module)
+        frozenset()
+        if isinstance(scope, ast.Module)
         else (values.lexical_names | local_names) - global_names
     )
     for name in local_names:
@@ -193,7 +197,8 @@ def _call_kind(name: str) -> str | None:
     if method in {"patch.dict", "patch.object", "patch.multiple"}:
         return method
     if operation in {"setattr", "delattr"} and name not in {
-        operation, f"builtins.{operation}"
+        operation,
+        f"builtins.{operation}",
     }:
         return f"monkey.{operation}"
     if operation in {"patch", "getattr", "hasattr", "setattr", "delattr"}:
@@ -207,10 +212,12 @@ def _named_targets(
     kind = _call_kind(name)
     if kind is None:
         return set()
-    return set().union(*(
-        _argument_targets(kind, arguments)
-        for arguments in binding_rules.call_arguments(call, values)
-    ))
+    return set().union(
+        *(
+            _argument_targets(kind, arguments)
+            for arguments in binding_rules.call_arguments(call, values)
+        )
+    )
 
 
 def _argument_strings(argument: binding_rules.Argument | None) -> set[str]:
@@ -484,10 +491,15 @@ class _ClassFlow:
         before = state.copy()
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             outcomes = {"raise": before}
-            self.findings.update(_scan_assignment(
-                node, state.values, state.aliases, state.closure,
-                lambda: _add_outcome(outcomes, "raise", state),
-            ))
+            self.findings.update(
+                _scan_assignment(
+                    node,
+                    state.values,
+                    state.aliases,
+                    state.closure,
+                    lambda: _add_outcome(outcomes, "raise", state),
+                )
+            )
             outcomes["normal"] = state
             return outcomes
         if isinstance(node, ast.Delete):
@@ -881,7 +893,9 @@ def _scan_scope(
         values.module_bindings = (values, aliases)
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
-    if isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(
+        scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
         analyzer = _ClassFlow()
         state = _State(_ClassValues(values), aliases, closure).copy()
         outcomes = analyzer.block(scope.body, state)
@@ -893,7 +907,11 @@ def _scan_scope(
         name for name, _, _ in binding_rules.assignments(list(_nodes(scope)))
     }
     yield from _scan_nodes(
-        _nodes(scope, descend_assignments=False), values, aliases, closure, assigned_names
+        _nodes(scope, descend_assignments=False),
+        values,
+        aliases,
+        closure,
+        assigned_names,
     )
 
 
