@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 from collections.abc import Iterator
+from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 
@@ -26,6 +27,12 @@ _SCOPES = (
     ast.Lambda,
     *_COMPREHENSIONS,
 )
+
+
+@dataclass(frozen=True)
+class _Value:
+    strings: frozenset[str] = frozenset()
+    mapping_keys: frozenset[str] = frozenset()
 
 
 def _comprehension_nodes(
@@ -105,11 +112,11 @@ def _joined(parts: list[set[str]]) -> set[str]:
     return {"".join(items) for items in product(*parts)}
 
 
-def _strings(node: ast.expr | None, values: dict[str, set[str]]) -> set[str]:
+def _strings(node: ast.expr | None, values: dict[str, _Value]) -> set[str]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.Name):
-        return values.get(node.id, set())
+        return set(values.get(node.id, _Value()).strings)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _joined(
             [
@@ -128,10 +135,16 @@ def _strings(node: ast.expr | None, values: dict[str, set[str]]) -> set[str]:
         )
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         return set().union(*(_strings(item, values) for item in node.elts))
+    return set()
+
+
+def _mapping_keys(node: ast.expr, values: dict[str, _Value]) -> set[str]:
+    if isinstance(node, ast.Name):
+        return set(values.get(node.id, _Value()).mapping_keys)
     if isinstance(node, ast.Dict):
         return set().union(
             *(
-                _strings(value if key is None else key, values)
+                _mapping_keys(value, values) if key is None else _strings(key, values)
                 for key, value in zip(node.keys, node.values, strict=True)
             )
         )
@@ -140,11 +153,11 @@ def _strings(node: ast.expr | None, values: dict[str, set[str]]) -> set[str]:
 
 def _bindings(
     scope: ast.AST,
-    parent_values: dict[str, set[str]],
+    parent_values: dict[str, _Value],
     parent_aliases: dict[str, str],
     initial_values: dict[str, set[str]] | None = None,
-) -> tuple[dict[str, set[str]], dict[str, str]]:
-    values = {name: set(items) for name, items in parent_values.items()}
+) -> tuple[dict[str, _Value], dict[str, str]]:
+    values = dict(parent_values)
     aliases = dict(parent_aliases)
     nodes = list(_nodes(scope))
     local_names = {
@@ -152,11 +165,12 @@ def _bindings(
         for node in nodes
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
-    local_names.update(
-        node.name
-        for node in nodes
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
+    if not isinstance(scope, ast.ClassDef):
+        local_names.update(
+            node.name
+            for node in nodes
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        )
     imported: dict[str, str] = {}
     _import_aliases(nodes, imported)
     local_names.update(imported)
@@ -175,8 +189,15 @@ def _bindings(
         values.pop(name, None)
         aliases.pop(name, None)
     aliases.update(imported)
-    values.update(initial_values or {})
+    values.update(
+        (name, _Value(frozenset(items)))
+        for name, items in (initial_values or {}).items()
+    )
     _extend_values(list(_assignments(nodes)), values, aliases)
+    if isinstance(scope, ast.ClassDef):
+        # Class bodies resolve aliases in statement order, including defaults
+        # evaluated before a method with the same name is bound.
+        aliases = dict(parent_aliases)
     return values, aliases
 
 
@@ -193,17 +214,22 @@ def _import_aliases(nodes: list[ast.AST], aliases: dict[str, str]) -> None:
 
 
 def _extend_values(
-    assignments: list[tuple[str, ast.expr]],
-    values: dict[str, set[str]],
+    assignments: list[tuple[str, ast.expr, bool]],
+    values: dict[str, _Value],
     aliases: dict[str, str],
 ) -> None:
     # A lexical constant can refer to one declared later; union alternatives
     # rather than letting a later assignment hide an earlier private target.
     for _ in range(len(assignments) + 1):
         changed = False
-        for target, expression in assignments:
-            previous = values.get(target, set())
-            current = previous | _strings(expression, values)
+        for target, expression, iterated in assignments:
+            previous = values.get(target, _Value())
+            strings = _strings(expression, values)
+            keys = _mapping_keys(expression, values)
+            current = _Value(
+                previous.strings | strings | (keys if iterated else set()),
+                previous.mapping_keys | (set() if iterated else keys),
+            )
             changed |= current != previous
             values[target] = current
             if isinstance(expression, (ast.Name, ast.Attribute)):
@@ -214,35 +240,31 @@ def _extend_values(
             break
 
 
-def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr]]:
+def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr, bool]]:
     for node in nodes:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    yield target.id, node.value
+                    yield target.id, node.value, False
         elif (
             isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
             and node.value is not None
         ):
-            yield node.target.id, node.value
+            yield node.target.id, node.value, False
         elif isinstance(
             node, (ast.For, ast.AsyncFor, ast.comprehension)
         ) and isinstance(node.target, ast.Name):
-            yield node.target.id, node.iter
+            yield node.target.id, node.iter, True
 
 
 def _update_aliases(node: ast.AST, aliases: dict[str, str]) -> None:
     """Keep the callable binding at each call site, including later shadowing."""
     _import_aliases([node], aliases)
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        for target, expression in _assignments([node]):
+        for target, expression, _iterated in _assignments([node]):
             if isinstance(expression, (ast.Name, ast.Attribute)):
                 aliases[target] = _dotted(expression, aliases)
-            elif isinstance(expression, ast.Dict):
-                # Dictionary keys are data for patch.dict, but targets for
-                # patch.multiple. Preserve that distinction through aliases.
-                aliases[target] = "<mapping>"
             else:
                 aliases.pop(target, None)
 
@@ -258,7 +280,7 @@ def _own_object(node: ast.expr | None) -> bool:
 
 
 def _targets(
-    call: ast.Call, aliases: dict[str, str], values: dict[str, set[str]]
+    call: ast.Call, aliases: dict[str, str], values: dict[str, _Value]
 ) -> set[str]:
     name = _dotted(call.func, aliases)
     operation = name.rsplit(".", 1)[-1]
@@ -266,18 +288,13 @@ def _targets(
     if operation == "patch":
         return _strings(target, values)
     if name.endswith("patch.dict"):
-        mapping = _argument(call, 0, "in_dict")
-        if isinstance(mapping, ast.Dict) or (
-            mapping is not None and _dotted(mapping, aliases) == "<mapping>"
-        ):
-            return set()
-        return _strings(mapping, values)
+        return _strings(_argument(call, 0, "in_dict"), values)
     if name.endswith("patch.multiple"):
         keys = {item.arg for item in call.keywords if item.arg is not None}
         keys.update(
             set().union(
                 *(
-                    _strings(item.value, values)
+                    _mapping_keys(item.value, values)
                     for item in call.keywords
                     if item.arg is None
                 )
@@ -320,23 +337,40 @@ def _private(target: str) -> bool:
 
 
 def _comprehension_values(
-    scope: ast.AST, values: dict[str, set[str]]
+    scope: ast.AST, values: dict[str, _Value]
 ) -> dict[str, set[str]]:
     if isinstance(scope, _COMPREHENSIONS):
         first = scope.generators[0]
         if isinstance(first.target, ast.Name):
-            return {first.target.id: _strings(first.iter, values)}
+            return {
+                first.target.id: _strings(first.iter, values)
+                | _mapping_keys(first.iter, values)
+            }
     return {}
+
+
+def _bind_definition(
+    name: str,
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    assigned_names: set[str],
+) -> None:
+    aliases[name] = ""
+    if name not in assigned_names:
+        # Clear an inherited value, but retain the scope's assignment
+        # alternatives, including assignments after this definition.
+        values.pop(name, None)
 
 
 def _scan_scope(
     scope: ast.AST,
-    values: dict[str, set[str]],
+    values: dict[str, _Value],
     aliases: dict[str, str],
     initial_values: dict[str, set[str]] | None = None,
 ) -> Iterator[tuple[int, str]]:
     closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
+    assigned_names = {name for name, _, _ in _assignments(list(_nodes(scope)))}
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
     for node in _nodes(scope):
@@ -348,14 +382,14 @@ def _scan_scope(
                 # Defaults and decorators used the old binding; the body and
                 # subsequent calls see the newly defined callable. An empty
                 # alias also prevents a local `getattr` from naming the builtin.
-                aliases[node.name] = ""
+                _bind_definition(node.name, values, aliases, assigned_names)
             first_values = _comprehension_values(node, values)
             # Methods and comprehension bodies do not capture a class namespace;
             # their decorators/defaults/first iterable still execute in it.
             yield from _scan_scope(node, *closure, first_values)
             if isinstance(node, ast.ClassDef):
                 # A class name is bound only after its body has executed.
-                aliases[node.name] = ""
+                _bind_definition(node.name, values, aliases, assigned_names)
         elif isinstance(node, ast.Call):
             for target in sorted(_targets(node, aliases, values)):
                 if _private(target):
