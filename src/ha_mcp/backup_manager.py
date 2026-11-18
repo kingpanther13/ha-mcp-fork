@@ -1997,7 +1997,9 @@ def get_backup_manager(client: Any, settings: Any) -> BackupManager:
     return mgr
 
 
-def backup_manager_for_server(server: HomeAssistantSmartMCPServer | None) -> Any:
+def backup_manager_for_server(
+    server: HomeAssistantSmartMCPServer | None,
+) -> BackupManager | None:
     """Resolve the edit-backup manager shared by settings routes."""
     settings = get_global_settings()
     client = getattr(server, "client", None) or getattr(server, "_client", None)

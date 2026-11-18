@@ -372,8 +372,8 @@ def _capture_argument(node: ast.expr, values: dict[str, Value]) -> Argument:
 
 
 def _position_snapshot(value: Value) -> Value:
-    snapshot = replace(value, mapping_alternatives=(), target_mappings=())
-    # Keep historical sequence arguments without allowing recursive assignments
+    snapshot = replace(value, mapping_alternatives=())
+    # Keep historical sequence and target arguments without allowing assignments
     # to grow a snapshot graph indefinitely during fixed-point analysis.
     pending: list[tuple[Value | Argument, int]] = [(snapshot, 0)]
     visited = 0
@@ -382,12 +382,13 @@ def _position_snapshot(value: Value) -> Value:
         visited += 1
         for child in _snapshot_children(current):
             if depth >= 16 or visited + len(pending) >= 256:
+                errors = frozenset({"nested argument snapshot exceeds the size limit"})
                 return replace(
                     snapshot,
                     positions=(),
-                    position_errors=frozenset(
-                        {"nested positional argument snapshot exceeds the size limit"}
-                    ),
+                    target_mappings=(),
+                    position_errors=errors,
+                    target_errors=errors,
                 )
             pending.append((child, depth + 1))
     return snapshot
