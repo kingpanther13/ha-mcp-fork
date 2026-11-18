@@ -119,6 +119,16 @@
       "id": "parameter-callable-shadow-precedes-later-assignment",
       "source": "from builtins import range as builtin_range\ndef test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    range = builtin_range\n",
       "baseline_fails": true
+    },
+    {
+      "id": "awaited-body-uses-current-module-binding",
+      "source": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    NAME = '_helper'\n    await helper()\n    NAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "immediate-lambda-keeps-private-call-time-binding",
+      "source": "NAME = '_helper'\n(lambda: getattr(mod, NAME))()\nNAME = 'public'\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
@@ -250,6 +260,16 @@
     {
       "id": "actual-import-replaces-parameter-callable-shadow",
       "source": "def test_it(range):\n    from builtins import range\n    for item in range(0):\n        getattr(mod, '_data')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "async-creation-does-not-run-body-before-final-binding",
+      "source": "NAME = '_data'\nasync def helper():\n    getattr(mod, NAME)\npending = helper()\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "immediate-lambda-does-not-replay-after-later-private-store",
+      "source": "NAME = 'public'\n(lambda: getattr(mod, NAME))()\nNAME = '_data'\n",
       "baseline_fails": false
     }
   ],
