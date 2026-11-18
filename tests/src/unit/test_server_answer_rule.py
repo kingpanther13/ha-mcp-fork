@@ -447,7 +447,7 @@ runpy.run_path(script, run_name="__main__")
                 "eager-generator-captured-argument-still-runs-following-body": "NAME = 'public'\ndef gen():\n    yield ('x', 1)\n    getattr(mod, NAME)\npending = gen()\nnext(pending)\ndef clear():\n    global pending\n    pending = None\nNAME = '_data'\ndict(pending, ignored=clear())\nNAME = 'public'\n",
                 "definitely-infinite-generator-tuple-reject": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\ntuple(endless())\n",
                 "definitely-infinite-generator-for-reject": "def endless():\n    while True:\n        getattr(mod, '_helper')\n        yield None\nfor _ in endless():\n    pass\n",
-                "mixed-next-eager-raise-preserves-next-normal-branch": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, '_data')\n",
+                "mixed-next-eager-raise-preserves-next-normal-branch": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, '_data')\n",
             }.items()
         ),
     ],
@@ -773,7 +773,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "eager-generator-keeps-captured-argument-after-alias-cleared": "NAME = 'public'\ndef gen():\n    getattr(mod, NAME)\n    yield ('x', 1)\npending = gen()\nnext(pending)\ndef clear():\n    global pending\n    pending = None\nNAME = '_data'\ndict(pending, ignored=clear())\nNAME = 'public'\n",
                 "definitely-infinite-generator-tuple-allow": "def endless():\n    while True:\n        yield None\ntuple(endless())\ngetattr(mod, '_helper')\n",
                 "definitely-infinite-generator-for-allow": "def endless():\n    while True:\n        yield None\nfor _ in endless():\n    pass\ngetattr(mod, '_helper')\n",
-                "mixed-next-eager-raise-public-control": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, 'public')\n",
+                "mixed-next-eager-raise-public-control": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, 'public')\n",
             }.items()
         ),
     ],

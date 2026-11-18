@@ -710,9 +710,8 @@ def finish_generators(
 ) -> bool:
     cursors = flow_rules.module_bindings(*closure)[1]
     if not any(
-        "done" in cursors.get(
-            f"@resume:{name}", env[1].get(f"@resume:{name}", frozenset())
-        )
+        "done"
+        in cursors.get(f"@resume:{name}", env[1].get(f"@resume:{name}", frozenset()))
         for name in names
     ):
         return False
