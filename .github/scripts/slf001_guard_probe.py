@@ -1,4 +1,4 @@
-"""Prove the full guard suite before and after the assignment-order fixes."""
+"""Prove the full guard suite before and after the ordered class namespace fixes."""
 
 import ast
 from collections import Counter
@@ -17,8 +17,8 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 82,
-    ALLOW_NAME: 63,
+    REJECT_NAME: 105,
+    ALLOW_NAME: 87,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -27,15 +27,23 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 10, ALLOW_NAME: 7}
-# In the 18 new rejection cases: five RHS aliases, two lambda defaults,
-# one chained target expression, and two nested class-header expressions fail.
-# In the 16 allowed cases: two unpackings, one builtin replacement, two ordered
-# unpacked targets, and two nested class-header expressions fail on the baseline.
-NEW_CASE_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 16}
-FAILING_ADDED_INDICES = {
-    REJECT_NAME: (0, 1, 2, 3, 4, 8, 9, 12, 16, 17),
-    ALLOW_NAME: (7, 8, 9, 12, 13, 14, 15),
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 16, ALLOW_NAME: 8}
+NEW_CASE_COUNTS = {REJECT_NAME: 23, ALLOW_NAME: 24}
+FAILING_CASE_IDS = {
+    REJECT_NAME: {
+        "class-inherited-rhs", "class-annotated-rhs", "class-read-before-rebind",
+        "class-copy-before-rebind", "class-optional-override", "class-mapping-string-join",
+        "class-optional-alias", "class-alias-join", "class-loop-zero-iterations",
+        "class-handler-inherited-value", "class-match-no-case", "class-mapping-key-join",
+        "class-annotation-only", "class-exception-name-fallback",
+        "class-deleted-value-fallback", "class-deleted-alias-fallback",
+    },
+    ALLOW_NAME: {
+        "class-definite-public-overwrite", "class-independent-else", "class-match-capture",
+        "class-exception-name-public-fallback", "class-deleted-public-fallback",
+        "class-deleted-public-alias", "class-independent-handlers",
+        "class-loop-definite-public-prefix",
+    },
 }
 EXCEPTION_PLUGIN = '''import json
 import os
@@ -67,12 +75,23 @@ def source(revision: str, path: str) -> str:
     ).stdout
 
 
-def parameter_cases(text: str, name: str) -> list[str]:
+def parameter_cases(text: str, name: str) -> dict[str, str]:
     [node] = [
         node for node in ast.parse(text).body
         if isinstance(node, ast.FunctionDef) and node.name == name
     ]
-    return ast.literal_eval(node.decorator_list[0].args[1])
+    cases = {}
+    for item in node.decorator_list[0].args[1].elts:
+        if isinstance(item, ast.Call):
+            assert isinstance(item.func, ast.Attribute) and item.func.attr == "param"
+            value = ast.literal_eval(item.args[0])
+            [case_id] = [ast.literal_eval(kw.value) for kw in item.keywords if kw.arg == "id"]
+        else:
+            value = ast.literal_eval(item)
+            case_id = value.encode("unicode_escape").decode("ascii")
+        assert case_id not in cases
+        cases[case_id] = value
+    return cases
 
 
 def expected_failures(baseline: str, candidate: str) -> set[str]:
@@ -82,14 +101,12 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
     for group, count in NEW_CASE_COUNTS.items():
         old = parameter_cases(old_source, group)
         new = parameter_cases(new_source, group)
-        assert set(old) <= set(new), group
-        added = [value for value in new if value not in old]
+        assert old.items() <= new.items(), group
+        added = set(new) - set(old)
         assert len(added) == count, (group, added)
-        names.update(
-            group + "[" + added[index].encode("unicode_escape").decode("ascii") + "]"
-            for index in FAILING_ADDED_INDICES[group]
-        )
-    assert len(names) == 17
+        assert FAILING_CASE_IDS[group] <= added
+        names.update(group + "[" + case_id + "]" for case_id in FAILING_CASE_IDS[group])
+    assert len(names) == 24
     return names
 
 
@@ -135,11 +152,11 @@ def run_variant(root: Path, label: str) -> dict:
 
 def validate(results: dict, expected: set[str]) -> None:
     for label, data in results.items():
-        assert data["tests"] == 207, (label, data["tests"])
+        assert data["tests"] == 254, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 207
+        assert len(set(data["case_names"])) == 254
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -204,7 +221,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 207 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 254 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

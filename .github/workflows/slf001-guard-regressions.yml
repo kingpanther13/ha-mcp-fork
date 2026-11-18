@@ -11,7 +11,7 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: b754935bfeb3053803f29478097b74fec5da475c
+        default: abbdff7aebc5d8ea2566b90cca709bbc18dd2817
 
 permissions:
   contents: read
