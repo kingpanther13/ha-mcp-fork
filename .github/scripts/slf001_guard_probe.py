@@ -19,7 +19,7 @@ BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
 PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
 OLD_GUARD_TEST = "tests/src/unit/test_private_test_access.py"
 GUARD_TEST = "tests/src/unit/test_server_answer_rule.py"
-BASELINE_TESTS = (OLD_GUARD_TEST, GUARD_TEST)
+BASELINE_TESTS = (GUARD_TEST,)
 GUARD_TESTS = (GUARD_TEST,)
 LOCATION_NAME = "test_multiline_private_access_reports_its_call_line"
 ERROR_NAME = "test_oversized_targets_still_fail_after_lazy_binding"
@@ -28,10 +28,11 @@ REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
-BASELINE = "9067b66318acdf6c7a82537ab851ae9c48697bfa"
+BASELINE = "df7a1399c2e083d0225375620452d1e0fde6fb14"
 BASELINE_GROUP_COUNTS = {
-    REJECT_NAME: 221,
-    ALLOW_NAME: 202,
+    LOCATION_NAME: 1,
+    REJECT_NAME: 247,
+    ALLOW_NAME: 222,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -48,11 +49,11 @@ BASELINE_GROUP_COUNTS = {
     "test_no_test_types_in_a_server_answer": 1,
 }
 STRONG_REJECT_SOURCE = 'def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):\n    result = _run(tmp_path, source)\n    assert result.returncode == 1, result.stderr\n    assert re.search(\n        r"^tests/src/unit/test_sample\\.py:[1-9]\\d*: private string target ",\n        result.stdout,\n        re.MULTILINE,\n    ), result.stdout'
-LOCATION_TEST_SOURCE = 'def test_multiline_private_access_reports_its_call_line(tmp_path):\n    result = _run(tmp_path, "name = \'_helper\'\\n\\ngetattr(mod, name)\\n")\n    assert result.returncode == 1, result.stdout + result.stderr\n    assert "tests/src/unit/test_sample.py:3: private string target \'_helper\'" in result.stdout'
+LOCATION_TEST_SOURCE = 'def test_multiline_private_access_reports_its_call_line(tmp_path):\n    result = _run(tmp_path, "name = \'_helper\'\\n\\ngetattr(\\n    mod,\\n    name,\\n)\\n")\n    assert result.returncode == 1, result.stdout + result.stderr\n    assert (\n        "tests/src/unit/test_sample.py:3: private string target \'_helper\'"\n        in result.stdout\n    )'
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
 assert set(CASE_MANIFEST) == set(CASE_GROUPS.values())
-assert sum(BASELINE_GROUP_COUNTS.values()) == 526
+assert sum(BASELINE_GROUP_COUNTS.values()) == 573
 NEW_CASE_COUNTS = {group: len(CASE_MANIFEST[section]) for group, section in CASE_GROUPS.items()}
 GROUP_COUNTS = {
     group: count + NEW_CASE_COUNTS.get(group, 0)
@@ -160,6 +161,8 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
     # approved diagnostic assertion replacement may differ from the old body.
     for name, node in old_nodes.items():
         new_node = new_nodes[name]
+        if name == LOCATION_NAME:
+            continue  # The exact strengthened multiline body is checked above.
         if name not in CASE_GROUPS:
             assert ast.dump(node) == ast.dump(new_node), (name, "changed prior definition")
             continue
@@ -275,6 +278,7 @@ def diagnostic_mutations(root: Path, candidate_source: str) -> dict:
     mutations = {
         "diagnostic-no-line": (": private string target ", "test_sample.py: private string target"),
         "diagnostic-wrong-line": (":{line + 1}: private string target ", "test_sample.py:4: private string target"),
+        "diagnostic-argument-line": (":{line + 2}: private string target ", "test_sample.py:5: private string target"),
     }
     for label, (replacement, actual_diagnostic) in mutations.items():
         try:
@@ -361,7 +365,7 @@ def main() -> None:
     baseline_guards = {path: existing_source(baseline, path) for path in GUARD_PATHS}
     assert all(candidate_guards[path] is not None and baseline_guards[path] is not None
                for path in (GUARD_PATH, GUARD_SUPPORT))
-    assert baseline_guards[GUARD_FLOW] is None
+    assert baseline_guards[GUARD_FLOW] is not None
     assert candidate_guards[GUARD_FLOW] is not None or baseline_only
     assert candidate_guards != baseline_guards or baseline_only
     expected = expected_failures(baseline, candidate)

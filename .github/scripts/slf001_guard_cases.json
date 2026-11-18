@@ -1,240 +1,156 @@
 {
   "reject": [
     {
-      "id": "generator-next-uses-iteration-time-private-global",
-      "source": "NAME = 'public'\ndef values():\n    yield getattr(mod, NAME)\npending = values()\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "id": "raising-call-evaluates-private-argument-first",
+      "source": "def stop(value):\n    raise RuntimeError\nstop(getattr(mod, '_helper'))\n",
       "baseline_fails": true
     },
     {
-      "id": "known-helper-arguments-distinguish-call-cache-entries",
-      "source": "def lookup(name):\n    return getattr(mod, name)\nlookup('public')\nlookup('_helper')\n",
+      "id": "false-and-skips-interruption-before-private-access",
+      "source": "def stop():\n    raise RuntimeError\nFalse and stop()\ngetattr(mod, '_helper')\n",
       "baseline_fails": true
     },
     {
-      "id": "known-helper-keyword-argument-is-bound",
-      "source": "def lookup(*, name):\n    return getattr(mod, name)\nlookup(name='_helper')\n",
+      "id": "true-or-skips-interruption-before-private-access",
+      "source": "def stop():\n    raise RuntimeError\nTrue or stop()\ngetattr(mod, '_helper')\n",
       "baseline_fails": true
     },
     {
-      "id": "known-helper-default-argument-is-bound",
-      "source": "def lookup(name='_helper'):\n    return getattr(mod, name)\nlookup()\n",
+      "id": "unknown-and-keeps-normal-continuation",
+      "source": "def stop():\n    raise RuntimeError\nflag and stop()\ngetattr(mod, '_helper')\n",
       "baseline_fails": true
     },
     {
-      "id": "known-call-publishes-normal-global-write",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\nswitch()\ngetattr(mod, NAME)\n",
+      "id": "later-tuple-operand-sees-completed-global-write",
+      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(switch(), getattr(mod, NAME))\nNAME = 'public'\n",
       "baseline_fails": true
     },
     {
-      "id": "known-call-publishes-return-global-write",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n    return None\nswitch()\ngetattr(mod, NAME)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-call-publishes-global-write-on-exception",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n    raise ValueError()\ntry:\n    switch()\nexcept ValueError:\n    getattr(mod, NAME)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "named-coroutine-await-uses-current-private-global",
-      "source": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    pending = helper()\n    NAME = '_helper'\n    await pending\n    NAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "repeated-allocation-does-not-share-instance-replacement",
-      "source": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ncurrent = None\nfor item in (0, 1):\n    previous = current\n    current = Example()\nprevious.run = callback\nNAME = '_helper'\ncurrent.run()\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "nested-yield-does-not-defer-enclosing-function",
-      "source": "NAME = 'public'\ndef outer():\n    def values():\n        yield 1\n    getattr(mod, NAME)\nNAME = '_helper'\nouter()\nNAME = 'public'\n",
+      "id": "helper-argument-captured-before-later-argument-write",
+      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\n",
       "baseline_fails": false
     },
     {
-      "id": "helper-default-captures-definition-time-private-value",
-      "source": "NAME = '_helper'\ndef lookup(name=NAME):\n    getattr(mod, name)\nNAME = 'public'\nlookup()\n",
+      "id": "callee-alias-captured-before-argument-write",
+      "source": "read = getattr\ndef switch():\n    global read\n    read = public_function\nread(mod, '_helper', switch())\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "await-unknown-alternative-retains-normal-continuation",
+      "source": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop() if flag else client.read()\n    await pending\n    getattr(mod, '_helper')\n",
       "baseline_fails": true
     },
     {
-      "id": "known-callable-argument-preserves-reflection-alias",
-      "source": "def lookup(read):\n    read(mod, '_helper')\nlookup(getattr)\n",
+      "id": "generator-access-before-first-yield-is-checked",
+      "source": "NAME = '_helper'\ndef values():\n    getattr(mod, NAME)\n    yield None\npending = values()\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-resume-observes-current-private-global",
+      "source": "NAME = 'public'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "known-call-replays-nonlocal-write",
+      "source": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n    switch()\n    getattr(mod, name)\n",
       "baseline_fails": true
     },
     {
-      "id": "keyword-callable-argument-keeps-captured-alias",
-      "source": "read = getattr\noptions = {'read': read}\nread = callback\ndef lookup(read):\n    read(mod, '_helper')\nlookup(**options)\n",
+      "id": "known-call-replays-nonlocal-write-on-raise",
+      "source": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n        raise ValueError()\n    try:\n        switch()\n    except ValueError:\n        getattr(mod, name)\n",
       "baseline_fails": true
     },
     {
-      "id": "named-coroutine-keeps-creation-time-argument-value",
-      "source": "async def lookup(name):\n    getattr(mod, name)\nasync def test_it():\n    name = '_helper'\n    pending = lookup(name)\n    name = 'public'\n    await pending\n",
+      "id": "stored-keyword-tuple-keeps-private-target-shape",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nopts = {'args': args}\nlookup(**opts)\n",
       "baseline_fails": true
     },
     {
-      "id": "cached-known-call-replays-global-write",
-      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\nswitch()\nNAME = 'public'\nswitch()\ngetattr(mod, NAME)\n",
+      "id": "stored-keyword-list-keeps-private-shape-after-rebind",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = [mod, '_helper']\nopts = {'args': args}\nargs = [mod, 'public']\nlookup(**opts)\n",
       "baseline_fails": true
     },
     {
-      "id": "known-star-tuple-keeps-following-attribute-slot",
-      "source": "args = (obj,)\ngetattr(*args, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-star-list-retains-second-element",
-      "source": "args = [obj, '_helper']\ngetattr(*args, 'public-default')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-star-alias-keeps-assignment-time-name",
-      "source": "name = '_helper'\nargs = (obj, name)\nname = 'public'\nforward = args\ngetattr(*forward)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-star-conditional-length-keeps-each-slot",
-      "source": "args = (obj,) if flag else (obj, 'public')\ngetattr(*args, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-star-nested-prefix-retains-target",
-      "source": "prefix = (obj,)\nargs = (*prefix, '_helper')\ngetattr(*args)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-expanded-private-target-survives-large-data-key",
-      "source": "from unittest.mock import patch\npatch.dict(**{'in_dict': 'pkg._helper', f\"{'x':>5000}\": 1})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-optional-overlay-keeps-private-target",
-      "source": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._helper', **({'in_dict': {}} if flag else {f\"{'x':>5000}\": 1})}\npatch.dict(**kwargs)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-aliased-conditional-key-keeps-private-target",
-      "source": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: 'pkg._helper'})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-large-string-precision-retains-short-private-target-key",
-      "source": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "helper-bound-method-argument-resolves-live-method",
-      "source": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
-      "baseline_fails": true,
-      "current_fails": true
-    },
-    {
-      "id": "helper-tuple-argument-preserves-ordered-shape",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nlookup(args)\n",
-      "baseline_fails": true,
-      "current_fails": true
+      "id": "bounded-recursive-sequence-still-checks-following-target",
+      "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
     {
-      "id": "generator-creation-does-not-use-creation-time-global",
-      "source": "NAME = '_data'\ndef values():\n    yield getattr(mod, NAME)\npending = values()\nNAME = 'public'\nnext(pending)\n",
+      "id": "raising-call-skips-following-private-expression",
+      "source": "def stop(value):\n    raise RuntimeError\nstop(None)\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "true-and-preserves-executed-interruption",
+      "source": "def stop():\n    raise RuntimeError\nTrue and stop()\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "false-or-preserves-executed-interruption",
+      "source": "def stop():\n    raise RuntimeError\nFalse or stop()\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "short-circuited-private-operand-is-not-evaluated",
+      "source": "False and getattr(mod, '_helper')\n",
       "baseline_fails": true
     },
     {
-      "id": "known-helper-public-argument-stays-public",
-      "source": "def lookup(name):\n    return getattr(mod, name)\nlookup('public')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "known-call-without-global-writes-preserves-caller",
-      "source": "NAME = 'public'\ndef helper():\n    NAME = '_data'\n    return NAME\nhelper()\ngetattr(mod, NAME)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "known-call-replaces-old-private-global",
-      "source": "NAME = '_data'\ndef switch():\n    global NAME\n    NAME = 'public'\nswitch()\ngetattr(mod, NAME)\n",
+      "id": "later-tuple-operand-sees-completed-public-write",
+      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(switch(), getattr(mod, NAME))\n",
       "baseline_fails": true
     },
     {
-      "id": "named-coroutine-creation-alone-does-not-execute",
-      "source": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    pending = helper()\n    NAME = '_data'\n    NAME = 'public'\n",
+      "id": "helper-public-argument-keeps-value-before-later-write",
+      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "single-loop-allocation-keeps-definite-replacement",
-      "source": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nfor item in (0,):\n    current = Example()\ncurrent.run = callback\nNAME = '_data'\ncurrent.run()\nNAME = 'public'\n",
+      "id": "public-callee-captured-before-argument-replacement",
+      "source": "read = public_function\ndef switch():\n    global read\n    read = getattr\nread(mod, '_helper', switch())\n",
       "baseline_fails": false
     },
     {
-      "id": "helper-default-keeps-definition-time-public-value",
-      "source": "NAME = 'public'\ndef lookup(name=NAME):\n    getattr(mod, name)\nNAME = '_data'\nlookup()\n",
+      "id": "definite-named-await-still-has-no-normal-continuation",
+      "source": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop()\n    await pending\n    getattr(mod, '_helper')\n",
       "baseline_fails": false
     },
     {
-      "id": "known-callable-argument-can-be-an-ordinary-callback",
-      "source": "def callback(*args):\n    pass\ndef lookup(read):\n    read(mod, '_data')\nlookup(callback)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "named-coroutine-keeps-public-argument-before-rebind",
-      "source": "async def lookup(name):\n    getattr(mod, name)\nasync def test_it():\n    name = 'public'\n    pending = lookup(name)\n    name = '_data'\n    await pending\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "definitely-raising-call-has-no-normal-continuation",
-      "source": "def stop():\n    raise ValueError()\ntry:\n    stop()\n    getattr(mod, '_data')\nexcept ValueError:\n    pass\n",
+      "id": "generator-first-next-stops-before-private-later-lookup",
+      "source": "NAME = '_helper'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
       "baseline_fails": true
     },
     {
-      "id": "known-star-tuple-keeps-private-default-out-of-target",
-      "source": "args = (obj, 'public')\ngetattr(*args, '_default')\n",
+      "id": "generator-conditional-yield-retains-continuation",
+      "source": "NAME = '_helper'\ndef values():\n    if True:\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "ordinary-callee-local-does-not-write-enclosing-name",
+      "source": "def test_it():\n    name = 'public'\n    def switch():\n        name = '_data'\n    switch()\n    getattr(mod, name)\n",
       "baseline_fails": false
     },
     {
-      "id": "unknown-star-still-stops-positional-slots",
-      "source": "args = unknown\ngetattr(*args, '_data')\n",
+      "id": "nonlocal-public-write-replaces-old-private-name",
+      "source": "def test_it():\n    name = '_data'\n    def switch():\n        nonlocal name\n        name = 'public'\n    switch()\n    getattr(mod, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "stored-keyword-list-keeps-public-target-shape",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = [mod, 'public']\nopts = {'args': args}\nlookup(**opts)\n",
       "baseline_fails": false
     },
     {
-      "id": "known-star-tuple-snapshots-public-name",
-      "source": "name = 'public'\nargs = (obj, name)\nname = '_data'\ngetattr(*args)\n",
+      "id": "stored-keyword-tuple-keeps-public-shape-after-rebind",
+      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nopts = {'args': args}\nargs = (mod, '_data')\nlookup(**opts)\n",
       "baseline_fails": false
     },
     {
-      "id": "patch-dict-expanded-target-ignores-large-replacement-key",
-      "source": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'x':>5000}\": 1})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-aliased-target-ignores-large-replacement-key",
-      "source": "from unittest.mock import patch\nkwargs = {'in_dict': {}, f\"{'x':>5000}\": 1}\npatch.dict(**kwargs)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-definite-overlay-replaces-private-target",
-      "source": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._data', f\"{'x':>5000}\": 1, **{'in_dict': {}}}\npatch.dict(**kwargs)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-conditional-key-keeps-public-target",
-      "source": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: {}})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dict-large-width-key-keeps-private-looking-replacement-data",
-      "source": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "helper-bound-method-argument-keeps-public-target",
-      "source": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
-      "baseline_fails": false,
-      "current_fails": false
-    },
-    {
-      "id": "helper-tuple-argument-keeps-public-target",
-      "source": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nlookup(args)\n",
-      "baseline_fails": false,
-      "current_fails": false
+      "id": "unused-recursive-sequence-snapshot-stays-bounded",
+      "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, 'public')\n",
+      "baseline_fails": false
     }
   ],
   "error": []
