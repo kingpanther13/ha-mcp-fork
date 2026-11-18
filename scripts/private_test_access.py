@@ -16,51 +16,13 @@ from collections.abc import Iterator
 from itertools import chain
 from pathlib import Path
 
-from private_test_bindings import (
-    Aliases as _Aliases,
-)
-from private_test_bindings import (
-    ScopeValues as _ScopeValues,
-)
-from private_test_bindings import (
-    Value as _Value,
-)
-from private_test_bindings import (
-    assignments as _assignments,
-)
-from private_test_bindings import (
-    bound_names as _bound_names,
-)
-from private_test_bindings import (
-    class_bindings as _class_bindings,
-)
-from private_test_bindings import (
-    dotted as _dotted,
-)
-from private_test_bindings import (
-    extend_values as _extend_values,
-)
-from private_test_bindings import (
-    import_aliases as _import_aliases,
-)
-from private_test_bindings import (
-    mapping_keys as _mapping_keys,
-)
-from private_test_bindings import (
-    module_bindings as _module_bindings,
-)
-from private_test_bindings import (
-    prepared_assignment as _prepared_assignment,
-)
-from private_test_bindings import (
-    strings as _strings,
-)
-from private_test_bindings import (
-    union_aliases as _union_aliases,
-)
-from private_test_bindings import (
-    union_values as _union_values,
-)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scripts import private_test_bindings as binding_rules
+else:
+    import private_test_bindings as binding_rules
+
 
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
@@ -86,17 +48,17 @@ _SCOPES = (
 )
 
 
-class _ClassValues(_ScopeValues):
+class _ClassValues(binding_rules.ScopeValues):
     """Class namespace values, updated in statement order rather than prebound."""
 
-    def __init__(self, values: dict[str, _Value]) -> None:
+    def __init__(self, values: dict[str, binding_rules.Value]) -> None:
         super().__init__(values)
-        self.observed_values = _ScopeValues(values)
-        self.observed_aliases: _Aliases = {}
+        self.observed_values = binding_rules.ScopeValues(values)
+        self.observed_aliases: binding_rules.Aliases = {}
         self.has_alias_snapshot = False
 
-    def observe(self, aliases: _Aliases) -> None:
-        _union_values(self.observed_values, self)
+    def observe(self, aliases: binding_rules.Aliases) -> None:
+        binding_rules.union_values(self.observed_values, self)
         if not self.has_alias_snapshot:
             self.observed_aliases.update(aliases)
             self.has_alias_snapshot = True
@@ -181,19 +143,19 @@ def _headers(scope: ast.AST) -> Iterator[ast.expr]:
 
 def _bindings(
     scope: ast.AST,
-    parent_values: dict[str, _Value],
-    parent_aliases: _Aliases,
+    parent_values: dict[str, binding_rules.Value],
+    parent_aliases: binding_rules.Aliases,
     initial_values: dict[str, set[str]] | None = None,
-) -> tuple[dict[str, _Value], _Aliases]:
+) -> tuple[dict[str, binding_rules.Value], binding_rules.Aliases]:
     nodes = list(_nodes(scope))
     if isinstance(scope, ast.ClassDef):
-        values, aliases = _class_bindings(parent_values, parent_aliases, nodes)
+        values, aliases = binding_rules.class_bindings(parent_values, parent_aliases, nodes)
         return _ClassValues(values), aliases
-    local_names = _bound_names(nodes)
-    values = _ScopeValues(parent_values)
+    local_names = binding_rules.bound_names(nodes)
+    values = binding_rules.ScopeValues(parent_values)
     aliases = dict(parent_aliases)
-    imported: _Aliases = {}
-    _import_aliases(nodes, imported)
+    imported: binding_rules.Aliases = {}
+    binding_rules.import_aliases(nodes, imported)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         parameters = [
             *scope.args.posonlyargs,
@@ -210,10 +172,10 @@ def _bindings(
         aliases.pop(name, None)
     aliases.update(imported)
     values.update(
-        (name, _Value(frozenset(items)))
+        (name, binding_rules.Value(frozenset(items)))
         for name, items in (initial_values or {}).items()
     )
-    _extend_values(list(_assignments(nodes)), values, aliases)
+    binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
     return values, aliases
 
 
@@ -227,36 +189,36 @@ def _own_object(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in {"self", "cls"}
 
 
-def _targets(call: ast.Call, aliases: _Aliases, values: dict[str, _Value]) -> set[str]:
+def _targets(call: ast.Call, aliases: binding_rules.Aliases, values: dict[str, binding_rules.Value]) -> set[str]:
     return set().union(
-        *(_named_targets(call, name, values) for name in _dotted(call.func, aliases))
+        *(_named_targets(call, name, values) for name in binding_rules.dotted(call.func, aliases))
     )
 
 
-def _named_targets(call: ast.Call, name: str, values: dict[str, _Value]) -> set[str]:
+def _named_targets(call: ast.Call, name: str, values: dict[str, binding_rules.Value]) -> set[str]:
     operation = name.rsplit(".", 1)[-1]
     target = _argument(call, 0, "target")
     if operation == "patch":
-        return _strings(target, values)
+        return binding_rules.strings(target, values)
     if name.endswith("patch.dict"):
-        return _strings(_argument(call, 0, "in_dict"), values)
+        return binding_rules.strings(_argument(call, 0, "in_dict"), values)
     if name.endswith("patch.multiple"):
         keys = {item.arg for item in call.keywords if item.arg is not None}
         keys.update(
             set().union(
                 *(
-                    _mapping_keys(item.value, values)
+                    binding_rules.mapping_keys(item.value, values)
                     for item in call.keywords
                     if item.arg is None
                 )
             )
         )
-        return _strings(target, values) | (set() if _own_object(target) else keys)
+        return binding_rules.strings(target, values) | (set() if _own_object(target) else keys)
     if name.endswith("patch.object"):
-        return _strings(target, values) | (
+        return binding_rules.strings(target, values) | (
             set()
             if _own_object(target)
-            else _strings(_argument(call, 1, "attribute"), values)
+            else binding_rules.strings(_argument(call, 1, "attribute"), values)
         )
     if operation in {"getattr", "hasattr", "setattr", "delattr"}:
         if _own_object(target):
@@ -267,10 +229,10 @@ def _named_targets(call: ast.Call, name: str, values: dict[str, _Value]) -> set[
             operation,
             f"builtins.{operation}",
         }:
-            dotted = _strings(target, values)
+            dotted = binding_rules.strings(target, values)
             if dotted:
                 return dotted
-        return _strings(_argument(call, 1, "name"), values)
+        return binding_rules.strings(_argument(call, 1, "name"), values)
     return set()
 
 
@@ -288,22 +250,22 @@ def _private(target: str) -> bool:
 
 
 def _comprehension_values(
-    scope: ast.AST, values: dict[str, _Value]
+    scope: ast.AST, values: dict[str, binding_rules.Value]
 ) -> dict[str, set[str]]:
     if isinstance(scope, _COMPREHENSIONS):
         first = scope.generators[0]
         if isinstance(first.target, ast.Name):
             return {
-                first.target.id: _strings(first.iter, values)
-                | _mapping_keys(first.iter, values)
+                first.target.id: binding_rules.strings(first.iter, values)
+                | binding_rules.mapping_keys(first.iter, values)
             }
     return {}
 
 
 def _bind_definition(
     name: str,
-    values: dict[str, _Value],
-    aliases: _Aliases,
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
     assigned_names: set[str],
 ) -> None:
     aliases[name] = frozenset({""})
@@ -316,10 +278,10 @@ def _bind_definition(
 def _scan_assignment_target(
     target: ast.expr,
     resolved: frozenset[str] | None,
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
-    assigned_value: _Value = _Value(),
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    assigned_value: binding_rules.Value = binding_rules.Value(),
 ) -> Iterator[tuple[int, str]]:
     if isinstance(target, ast.Name):
         if resolved is not None:
@@ -342,9 +304,9 @@ def _scan_assignment_target(
 
 def _scan_assignment(
     node: ast.Assign | ast.AnnAssign,
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     value = node.value
     if isinstance(value, ast.Lambda):
@@ -355,7 +317,7 @@ def _scan_assignment(
     # Resolve a chained assignment's RHS once, then evaluate and bind targets
     # left to right: a later target expression can see an earlier new binding.
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    for target, resolved, assigned_value in _prepared_assignment(
+    for target, resolved, assigned_value in binding_rules.prepared_assignment(
         targets, value, values, aliases
     ):
         yield from _scan_assignment_target(
@@ -371,9 +333,9 @@ def _scan_assignment(
 
 def _scan_nested_scope(
     node: ast.AST,
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     for header in _headers(node):
@@ -391,8 +353,8 @@ def _scan_nested_scope(
 def _scan_class_block(
     body: list[ast.stmt],
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     nodes = _nodes(
         ast.Module(body=body, type_ignores=[]),
@@ -404,18 +366,18 @@ def _scan_class_block(
 
 def _join_class_paths(
     values: _ClassValues,
-    aliases: _Aliases,
-    paths: list[tuple[_ClassValues, _Aliases]],
+    aliases: binding_rules.Aliases,
+    paths: list[tuple[_ClassValues, binding_rules.Aliases]],
 ) -> None:
-    joined: dict[str, _Value] = {}
+    joined: dict[str, binding_rules.Value] = {}
     names = set().union(*(path_aliases.keys() for _, path_aliases in paths))
-    joined_aliases: _Aliases = {}
+    joined_aliases: binding_rules.Aliases = {}
     for path_values, path_aliases in paths:
-        _union_values(joined, path_values)
-        _union_values(values.observed_values, path_values.observed_values)
-        _union_aliases(values.observed_aliases, path_values.observed_aliases)
+        binding_rules.union_values(joined, path_values)
+        binding_rules.union_values(values.observed_values, path_values.observed_values)
+        binding_rules.union_aliases(values.observed_aliases, path_values.observed_aliases)
         # An unbound alias still resolves by its original name, e.g. getattr.
-        _union_aliases(
+        binding_rules.union_aliases(
             joined_aliases,
             {name: path_aliases.get(name, frozenset({name})) for name in names},
         )
@@ -428,10 +390,10 @@ def _join_class_paths(
 def _scan_class_choices(
     bodies: list[list[ast.stmt]],
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
-    paths: list[tuple[_ClassValues, _Aliases]] = []
+    paths: list[tuple[_ClassValues, binding_rules.Aliases]] = []
     for body in bodies:
         branch_values, branch_aliases = _ClassValues(values), dict(aliases)
         yield from _scan_class_block(body, branch_values, branch_aliases, closure)
@@ -461,9 +423,9 @@ def _loop_literal_items(node: ast.expr) -> list[ast.expr] | None:
 def _scan_loop_iteration(
     node: ast.For | ast.AsyncFor | ast.While,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
-    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    bindings: list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]],
 ) -> Iterator[tuple[int, str]]:
     if isinstance(node, ast.While):
         yield from _scan_expression(node.test, values, aliases, closure)
@@ -487,10 +449,10 @@ def _loop_may_skip(node: ast.For | ast.AsyncFor | ast.While) -> bool:
 def _scan_repeated_loop(
     node: ast.For | ast.AsyncFor | ast.While,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
-    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]],
-    break_paths: list[tuple[_ClassValues, _Aliases]],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    bindings: list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]],
+    break_paths: list[tuple[_ClassValues, binding_rules.Aliases]],
 ) -> Iterator[tuple[int, str]]:
     current, current_aliases = _ClassValues(values), dict(aliases)
     exits = [(current, current_aliases)] if _loop_may_skip(node) else []
@@ -526,18 +488,18 @@ def _scan_repeated_loop(
 def _scan_class_loop(
     node: ast.For | ast.AsyncFor | ast.While,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     expression = node.test if isinstance(node, ast.While) else node.iter
     yield from _scan_expression(expression, values, aliases, closure)
     items = None if isinstance(node, ast.While) else _loop_literal_items(node.iter)
     current, current_aliases = _ClassValues(values), dict(aliases)
-    break_paths: list[tuple[_ClassValues, _Aliases]] = []
+    break_paths: list[tuple[_ClassValues, binding_rules.Aliases]] = []
     has_break = _loop_has_break(node.body)
-    bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]] = []
+    bindings: list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]] = []
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        bindings = _prepared_assignment(
+        bindings = binding_rules.prepared_assignment(
             [node.target], ast.Constant(value=None), values, aliases
         )
         if isinstance(node.target, ast.Name):
@@ -545,10 +507,10 @@ def _scan_class_loop(
                 (
                     node.target,
                     frozenset({""}),
-                    _Value(
+                    binding_rules.Value(
                         frozenset(
-                            _strings(node.iter, values)
-                            | _mapping_keys(node.iter, values)
+                            binding_rules.strings(node.iter, values)
+                            | binding_rules.mapping_keys(node.iter, values)
                         )
                     ),
                 )
@@ -556,7 +518,7 @@ def _scan_class_loop(
     if items is not None and isinstance(node, (ast.For, ast.AsyncFor)):
         # Python evaluates the entire iterable before the first iteration.
         iterations = [
-            _prepared_assignment([node.target], item, values, aliases) for item in items
+            binding_rules.prepared_assignment([node.target], item, values, aliases) for item in items
         ]
         for bindings in iterations:
             iteration = _ClassValues(current)
@@ -584,8 +546,8 @@ def _scan_class_loop(
 def _restore_class_fallback(
     name: str,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> None:
     values.pop(name, None)
     aliases.pop(name, None)
@@ -595,7 +557,7 @@ def _restore_class_fallback(
         return
     if name in values.class_globals:
         return
-    outer_values, outer_aliases = _module_bindings(*closure)
+    outer_values, outer_aliases = binding_rules.module_bindings(*closure)
     if name in outer_values:
         values[name] = outer_values[name]
     if name in outer_aliases:
@@ -605,21 +567,21 @@ def _restore_class_fallback(
 def _scan_class_try(
     node: ast.Try | ast.TryStar,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     body_values, body_aliases = _ClassValues(values), dict(aliases)
     yield from _scan_class_block(node.body, body_values, body_aliases, closure)
     # An exception can arise between assignments, not only at the body's end.
-    interrupted_values = _ScopeValues(body_values.observed_values)
+    interrupted_values = binding_rules.ScopeValues(body_values.observed_values)
     interrupted_aliases = dict(body_values.observed_aliases)
-    handler_start_values = _ScopeValues(interrupted_values)
+    handler_start_values = binding_rules.ScopeValues(interrupted_values)
     handler_start_aliases = dict(interrupted_aliases)
-    paths: list[tuple[_ClassValues, _Aliases]] = []
+    paths: list[tuple[_ClassValues, binding_rules.Aliases]] = []
     if not node.body or not isinstance(node.body[-1], ast.Raise):
         yield from _scan_class_block(node.orelse, body_values, body_aliases, closure)
-        _union_values(interrupted_values, body_values.observed_values)
-        _union_aliases(interrupted_aliases, body_values.observed_aliases)
+        binding_rules.union_values(interrupted_values, body_values.observed_values)
+        binding_rules.union_aliases(interrupted_aliases, body_values.observed_aliases)
         paths.append((body_values, body_aliases))
     for handler in node.handlers:
         caught_values = _ClassValues(handler_start_values)
@@ -629,7 +591,7 @@ def _scan_class_try(
                 handler.type, caught_values, caught_aliases, closure
             )
         if handler.name is not None:
-            caught_values[handler.name] = _Value()
+            caught_values[handler.name] = binding_rules.Value()
             caught_aliases[handler.name] = frozenset({""})
         yield from _scan_class_block(
             handler.body, caught_values, caught_aliases, closure
@@ -645,13 +607,13 @@ def _scan_class_try(
             _restore_class_fallback(
                 handler.name, interrupted_handler, interrupted_handler_aliases, closure
             )
-        _union_values(interrupted_values, interrupted_handler)
-        _union_aliases(interrupted_aliases, interrupted_handler_aliases)
+        binding_rules.union_values(interrupted_values, interrupted_handler)
+        binding_rules.union_aliases(interrupted_aliases, interrupted_handler_aliases)
         if isinstance(node, ast.TryStar):
-            _union_values(handler_start_values, caught_values)
-            _union_aliases(handler_start_aliases, caught_aliases)
-            _union_values(handler_start_values, interrupted_handler)
-            _union_aliases(handler_start_aliases, interrupted_handler_aliases)
+            binding_rules.union_values(handler_start_values, caught_values)
+            binding_rules.union_aliases(handler_start_aliases, caught_aliases)
+            binding_rules.union_values(handler_start_values, interrupted_handler)
+            binding_rules.union_aliases(handler_start_aliases, interrupted_handler_aliases)
     identical_finally_input = False
     if paths:
         _join_class_paths(values, aliases, paths)
@@ -673,16 +635,16 @@ def _scan_class_try(
 def _scan_class_match(
     node: ast.Match,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     yield from _scan_expression(node.subject, values, aliases, closure)
-    subject_value = _Value(
-        frozenset(_strings(node.subject, values)),
-        frozenset(_mapping_keys(node.subject, values)),
+    subject_value = binding_rules.Value(
+        frozenset(binding_rules.strings(node.subject, values)),
+        frozenset(binding_rules.mapping_keys(node.subject, values)),
     )
-    subject_aliases = _dotted(node.subject, aliases)
-    paths: list[tuple[_ClassValues, _Aliases]] = []
+    subject_aliases = binding_rules.dotted(node.subject, aliases)
+    paths: list[tuple[_ClassValues, binding_rules.Aliases]] = []
     remaining = [(_ClassValues(values), dict(aliases))]
     for case in node.cases:
         if not remaining:
@@ -694,7 +656,7 @@ def _scan_class_match(
             dict(pending_aliases),
         )
         for name in _pattern_names(case.pattern):
-            branch_values[name] = _Value()
+            branch_values[name] = binding_rules.Value()
             branch_aliases[name] = frozenset({""})
         if isinstance(case.pattern, ast.MatchAs) and case.pattern.name is not None:
             branch_values[case.pattern.name] = subject_value
@@ -729,8 +691,8 @@ def _pattern_names(pattern: ast.pattern) -> Iterator[str]:
 def _scan_class_with(
     node: ast.With | ast.AsyncWith,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     item, *remaining = node.items
     yield from _scan_expression(item.context_expr, values, aliases, closure)
@@ -758,8 +720,8 @@ def _scan_class_with(
 def _scan_class_delete(
     targets: list[ast.expr],
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     for target in targets:
         if isinstance(target, ast.Name):
@@ -773,8 +735,8 @@ def _scan_class_delete(
 def _scan_class_branch(
     node: ast.AST,
     values: _ClassValues,
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     if isinstance(node, ast.If):
         yield from _scan_expression(node.test, values, aliases, closure)
@@ -795,9 +757,9 @@ def _scan_class_branch(
 
 def _scan_node(
     node: ast.AST,
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     if isinstance(values, _ClassValues) and isinstance(node, _BRANCHES):
@@ -811,8 +773,8 @@ def _scan_node(
             if _private(target):
                 yield node.lineno, target
     else:
-        imported: _Aliases = {}
-        _import_aliases([node], imported)
+        imported: binding_rules.Aliases = {}
+        binding_rules.import_aliases([node], imported)
         aliases.update(imported)
         if isinstance(values, _ClassValues):
             for name in imported:
@@ -821,9 +783,9 @@ def _scan_node(
 
 def _scan_nodes(
     nodes: Iterator[ast.AST],
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     for node in nodes:
@@ -836,9 +798,9 @@ def _scan_nodes(
 
 def _scan_expression(
     expression: ast.expr,
-    values: dict[str, _Value],
-    aliases: _Aliases,
-    closure: tuple[dict[str, _Value], _Aliases],
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
+    closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
 ) -> Iterator[tuple[int, str]]:
     # Expressions do not create lexical scopes. Only their nested functions or
     # comprehensions do; preserve the surrounding class's closure distinction.
@@ -854,15 +816,15 @@ def _scan_expression(
 
 def _scan_scope(
     scope: ast.AST,
-    values: dict[str, _Value],
-    aliases: _Aliases,
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
     initial_values: dict[str, set[str]] | None = None,
 ) -> Iterator[tuple[int, str]]:
     closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
-    if isinstance(scope, ast.Module) and isinstance(values, _ScopeValues):
+    if isinstance(scope, ast.Module) and isinstance(values, binding_rules.ScopeValues):
         values.module_bindings = (values, aliases)
-    assigned_names = {name for name, _, _ in _assignments(list(_nodes(scope)))}
+    assigned_names = {name for name, _, _ in binding_rules.assignments(list(_nodes(scope)))}
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
     yield from _scan_nodes(
