@@ -32,10 +32,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 
-from custom_components.ha_mcp_tools import websocket_api as component_ws_api
 from custom_components.ha_mcp_tools.websocket_api import system
 from ha_mcp.client.rest_client import HomeAssistantClient, HomeAssistantConnectionError
 from ha_mcp.tools import component_api
@@ -47,6 +45,7 @@ from ha_mcp.visibility.model import VisibilityConfig
 from ha_mcp.visibility.persistence import VISIBILITY_FILENAME, save_visibility_config
 
 from ._client_spies import sent_commands
+from ._command_faults import dropped_on
 from ._routing_core import invalidations, pooled_socket, sent_frames
 
 SEARCH = "ha_mcp_tools/search"
@@ -243,27 +242,18 @@ async def test_an_inactive_filter_sends_no_visibility_param(
 async def test_a_failing_component_search_falls_back_and_keeps_the_filter(
     hass: HomeAssistant,
     tmp_path: Path,
-    core: None,
-    core_client: HomeAssistantClient,
-    monkeypatch: pytest.MonkeyPatch,
+    client: HomeAssistantClient,
 ) -> None:
-    state_machine = type(hass.states)
-    read_states = state_machine.async_all
-    failed = False
-
-    def fail_once(self: Any, *args: Any, **kwargs: Any) -> Any:
-        nonlocal failed
-        if self is hass.states and not failed:
-            failed = True
-            raise HomeAssistantError("search failed")
-        return read_states(self, *args, **kwargs)
-
-    monkeypatch.setattr(state_machine, "async_all", fail_once)
-    component_ws_api.async_register_commands(hass)
+    """A connection dropped during search leaves the REST fallback filtered."""
     _deny_kitchen_light(tmp_path)
+    assert await component_api.get_component_caps(client) is not None
+    socket = await pooled_socket(client)
 
-    searched = await _search(core_client)
+    with dropped_on(hass, SEARCH, socket):
+        searched = await _search(client)
 
+    assert searched.response["success"] is True
+    assert len(searched.frames) == 1
     assert searched.legacy_reads == 1
     assert _legacy_warning(searched.response)
     assert _entity_ids(searched.response) == {"sensor.kitchen_temp"}

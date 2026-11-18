@@ -81,9 +81,7 @@ class Supervisor:
         if "state" in changes:
             changes["state"] = AddonState(changes["state"])
         if "ip_address" in changes:
-            changes["ip_address"] = (
-                IPv4Address(changes["ip_address"]) if changes["ip_address"] else None
-            )
+            changes["ip_address"] = IPv4Address(changes["ip_address"])
         return app_info(**changes)
 
     def get(self, path: str) -> dict[str, Any] | None:

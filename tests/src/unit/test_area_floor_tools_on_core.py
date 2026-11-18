@@ -134,9 +134,12 @@ async def test_core_floor_fields_and_an_added_area_field_reach_the_listing(
     floors = fr.async_get(hass)
     ground = floors.async_create("Ground", level=0)
     ar.async_get(hass).async_create("Kitchen", floor_id=ground.floor_id)
-    core_floors: Any = await component_core_client.send_websocket_message(
+    core_reply = await component_core_client.send_websocket_message(
         {"type": "config/floor_registry/list"}
     )
+    assert core_reply["success"] is True
+    [core_floor] = core_reply["result"]
+    assert core_floor["floor_id"] == ground.floor_id
 
     with sent_commands(await pooled_socket(component_core_client)) as sent:
         listed = await component_tools.ha_list_floors_areas()
@@ -144,7 +147,7 @@ async def test_core_floor_fields_and_an_added_area_field_reach_the_listing(
     assert WS_REGISTRIES in sent_types(sent)
     assert "config/area_registry/list" not in sent_types(sent)
     assert "config/floor_registry/list" not in sent_types(sent)
-    assert {key: listed["floors"][0][key] for key in core_floors[0]} == core_floors[0]
+    assert {key: listed["floors"][0][key] for key in core_floor} == core_floor
     assert listed["floors"][0]["areas"][0]["future_field"] == 1
 
 
