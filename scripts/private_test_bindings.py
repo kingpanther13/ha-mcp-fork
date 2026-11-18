@@ -274,4 +274,3 @@ def prepared_assignment(
                 )
             bindings.append((item, resolved, assigned))
     return bindings
-
