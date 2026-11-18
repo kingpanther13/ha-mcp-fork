@@ -19,7 +19,7 @@ def main():
     candidate = os.environ["PROBE_CANDIDATE"]
     assert git("rev-parse", "HEAD") == candidate
     assert os.environ["PROBE_BASELINE"] == BASELINE
-    root = Path(os.environ["PROBE_ROOT"])
+    root = Path(os.environ["RUNNER_TEMP"]) / "slf001-windows-paths"
     root.mkdir(parents=True, exist_ok=True)
     cases = {
         "private-target": "getattr(mod, '_helper')\n",
