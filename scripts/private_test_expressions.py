@@ -333,8 +333,13 @@ class CallDispatch:
             yield from self.ordinary(names, env, closure)
             return
         choices: list[tuple[frozenset[str], bool | None, binding_rules.Value]] = [
-            (arguments.positional[0].aliases(), len(arguments.positional) > 1,
-             arguments.positional[1].value() if len(arguments.positional) > 1 else binding_rules.Value())
+            (
+                arguments.positional[0].aliases(),
+                len(arguments.positional) > 1,
+                arguments.positional[1].value()
+                if len(arguments.positional) > 1
+                else binding_rules.Value(),
+            )
             for arguments in self.context.capture_arguments(self.prepared, self.inputs)
             if arguments.positional
         ]
@@ -425,7 +430,8 @@ class CallDispatch:
                 normal.append(branch)
                 value = (
                     self.context.capture(self.node, (branch.values, branch.aliases))
-                    if default is None else self.context.yielded_value(
+                    if default is None
+                    else self.context.yielded_value(
                         names, branch.closure, default_value if default else None
                     )
                 )
@@ -505,7 +511,9 @@ def scan_comprehension(
 ) -> Iterator[tuple[int, str]]:
     values, aliases = env
     if index == len(scope.generators):
-        expressions = [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+        expressions = (
+            [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+        )
         for expression in expressions:
             yield from scan_expression(expression, values, aliases, closure, context)
         return
@@ -515,29 +523,52 @@ def scan_comprehension(
             generator.iter, values, aliases, closure, context
         )
         if isinstance(generator.target, ast.Name):
-            values[generator.target.id] = binding_rules.iterated_value(iterable, inputs[0])
+            values[generator.target.id] = binding_rules.iterated_value(
+                iterable, inputs[0]
+            )
 
-    def visit(value: binding_rules.Value | None = None) -> Iterator[tuple[int, str]]:
-        if value is not None:
-            for target, resolved, assigned in yielded_bindings(generator.target, value, context):
-                if isinstance(target, ast.Name):
-                    values[target.id] = assigned
-                    aliases[target.id] = resolved or frozenset({""})
-        for name in binding_rules.bound_names([generator.target]):
-            assigned = values.get(name, binding_rules.Value())
-            aliases[name] = assigned.callables or frozenset({""})
-            closure[0][name], closure[1][name] = assigned, aliases[name]
-        for condition in generator.ifs:
-            yield from scan_expression(condition, values, aliases, closure, context)
-            if isinstance(condition, ast.Constant) and not condition.value:
-                return
-        yield from scan_comprehension(scope, env, closure, context, scan_expression, index + 1)
+    visit = partial(
+        visit_comprehension, scope, env, closure, context, scan_expression, index
+    )
 
     names = generator_names(generator.iter, env, context)
     if names:
         yield from consume_generators(names, env, closure, context, visit=visit)
     else:
         yield from visit()
+
+
+def visit_comprehension(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
+    context: flow_rules.Deferred,
+    scan_expression: Callable[
+        ..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]
+    ],
+    index: int,
+    value: binding_rules.Value | None = None,
+) -> Iterator[tuple[int, str]]:
+    values, aliases = env
+    generator = scope.generators[index]
+    if value is not None:
+        for target, resolved, assigned in yielded_bindings(
+            generator.target, value, context
+        ):
+            if isinstance(target, ast.Name):
+                values[target.id] = assigned
+                aliases[target.id] = resolved or frozenset({""})
+    for name in binding_rules.bound_names([generator.target]):
+        assigned = values.get(name, binding_rules.Value())
+        aliases[name] = assigned.callables or frozenset({""})
+        closure[0][name], closure[1][name] = assigned, aliases[name]
+    for condition in generator.ifs:
+        yield from scan_expression(condition, values, aliases, closure, context)
+        if isinstance(condition, ast.Constant) and not condition.value:
+            return
+    yield from scan_comprehension(
+        scope, env, closure, context, scan_expression, index + 1
+    )
 
 
 def scan_body(
@@ -829,9 +860,13 @@ def yielded_bindings(
         values[key], aliases[key] = value, value.callables or frozenset({""})
         if isinstance(shape, (ast.Tuple, ast.List)) and len(value.positions) == 1:
             items = value.positions[0]
-            if len(items) == len(shape.elts) and all(item is not None for item in items):
+            if len(items) == len(shape.elts) and all(
+                item is not None for item in items
+            ):
                 elements = []
-                for index, (item, child) in enumerate(zip(items, shape.elts, strict=True)):
+                for index, (item, child) in enumerate(
+                    zip(items, shape.elts, strict=True)
+                ):
                     assert item is not None
                     elements.append(expression(item.value(), f"{key}:{index}", child))
                 return ast.Tuple(elts=elements, ctx=ast.Load())
@@ -842,11 +877,16 @@ def yielded_bindings(
 
 
 def iteration_bindings(
-    node: ast.For | ast.AsyncFor | ast.While, names: frozenset[str],
-    state: flow_rules.State, bindings: LoopBindings, context: flow_rules.Deferred,
+    node: ast.For | ast.AsyncFor | ast.While,
+    names: frozenset[str],
+    state: flow_rules.State,
+    bindings: LoopBindings,
+    context: flow_rules.Deferred,
 ) -> LoopBindings:
     if names and isinstance(node, (ast.For, ast.AsyncFor)):
-        return yielded_bindings(node.target, context.yielded_value(names, state.closure), context)
+        return yielded_bindings(
+            node.target, context.yielded_value(names, state.closure), context
+        )
     return bindings
 
 
