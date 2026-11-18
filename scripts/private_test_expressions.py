@@ -100,11 +100,8 @@ class Expression:
             return self.snapshot(node, env)
         if isinstance(node, ast.Constant):
             return node
-        if isinstance(node, ast.GeneratorExp):
-            return (yield from self.generator(node, env, closure))
         if isinstance(node, self.scopes):
-            yield from self.scan_node(node, *env, closure, self.context)
-            prepared = node
+            prepared = yield from self.scoped(node, env, closure)
         elif isinstance(node, ast.Call):
             return (yield from self.call(node, env, closure))
         elif isinstance(node, ast.BoolOp):
@@ -126,6 +123,14 @@ class Expression:
             assert isinstance(node, ast.Attribute)
             return self.snapshot(prepared, self.snapshots, origin=node)
         return prepared
+
+    def scoped(
+        self, node: ast.AST, env: flow_rules.Env, closure: flow_rules.Env
+    ) -> Generator[tuple[int, str], None, ast.AST]:
+        if isinstance(node, ast.GeneratorExp):
+            return (yield from self.generator(node, env, closure))
+        yield from self.scan_node(node, *env, closure, self.context)
+        return node
 
     def generator(
         self, node: ast.GeneratorExp, env: flow_rules.Env, closure: flow_rules.Env
@@ -342,7 +347,10 @@ class CallDispatch:
                 for arguments in self.context.capture_arguments(self.prepared, self.inputs)
                 if arguments.positional
             ))
-            yield from consume_generators(targets, env, closure, self.context)
+            yield from consume_generators(
+                targets, (dict(self.inputs[0]), dict(self.inputs[1])), closure,
+                self.context,
+            )
             return
         classes = binding_rules.class_aliases(self.prepared.func, self.inputs[1])
         if classes:
@@ -396,6 +404,8 @@ class CallDispatch:
                         branch.closure,
                         defaults=frozenset({default}),
                     )
+            except flow_rules.Interrupted:
+                effects.normal = False
             finally:
                 self.context.effects.pop()
             raised.extend(effects.raised)
@@ -614,15 +624,22 @@ def consume_generators(
             return
         signature = iteration_signature(names, flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure), context)
         if signature in seen:
-            finish_generators(names, env, closure, context)
-            return
+            if finish_generators(names, env, closure, context):
+                return
+            if context.effects:
+                context.effects[-1].normal = False
+            raise flow_rules.Interrupted
         seen.add(signature)
     raise ValueError("too many static generator iterations")
 
 
-def finish_generators(names: frozenset[str], env: flow_rules.Env, closure: flow_rules.Env, context: flow_rules.Deferred) -> None:
+def finish_generators(names: frozenset[str], env: flow_rules.Env, closure: flow_rules.Env, context: flow_rules.Deferred) -> bool:
+    cursors = flow_rules.module_bindings(*closure)[1]
+    if not any("done" in cursors.get(f"@resume:{name}", env[1].get(f"@resume:{name}", frozenset())) for name in names):
+        return False
     for name in names:
         context.bind_alias(f"@resume:{name}", frozenset({"done"}), env, closure)
+    return True
 
 
 def iteration_signature(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred) -> tuple:
@@ -714,3 +731,8 @@ def prepare_loop(node: ast.For | ast.AsyncFor | ast.While, state: flow_rules.Sta
 def advance_iteration(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred, findings: set[tuple[int, str]]) -> bool:
     findings.update(advance_generators(names, (state.values, state.aliases), state.closure, context))
     return generator_has_items(names, (state.values, state.aliases))
+
+
+def converged_iteration(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred, exhaustion: dict[str, flow_rules.State]) -> None:
+    if names and finish_generators(names, (state.values, state.aliases), state.closure, context):
+        flow_rules.add_outcome(exhaustion, "normal", state)
