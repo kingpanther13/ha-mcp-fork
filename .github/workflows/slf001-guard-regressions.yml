@@ -124,9 +124,9 @@ jobs:
       fail-fast: false
       matrix:
         source:
-          - tests/src/unit/_integration_flow_steps_core.py
-          - tests/src/unit/test_find_cards_badges_headers.py
           - tests/src/unit/test_locale_parity.py
+          - tests/src/unit/test_settings_ui_js_behavior.py
+          - tests/src/unit/test_embedded_server_bringup.py
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
