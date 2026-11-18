@@ -61,19 +61,44 @@ _State = binding_rules.State
 _Env = binding_rules.Env
 
 
-def _comprehension_nodes(
-    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
-) -> Iterator[ast.AST]:
-    """The first iterable belongs to the outer scope, not this body."""
-    if isinstance(scope, ast.DictComp):
-        yield scope.key
-        yield scope.value
-    else:
-        yield scope.elt
-    first, *remaining = scope.generators
-    yield first.target
-    yield from first.ifs
-    yield from remaining
+class _Deferred:
+    def __init__(self) -> None:
+        self.scopes: dict[str, tuple[ast.AST, ast.AST | None]] = {}
+        self.frames: dict[ast.AST | None, _Env] = {}
+        self.pending: list[set[str]] = []
+        self.active: set[ast.AST] = set()
+        self.seen: set[tuple] = set()
+
+    def register(self, node: ast.AST, closure: _Env) -> str:
+        token = f"@{id(node)}"
+        owner = closure[0].scope_id if isinstance(closure[0], binding_rules.ScopeValues) else None
+        self.scopes[token] = node, owner
+        self.pending[-1].add(token)
+        return token
+
+    def remember(self, closure: _Env) -> None:
+        if isinstance(closure[0], binding_rules.ScopeValues):
+            self.frames[closure[0].scope_id] = closure
+
+    def scan(self, token: str, closure: _Env) -> Iterator[tuple[int, str]]:
+        node, owner = self.scopes[token]
+        module = binding_rules.module_bindings(*closure)
+        closure = binding_rules.copy_context(self.frames.get(owner, closure))
+        binding_rules.publish_context(binding_rules.module_bindings(*closure), module)
+        key = node, binding_rules.namespace_key(closure), binding_rules.namespace_key(binding_rules.module_bindings(*closure))
+        if node in self.active or key in self.seen:
+            return
+        if len(self.seen) >= 16384:
+            raise ValueError("too many distinct deferred body states")
+        self.seen.add(key)
+        self.active.add(node)
+        try:
+            yield from _scan_scope(node, *closure, context=self)
+        finally:
+            self.active.remove(node)
+
+
+_comprehension_nodes = binding_rules.comprehension_nodes
 
 
 def _nodes(
@@ -107,28 +132,7 @@ def _nodes(
         )
 
 
-def _headers(scope: ast.AST) -> Iterator[ast.expr]:
-    """Decorators, bases and defaults execute before entering the new scope."""
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        yield from scope.decorator_list
-    if isinstance(scope, ast.ClassDef):
-        yield from scope.bases
-        yield from (keyword.value for keyword in scope.keywords)
-    if isinstance(scope, _COMPREHENSIONS):
-        yield scope.generators[0].iter
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        yield from scope.args.defaults
-        yield from (value for value in scope.args.kw_defaults if value is not None)
-        yield from (
-            node.annotation
-            for node in ast.walk(scope.args)
-            if isinstance(node, ast.arg) and node.annotation is not None
-        )
-    if (
-        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and scope.returns is not None
-    ):
-        yield scope.returns
+_headers = binding_rules.scope_headers
 
 
 def _bindings(
@@ -151,6 +155,7 @@ def _bindings(
     values = binding_rules.ScopeValues(parent_values)
     aliases = dict(parent_aliases)
     imported: binding_rules.Aliases = {}
+    parameter_names: set[str] = set()
     binding_rules.import_aliases(nodes, imported)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         parameters = [
@@ -160,9 +165,9 @@ def _bindings(
             scope.args.vararg,
             scope.args.kwarg,
         ]
-        local_names.update(
-            parameter.arg for parameter in parameters if parameter is not None
-        )
+        parameter_names = {parameter.arg for parameter in parameters if parameter is not None}
+        local_names.update(parameter_names)
+    values.scope_id = scope
     values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
     values.lexical_names = (
         frozenset()
@@ -175,6 +180,7 @@ def _bindings(
     aliases.update(imported)
     values.update(initial_values or {})
     binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
+    aliases.update((name, frozenset({""})) for name in parameter_names)
     return values, aliases
 
 
@@ -215,7 +221,7 @@ def _named_targets(
     return set().union(
         *(
             _argument_targets(kind, arguments)
-            for arguments in binding_rules.call_arguments(call, values)
+            for arguments in binding_rules.call_arguments(call, values, keyword_target="in_dict" if kind == "patch.dict" else None)
         )
     )
 
@@ -247,17 +253,7 @@ def _argument_targets(kind: str, arguments: binding_rules.Arguments) -> set[str]
     return _argument_strings(arguments.argument(1, "name"))
 
 
-def _private(target: str) -> bool:
-    parts = target.replace(":", ".").split(".")
-    for index, part in enumerate(parts):
-        if not part.startswith("_") or (
-            len(part) > 4 and part.startswith("__") and part.endswith("__")
-        ):
-            continue
-        if index == 1 and parts[0] == "ha_mcp" and part == "_vendor":
-            continue
-        return True
-    return False
+_private = binding_rules.private_target
 
 
 def _comprehension_values(
@@ -291,6 +287,7 @@ def _scan_assignment_target(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
     assigned_value: binding_rules.Value = binding_rules.Value(),
 ) -> Iterator[tuple[int, str]]:
     if isinstance(target, ast.Name):
@@ -305,14 +302,14 @@ def _scan_assignment_target(
         for item in target.elts:
             # Unpacked elements are unknown, not inherited callable aliases.
             yield from _scan_assignment_target(
-                item, frozenset({""}), values, aliases, closure
+                item, frozenset({""}), values, aliases, closure, context
             )
     elif isinstance(target, ast.Starred):
         yield from _scan_assignment_target(
-            target.value, frozenset({""}), values, aliases, closure
+            target.value, frozenset({""}), values, aliases, closure, context
         )
     else:
-        yield from _scan_expression(target, values, aliases, closure)
+        yield from _scan_expression(target, values, aliases, closure, context)
 
 
 def _scan_assignment(
@@ -320,14 +317,16 @@ def _scan_assignment(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
     on_error: Callable[[], None] | None = None,
 ) -> Iterator[tuple[int, str]]:
     value = node.value
     if isinstance(value, ast.Lambda):
         for header in _headers(value):
-            yield from _scan_expression(header, values, aliases, closure)
+            yield from _scan_expression(header, values, aliases, closure, context)
     elif value is not None:
-        yield from _scan_expression(value, values, aliases, closure)
+        yield from _scan_expression(value, values, aliases, closure, context)
+    token = context.register(value, closure) if isinstance(value, ast.Lambda) else None
     # Resolve a chained assignment's RHS once, then evaluate and bind targets
     # left to right: a later target expression can see an earlier new binding.
     targets: list[ast.expr] = (
@@ -339,16 +338,12 @@ def _scan_assignment(
         if on_error is not None and not isinstance(target, ast.Name):
             on_error()
         yield from _scan_assignment_target(
-            target, resolved, values, aliases, closure, assigned_value
+            target, frozenset({token}) if token else resolved, values, aliases, closure, context, assigned_value
         )
-    if isinstance(value, ast.Lambda):
-        # Defaults ran before assignment. The deferred body sees the new binding,
-        # except in a class, whose namespace is not captured by the lambda.
-        yield from _scan_scope(value, *closure)
     if isinstance(node, ast.AnnAssign):
         if on_error is not None:
             on_error()
-        yield from _scan_expression(node.annotation, values, aliases, closure)
+        yield from _scan_expression(node.annotation, values, aliases, closure, context)
 
 
 def _scan_nested_scope(
@@ -356,16 +351,20 @@ def _scan_nested_scope(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     for header in _headers(node):
-        yield from _scan_expression(header, values, aliases, closure)
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        _bind_definition(node.name, values, aliases, assigned_names)
-    first_values = _comprehension_values(node, values)
-    # Methods and comprehension bodies do not capture a class namespace;
-    # their decorators/defaults/first iterable still execute in it.
-    yield from _scan_scope(node, *closure, first_values)
+        yield from _scan_expression(header, values, aliases, closure, context)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        token = context.register(node, closure)
+        if not isinstance(node, ast.Lambda):
+            _bind_definition(node.name, values, aliases, assigned_names)
+            aliases[node.name] = frozenset({token})
+            if isinstance(values, _ClassValues):
+                _store_class_name(values, aliases, node.name)
+        return
+    yield from _scan_scope(node, *closure, _comprehension_values(node, values), context=context)
     if isinstance(node, ast.ClassDef):
         _bind_definition(node.name, values, aliases, assigned_names)
 
@@ -429,13 +428,14 @@ def _restore_class_fallback(
 class _ClassFlow:
     """Bounded abstract statement execution with separate control-flow outcomes."""
 
-    def __init__(self) -> None:
+    def __init__(self, context: _Deferred) -> None:
+        self.context = context
         self.cache: dict[tuple, _Outcomes] = {}
         self.findings: set[tuple[int, str]] = set()
 
     def expression(self, node: ast.expr, state: _State) -> None:
         self.findings.update(
-            _scan_expression(node, state.values, state.aliases, state.closure)
+            _scan_expression(node, state.values, state.aliases, state.closure, self.context)
         )
 
     def block(self, body: list[ast.stmt], incoming: _State) -> _Outcomes:
@@ -450,6 +450,7 @@ class _ClassFlow:
             if state is None:
                 break
             state.refresh()
+            self.context.remember(state.closure)
             for kind, result in self.statement(node, state).items():
                 _add_outcome(outcomes, kind, result)
         self.cache[key] = {kind: state.copy() for kind, state in outcomes.items()}
@@ -497,13 +498,17 @@ class _ClassFlow:
                     state.values,
                     state.aliases,
                     state.closure,
+                    self.context,
                     lambda: _add_outcome(outcomes, "raise", state),
                 )
             )
             outcomes["normal"] = state
             return outcomes
         if isinstance(node, ast.Delete):
-            self.delete(node.targets, state)
+            outcomes = {"raise": before}
+            self.delete(node.targets, state, outcomes)
+            outcomes["normal"] = state
+            return outcomes
         else:
             nodes: Iterator[ast.AST] = chain(
                 [node], _nodes(node, descend_assignments=False)
@@ -511,7 +516,7 @@ class _ClassFlow:
             if isinstance(node, (*_SCOPES, ast.Assign, ast.AnnAssign)):
                 nodes = iter([node])
             self.findings.update(
-                _scan_nodes(nodes, state.values, state.aliases, state.closure, set())
+                _scan_nodes(nodes, state.values, state.aliases, state.closure, self.context, set())
             )
         if isinstance(node, ast.Raise):
             return {"raise": state}
@@ -550,14 +555,15 @@ class _ClassFlow:
                 _add_outcome(outcomes, kind, result)
         return outcomes
 
-    def delete(self, targets: list[ast.expr], state: _State) -> None:
+    def delete(self, targets: list[ast.expr], state: _State, outcomes: _Outcomes) -> None:
         for target in targets:
+            _add_outcome(outcomes, "raise", state)
             if isinstance(target, ast.Name):
                 _restore_class_fallback(
                     target.id, state.values, state.aliases, state.closure
                 )
             elif isinstance(target, (ast.Tuple, ast.List)):
-                self.delete(target.elts, state)
+                self.delete(target.elts, state, outcomes)
             else:
                 self.expression(target, state)
 
@@ -565,7 +571,7 @@ class _ClassFlow:
         for target, resolved, value in bindings:
             self.findings.update(
                 _scan_assignment_target(
-                    target, resolved, state.values, state.aliases, state.closure, value
+                    target, resolved, state.values, state.aliases, state.closure, self.context, value
                 )
             )
 
@@ -830,13 +836,16 @@ def _scan_node(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        yield from _scan_assignment(node, values, aliases, closure)
+        yield from _scan_assignment(node, values, aliases, closure, context)
     elif isinstance(node, _SCOPES):
-        yield from _scan_nested_scope(node, values, aliases, closure, assigned_names)
+        yield from _scan_nested_scope(node, values, aliases, closure, context, assigned_names)
     elif isinstance(node, ast.Call):
+        for token in binding_rules.dotted(node.func, aliases) & context.scopes.keys():
+            yield from context.scan(token, closure)
         for target in sorted(_targets(node, aliases, values)):
             if _private(target):
                 yield node.lineno, target
@@ -855,10 +864,11 @@ def _scan_nodes(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
     assigned_names: set[str],
 ) -> Iterator[tuple[int, str]]:
     for node in nodes:
-        yield from _scan_node(node, values, aliases, closure, assigned_names)
+        yield from _scan_node(node, values, aliases, closure, context, assigned_names)
 
 
 def _scan_expression(
@@ -866,6 +876,7 @@ def _scan_expression(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    context: _Deferred,
 ) -> Iterator[tuple[int, str]]:
     # Expressions do not create lexical scopes. Only their nested functions or
     # comprehensions do; preserve the surrounding class's closure distinction.
@@ -875,7 +886,7 @@ def _scan_expression(
         else _nodes(expression, descend_assignments=False)
     )
     yield from _scan_nodes(
-        chain([expression], descendants), values, aliases, closure, set()
+        chain([expression], descendants), values, aliases, closure, context, set()
     )
 
 
@@ -884,7 +895,10 @@ def _scan_scope(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     initial_values: dict[str, binding_rules.Value] | None = None,
+    *, context: _Deferred | None = None,
 ) -> Iterator[tuple[int, str]]:
+    context = context or _Deferred()
+    context.pending.append(set())
     closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -896,10 +910,16 @@ def _scan_scope(
     if isinstance(
         scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
     ):
-        analyzer = _ClassFlow()
+        analyzer = _ClassFlow(context)
         state = _State(_ClassValues(values), aliases, closure).copy()
         outcomes = analyzer.block(scope.body, state)
+        pending = context.pending.pop()
         yield from sorted(analyzer.findings)
+        for kind in ("normal", "return"):
+            if kind in outcomes:
+                context.remember(outcomes[kind].closure)
+                for token in pending:
+                    yield from context.scan(token, outcomes[kind].closure)
         if isinstance(scope, ast.ClassDef) and "normal" in outcomes:
             binding_rules.publish_context(closure, outcomes["normal"].closure)
         return
@@ -911,8 +931,12 @@ def _scan_scope(
         values,
         aliases,
         closure,
+        context,
         assigned_names,
     )
+    context.remember(closure)
+    for token in context.pending.pop():
+        yield from context.scan(token, closure)
 
 
 def main(argv: list[str] | None = None) -> int:
