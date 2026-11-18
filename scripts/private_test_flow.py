@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Iterator
+import copy
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,44 @@ else:
 Value = binding_rules.Value
 Aliases = binding_rules.Aliases
 
+
+def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
+    """Decorators, bases and defaults execute before entering the new scope."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield from scope.decorator_list
+    if isinstance(scope, ast.ClassDef):
+        yield from scope.bases
+        yield from (keyword.value for keyword in scope.keywords)
+    if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        yield scope.generators[0].iter
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        yield from scope.args.defaults
+        yield from (value for value in scope.args.kw_defaults if value is not None)
+        yield from (
+            node.annotation
+            for node in ast.walk(scope.args)
+            if isinstance(node, ast.arg) and node.annotation is not None
+        )
+    if (
+        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and scope.returns is not None
+    ):
+        yield scope.returns
+
+
+def comprehension_nodes(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+) -> Iterator[ast.AST]:
+    """The first iterable belongs to the outer scope, not this body."""
+    if isinstance(scope, ast.DictComp):
+        yield scope.key
+        yield scope.value
+    else:
+        yield scope.elt
+    first, *remaining = scope.generators
+    yield first.target
+    yield from first.ifs
+    yield from remaining
 
 class ScopeValues(dict[str, Value]):
     """Lexical values retaining the module namespace for class name lookup."""
@@ -41,6 +80,9 @@ class ScopeValues(dict[str, Value]):
         )
         self.scope_id: ast.AST | None = (
             values.scope_id if isinstance(values, ScopeValues) else None
+        )
+        self.cell_owners: dict[str, ast.AST] = (
+            dict(values.cell_owners) if isinstance(values, ScopeValues) else {}
         )
 
 
@@ -232,6 +274,20 @@ class State:
         self.values.bound &= other.values.bound
 
 
+def add_outcome(outcomes: dict[str, State], kind: str, state: State) -> None:
+    if kind in outcomes:
+        outcomes[kind].merge(state)
+    else:
+        outcomes[kind] = state.copy()
+
+
+def restore_outcome(outcomes: dict[str, State], previous: str) -> dict[str, State]:
+    restored: dict[str, State] = {}
+    for kind, state in outcomes.items():
+        add_outcome(restored, previous if kind == "normal" else kind, state)
+    return restored
+
+
 @dataclass(frozen=True)
 class Function:
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
@@ -250,6 +306,13 @@ class Invocation:
 class Analysis:
     findings: tuple[tuple[int, str], ...]
     outcomes: dict[str, State]
+
+
+@dataclass
+class Continuation:
+    state: State
+    steps: list[Callable[[dict[str, State]], dict[str, State]]]
+    findings: set[tuple[int, str]]
 
 
 @dataclass
@@ -292,6 +355,12 @@ def apply_delta(target: Env, before: Env, after: Env) -> None:
     mapping_delta(target[1], before[1], after[1])
 
 
+def replay_names[T](target: dict[str, T], source: dict[str, T], names: set[str]) -> None:
+    before = {name: target[name] for name in names if name in target}
+    after = {name: source[name] for name in names if name in source}
+    mapping_delta(target, before, after)
+
+
 def apply_effects(
     outcomes: dict[str, State], before: State, effects: Effects
 ) -> dict[str, State]:
@@ -322,10 +391,10 @@ class Deferred:
         self.pending: list[set[str]] = []
         self.active: set[ast.AST] = set()
         self.cache: dict[tuple, Analysis] = {}
-        self.immediate: set[ast.Lambda] = set()
         self.suspended: dict[str, Invocation] = {}
         self.effects: list[Effects] = []
-        self.awaited: set[ast.Call] = set()
+        self.generating: list[bool] = []
+        self.continuations: dict[str, Continuation] = {}
 
     def register(
         self,
@@ -458,25 +527,24 @@ class Deferred:
         return name
 
     def call(
-        self, call: ast.Call, env: Env, closure: Env, *, awaited: bool = False
+        self, call: ast.Call, env: Env, closure: Env, *,
+        captured: tuple[ast.Call, Env] | None = None,
     ) -> Iterator[tuple[int, str]]:
-        if not awaited and call in self.awaited:
-            self.awaited.remove(call)
-            return
-        if awaited:
-            self.awaited.add(call)
-        names = binding_rules.dotted(call.func, env[1])
+        prepared, inputs = captured if captured is not None else (call, env)
+        names = binding_rules.dotted(prepared.func, inputs[1])
         if isinstance(call.func, ast.Lambda):
-            for header in binding_rules.scope_headers(call.func):
-                yield from self.scan_expression(header, *env, closure, self)
-            token = self.register(call.func, closure, env)
+            if captured is None:
+                for header in scope_headers(call.func):
+                    yield from self.scan_expression(header, *env, closure, self)
+            token = f"@function:{id(call.func)}"
+            if captured is None or token not in self.scopes:
+                token = self.register(call.func, closure, env)
             self.pending[-1].discard(token)
-            self.immediate.add(call.func)
             names = frozenset({token})
-        if names & {"next", "builtins.next"} and call.args:
-            yield from self.resume(call.args[0], env, closure)
+        if names & {"next", "builtins.next"} and prepared.args:
+            yield from self.resume(prepared.args[0], inputs, closure)
             return
-        classes = binding_rules.class_aliases(call.func, env[1])
+        classes = binding_rules.class_aliases(prepared.func, inputs[1])
         if classes:
             self.allocate(call, classes, env, closure)
             for constructor in ("__new__", "__init__"):
@@ -487,10 +555,10 @@ class Deferred:
                     )
                 )
                 yield from self.invoke_targets(
-                    targets, call, env, closure, constructor=True
+                    targets, call, env, closure, constructor=True, captured=(prepared, inputs)
                 )
             return
-        yield from self.invoke_targets(names, call, env, closure, awaited=awaited)
+        yield from self.invoke_targets(names, call, env, closure, captured=(prepared, inputs))
 
     def invoke_targets(
         self,
@@ -500,7 +568,7 @@ class Deferred:
         closure: Env,
         *,
         constructor: bool = False,
-        awaited: bool = False,
+        captured: tuple[ast.Call, Env] | None = None,
     ) -> Iterator[tuple[int, str]]:
         known = frozenset(
             name
@@ -511,13 +579,13 @@ class Deferred:
             return
         runs: list[Invocation] = []
         suspended: set[str] = set()
-        for arguments in self.capture_arguments(call, env):
+        for arguments in self.capture_arguments(*(captured if captured is not None else (call, env))):
             for name in known:
                 invocation = self.invocation(name, arguments, constructor=constructor)
                 if invocation is None:
                     continue
                 kind = self.scopes[invocation.token].kind
-                if kind == "sync" or awaited:
+                if kind == "sync":
                     runs.append(invocation)
                 else:
                     suspended.add(self.suspend(invocation))
@@ -549,32 +617,34 @@ class Deferred:
             for arguments in binding_rules.call_arguments(call, env[0])
         ]
 
-    def await_expression(
-        self, node: ast.Await, env: Env, closure: Env
-    ) -> Iterator[tuple[int, str]]:
-        if isinstance(node.value, ast.Call):
-            yield from self.call(node.value, env, closure, awaited=True)
-        else:
-            yield from self.resume(node.value, env, closure)
-
     def resume(
         self, expression: ast.expr, env: Env, closure: Env
     ) -> Iterator[tuple[int, str]]:
         names = binding_rules.dotted(expression, env[1])
+        results: list[tuple[Invocation, Analysis]] = []
+        for name in names & self.suspended.keys():
+            invocation = self.suspended[name]
+            if self.scopes[invocation.token].kind == "generator":
+                results.extend((invocation, result) for result in self.resume_generator(name, invocation, env, closure))
+            else:
+                results.append((invocation, self.analyze(invocation, closure)))
         yield from self.execute(
-            [self.suspended[name] for name in names if name in self.suspended], closure
+            [], closure, results=results,
+            unknown=any(name not in self.suspended for name in names),
         )
 
     def execute(
-        self, invocations: list[Invocation], closure: Env, *, unknown: bool = False
+        self, invocations: list[Invocation], closure: Env, *, unknown: bool = False,
+        results: list[tuple[Invocation, Analysis]] | None = None,
     ) -> Iterator[tuple[int, str]]:
-        if not invocations:
+        if results is None:
+            results = [(invocation, self.analyze(invocation, closure)) for invocation in invocations]
+        if not results:
             return
         before = copy_context(closure)
         continuations: list[Env] = [copy_context(before)] if unknown else []
         failures: list[Env] = []
-        for invocation in invocations:
-            result = self.analyze(invocation, before)
+        for invocation, result in results:
             yield from result.findings
             for kind, state in result.outcomes.items():
                 changed = copy_context(before)
@@ -583,6 +653,7 @@ class Deferred:
                     module_bindings(*before),
                     module_bindings(*state.closure),
                 )
+                self.replay_cells(changed, state.closure, invocation)
                 if kind in {"normal", "return"}:
                     continuations.append(changed)
                 elif kind == "raise":
@@ -599,12 +670,23 @@ class Deferred:
                 )
             publish_context(closure, combined)
 
+    def replay_cells(self, target: Env, source: Env, invocation: Invocation) -> None:
+        if not isinstance(target[0], ScopeValues) or not isinstance(source[0], ScopeValues):
+            return
+        local_scope = self.scopes[invocation.token].node
+        names = {
+            name for name, owner in source[0].cell_owners.items()
+            if owner is not local_scope and target[0].cell_owners.get(name) is owner
+        }
+        replay_names(target[0], source[0], names)
+        replay_names(target[1], source[1], names)
+
     def scan(self, token: str, closure: Env) -> Iterator[tuple[int, str]]:
         invocation = self.invocation(token, None)
         if invocation is not None:
             yield from self.analyze(invocation, closure).findings
 
-    def analyze(self, invocation: Invocation, closure: Env) -> Analysis:
+    def analyze(self, invocation: Invocation, closure: Env, *, generator: bool = False) -> Analysis:
         function = self.scopes[invocation.token]
         module = module_bindings(*closure)
         closure = copy_context(self.frames.get(function.owner, closure))
@@ -614,6 +696,7 @@ class Deferred:
             namespace_key(closure),
             namespace_key(module_bindings(*closure)),
             invocation.parameters,
+            generator,
         )
         if key in self.cache:
             return self.cache[key]
@@ -625,6 +708,7 @@ class Deferred:
         if len(self.cache) >= 16384:
             raise ValueError("too many distinct deferred body states")
         self.active.add(function.node)
+        self.generating.append(generator)
         outcomes: dict[str, State] = {}
         try:
             findings = tuple(
@@ -639,7 +723,231 @@ class Deferred:
                 )
             )
         finally:
+            self.generating.pop()
             self.active.remove(function.node)
         result = Analysis(findings, outcomes)
         self.cache[key] = result
         return result
+
+    def pause(self, state: State, findings: set[tuple[int, str]]) -> dict[str, State]:
+        if len(self.continuations) >= 16384:
+            raise ValueError("too many generator continuations")
+        key = f"yield:{len(self.continuations)}"
+        self.continuations[key] = Continuation(state.copy(), [], findings)
+        return {key: state}
+
+    def chain(self, outcomes: dict[str, State], step: Callable[[dict[str, State]], dict[str, State]]) -> None:
+        for kind in outcomes:
+            if kind in self.continuations:
+                self.continuations[kind].steps.append(step)
+
+    def continue_generator(self, key: str, closure: Env) -> Analysis:
+        continuation = self.continuations[key]
+        state = continuation.state.copy()
+        publish_context(module_bindings(*state.closure), module_bindings(*closure))
+        state.refresh()
+        outcomes = {"normal": state}
+        suspended: dict[str, State] = {}
+        self.generating.append(True)
+        try:
+            for index, step in enumerate(continuation.steps):
+                outcomes = step(outcomes)
+                for kind in list(outcomes):
+                    if kind in self.continuations:
+                        self.continuations[kind].steps.extend(continuation.steps[index + 1:])
+                        suspended[kind] = outcomes.pop(kind)
+                if not outcomes:
+                    break
+        finally:
+            self.generating.pop()
+        return Analysis(tuple(continuation.findings), outcomes | suspended)
+
+    def resume_generator(self, name: str, invocation: Invocation, env: Env, closure: Env) -> list[Analysis]:
+        key = f"@resume:{name}"
+        stages = env[1].get(key, frozenset({"start"}))
+        results = [self.analyze(invocation, closure, generator=True) if stage == "start" else self.continue_generator(stage, closure) for stage in stages if stage != "done"]
+        if "done" in stages:
+            state = State(ClassValues(closure[0]), dict(closure[1]), copy_context(closure))
+            results.append(Analysis((), {"raise": state}))
+        following: set[str] = set()
+        resumed: list[Analysis] = []
+        for result in results:
+            outcomes: dict[str, State] = {}
+            for kind, state in result.outcomes.items():
+                yielded = kind in self.continuations
+                following.add(kind if yielded else "done")
+                destination = "normal" if yielded else "raise"
+                if destination in outcomes:
+                    outcomes[destination].merge(state)
+                else:
+                    outcomes[destination] = state.copy()
+            resumed.append(Analysis(result.findings, outcomes))
+        self.bind_alias(key, frozenset(following or {"done"}), env, closure)
+        for result in resumed:
+            for state in result.outcomes.values():
+                module_bindings(*state.closure)[1][key] = frozenset(following or {"done"})
+        return resumed
+
+
+class Expression:
+    """Evaluate operand effects in order while retaining already captured values."""
+
+    def __init__(
+        self,
+        context: Deferred,
+        scan_node: Callable[..., Iterator[tuple[int, str]]],
+        targets: Callable[..., set[str]],
+        private: Callable[[str], bool],
+        scopes: tuple[type[ast.AST], ...],
+    ) -> None:
+        self.context = context
+        self.scan_node = scan_node
+        self.targets = targets
+        self.private = private
+        self.scopes = scopes
+        self.snapshots: Env = ({}, {})
+
+    def snapshot(self, node: ast.expr, env: Env) -> ast.Name:
+        name = f"@operand:{len(self.snapshots[0])}"
+        value = self.context.capture(node, env)
+        self.snapshots[0][name] = value
+        self.snapshots[1][name] = value.callables
+        return ast.copy_location(ast.Name(id=name, ctx=ast.Load()), node)
+
+    @staticmethod
+    def refresh(env: Env, closure: Env) -> None:
+        if isinstance(env[0], ClassValues):
+            State(env[0], env[1], closure).refresh()
+
+    def scan(
+        self, node: ast.expr, env: Env, closure: Env
+    ) -> Generator[tuple[int, str], None, tuple[ast.expr, Env]]:
+        prepared = yield from self.evaluate(node, env, closure)
+        assert isinstance(prepared, ast.expr)
+        return prepared, self.snapshots
+
+    def evaluate(
+        self, node: ast.AST, env: Env, closure: Env
+    ) -> Generator[tuple[int, str], None, ast.AST]:
+        if isinstance(node, ast.Name):
+            self.snapshots[1].update(env[1])
+            return self.snapshot(node, env)
+        if isinstance(node, ast.Constant):
+            return node
+        if isinstance(node, self.scopes):
+            yield from self.scan_node(node, *env, closure, self.context)
+            prepared = node
+        elif isinstance(node, ast.Call):
+            return (yield from self.call(node, env, closure))
+        elif isinstance(node, ast.BoolOp):
+            return (yield from self.boolean(node.values, node.op, env, closure))
+        elif isinstance(node, ast.Await):
+            value = yield from self.evaluate(node.value, env, closure)
+            assert isinstance(value, ast.expr)
+            yield from self.context.resume(value, self.snapshots, closure)
+            self.refresh(env, closure)
+            prepared = node
+        else:
+            prepared = yield from self.children(node, env, closure)
+        if self.context.effects and not self.context.effects[-1].normal:
+            raise Interrupted
+        if isinstance(prepared, ast.Attribute):
+            self.snapshots[1].update(env[1])
+            return self.snapshot(prepared, self.snapshots)
+        return prepared
+
+    def children(
+        self, node: ast.AST, env: Env, closure: Env
+    ) -> Generator[tuple[int, str], None, ast.AST]:
+        prepared = copy.copy(node)
+        if isinstance(node, ast.Dict):
+            assert isinstance(prepared, ast.Dict)
+            keys: list[ast.expr | None] = []
+            values: list[ast.expr] = []
+            for key, value in zip(node.keys, node.values, strict=True):
+                resolved_key = (
+                    (yield from self.evaluate(key, env, closure)) if key else None
+                )
+                resolved_value = yield from self.evaluate(value, env, closure)
+                assert resolved_key is None or isinstance(resolved_key, ast.expr)
+                assert isinstance(resolved_value, ast.expr)
+                keys.append(resolved_key)
+                values.append(resolved_value)
+            prepared.keys, prepared.values = keys, values
+            return prepared
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                setattr(prepared, field, (yield from self.evaluate(value, env, closure)))
+            elif isinstance(value, list):
+                items = []
+                for item in value:
+                    items.append(
+                        (yield from self.evaluate(item, env, closure))
+                        if isinstance(item, ast.AST)
+                        else item
+                    )
+                setattr(prepared, field, items)
+        return prepared
+
+    def call(
+        self, node: ast.Call, env: Env, closure: Env
+    ) -> Generator[tuple[int, str], None, ast.Name]:
+        prepared = yield from self.children(node, env, closure)
+        assert isinstance(prepared, ast.Call)
+        for target in sorted(
+            self.targets(prepared, self.snapshots[1], self.snapshots[0])
+        ):
+            if self.private(target):
+                yield node.lineno, target
+        yield from self.context.call(
+            node, env, closure, captured=(prepared, self.snapshots)
+        )
+        self.refresh(env, closure)
+        if self.context.effects and not self.context.effects[-1].normal:
+            raise Interrupted
+        return self.snapshot(node, env)
+
+    def boolean(
+        self, operands: list[ast.expr], operation: ast.boolop, env: Env, closure: Env
+    ) -> Generator[tuple[int, str], None, ast.AST]:
+        first, *remaining = operands
+        captured = yield from self.evaluate(first, env, closure)
+        if not remaining:
+            return captured
+        truth = bool(first.value) if isinstance(first, ast.Constant) else None
+        if truth is not None:
+            if truth == isinstance(operation, ast.Or):
+                return captured
+            return (yield from self.boolean(remaining, operation, env, closure))
+        # An unknown condition may skip the remainder, including a known raise.
+        skipped = State(ClassValues(env[0]), dict(env[1]), closure).copy()
+        branch = skipped.copy()
+        effects = Effects([])
+        self.context.effects.append(effects)
+        result = captured
+        try:
+            result = yield from self.boolean(
+                remaining, operation, (branch.values, branch.aliases), branch.closure
+            )
+        except Interrupted:
+            effects.normal = False
+        finally:
+            self.context.effects.pop()
+        if effects.normal:
+            skipped.merge(branch)
+        publish_context(closure, skipped.closure)
+        env[0].clear()
+        env[0].update(skipped.values)
+        env[1].clear()
+        env[1].update(skipped.aliases)
+        if self.context.effects:
+            self.context.effects[-1].raised.extend(effects.raised)
+        assert isinstance(captured, ast.expr) and isinstance(result, ast.expr)
+        merged = {"value": self.context.capture(captured, self.snapshots)}
+        binding_rules.union_values(
+            merged, {"value": self.context.capture(result, self.snapshots)}
+        )
+        return self.snapshot(
+            ast.Name(id="value", ctx=ast.Load()),
+            (merged, {"value": merged["value"].callables}),
+        )
