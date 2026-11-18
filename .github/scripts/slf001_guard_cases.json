@@ -241,7 +241,7 @@
       "id": "generator-live-captured-parameter-public-control",
       "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(saved):\n    next(saved)\n    yield None\nfor member in ('visible', 'public'):\n    pending = inner(member)\n    next(pending)\n    if unknown:\n        holder = outer(pending)\nnext(holder)\n",
       "baseline_fails": false,
-      "boundary_fails": false
+      "boundary_fails": true
     },
     {
       "id": "generator-live-continuation-local-public-control",
