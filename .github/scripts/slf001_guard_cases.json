@@ -81,6 +81,11 @@
       "id": "instance-member-store-replaces-only-that-method",
       "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ninstance.run()\nNAME = 'public'\n",
       "baseline_fails": false
+    },
+    {
+      "id": "conditional-instance-stores-keep-class-inheritance-live",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nfirst = Example()\nsecond = Example()\nif flag:\n    selected = first if choice else second\n    selected.run = callback\nExample.run = other_callback\nNAME = '_data'\nfirst.run()\nsecond.run()\nNAME = 'public'\n",
+      "baseline_fails": false
     }
   ],
   "error": []
