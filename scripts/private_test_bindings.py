@@ -19,6 +19,12 @@ class Argument:
     def strings(self) -> set[str]:
         return strings(self.expression, dict(self.bindings))
 
+    def value(self) -> Value:
+        return value_of(self.expression, dict(self.bindings))
+
+    def aliases(self) -> frozenset[str]:
+        return self.value().callables
+
     def object_kinds(self) -> frozenset[str]:
         return _object_kinds(self.expression, dict(self.bindings))
 
@@ -49,69 +55,15 @@ class Value:
     errors: frozenset[str] = frozenset()
     mapping_errors: frozenset[str] = frozenset()
     iteration_errors: frozenset[str] = frozenset()
+    positions: tuple[tuple[Argument | None, ...], ...] = ()
+    position_errors: frozenset[str] = frozenset()
+    target_mappings: tuple[tuple[tuple[str, Argument], ...], ...] = ()
+    target_errors: frozenset[str] = frozenset()
+    target_key_options: frozenset[bool] = frozenset()
+    callables: frozenset[str] = frozenset()
 
 
 Aliases = dict[str, frozenset[str]]
-
-
-class ScopeValues(dict[str, Value]):
-    """Lexical values retaining the module namespace for class name lookup."""
-
-    def __init__(self, values: dict[str, Value]) -> None:
-        super().__init__(values)
-        self.module_bindings: tuple[dict[str, Value], Aliases] | None = (
-            values.module_bindings if isinstance(values, ScopeValues) else None
-        )
-        self.class_globals: frozenset[str] = (
-            values.class_globals if isinstance(values, ScopeValues) else frozenset()
-        )
-        self.class_nonlocals: frozenset[str] = (
-            values.class_nonlocals if isinstance(values, ScopeValues) else frozenset()
-        )
-        self.class_locals: frozenset[str] = (
-            values.class_locals if isinstance(values, ScopeValues) else frozenset()
-        )
-        self.scope_kind: str = (
-            values.scope_kind if isinstance(values, ScopeValues) else "module"
-        )
-        self.lexical_names: frozenset[str] = (
-            values.lexical_names if isinstance(values, ScopeValues) else frozenset()
-        )
-        self.scope_id: ast.AST | None = (
-            values.scope_id if isinstance(values, ScopeValues) else None
-        )
-
-
-def module_bindings(
-    values: dict[str, Value], aliases: Aliases
-) -> tuple[dict[str, Value], Aliases]:
-    if isinstance(values, ScopeValues) and values.module_bindings is not None:
-        return values.module_bindings
-    return values, aliases
-
-
-def class_bindings(
-    parent_values: dict[str, Value], parent_aliases: Aliases, nodes: list[ast.AST]
-) -> tuple[ScopeValues, Aliases]:
-    values = ScopeValues(parent_values)
-    values.scope_kind = "class"
-    values.class_globals = frozenset(_declared_names(nodes, ast.Global))
-    values.class_nonlocals = frozenset(_declared_names(nodes, ast.Nonlocal))
-    values.class_locals = (
-        frozenset(bound_names(nodes, class_scope=True)) - values.class_globals
-    )
-    aliases = dict(parent_aliases)
-    outer_values, outer_aliases = module_bindings(parent_values, parent_aliases)
-    # Class-bound names use LOAD_NAME's module fallback until assigned;
-    # only free names capture an enclosing function's lexical bindings.
-    for name in bound_names(nodes, class_scope=True):
-        values.pop(name, None)
-        aliases.pop(name, None)
-        if name in outer_values:
-            values[name] = outer_values[name]
-        if name in outer_aliases:
-            aliases[name] = outer_aliases[name]
-    return values, aliases
 
 
 def bound_names(nodes: list[ast.AST], *, class_scope: bool = False) -> set[str]:
@@ -131,12 +83,12 @@ def bound_names(nodes: list[ast.AST], *, class_scope: bool = False) -> set[str]:
     import_aliases(nodes, imported)
     names.update(imported)
     if class_scope:
-        names.update(_declared_names(nodes, ast.Global))
-        names.difference_update(_declared_names(nodes, ast.Nonlocal))
+        names.update(declared_names(nodes, ast.Global))
+        names.difference_update(declared_names(nodes, ast.Nonlocal))
     return names
 
 
-def _declared_names(
+def declared_names(
     nodes: list[ast.AST], declaration: type[ast.Global] | type[ast.Nonlocal]
 ) -> set[str]:
     return {
@@ -151,6 +103,12 @@ def union_values(target: dict[str, Value], source: dict[str, Value]) -> None:
 
 
 def _merged_value(left: Value, right: Value) -> Value:
+    positions, position_errors = _deferred(
+        lambda: _bounded_positions(iter(left.positions + right.positions)), ()
+    )
+    targets, target_errors = _deferred(
+        lambda: _bounded_mappings(iter(left.target_mappings + right.target_mappings)), ()
+    )
     return Value(
         left.strings | right.strings,
         left.mapping_keys | right.mapping_keys,
@@ -161,6 +119,12 @@ def _merged_value(left: Value, right: Value) -> Value:
         left.errors | right.errors,
         left.mapping_errors | right.mapping_errors,
         left.iteration_errors | right.iteration_errors,
+        positions,
+        left.position_errors | right.position_errors | position_errors,
+        targets,
+        left.target_errors | right.target_errors | target_errors,
+        left.target_key_options | right.target_key_options,
+        left.callables | right.callables,
     )
 
 
@@ -173,17 +137,27 @@ def dotted(node: ast.expr, aliases: Aliases) -> frozenset[str]:
     if isinstance(node, ast.Name):
         return aliases.get(node.id, frozenset({node.id}))
     if isinstance(node, ast.Attribute):
-        paths = (
-            _bounded_alias(f"{name}.{node.attr}")
+        return frozenset().union(*(
+            _member_aliases(name, node.attr, aliases)
             for name in dotted(node.value, aliases)
-        )
-        return frozenset().union(*(alias_value(path, aliases) for path in paths))
+        ))
     if isinstance(node, ast.Call):
+        if (result := aliases.get(f"@call:{id(node)}")) is not None:
+            return result
         classes = class_aliases(node.func, aliases)
         return frozenset(f"{name}/{id(node)}" for name in classes) or frozenset({""})
     if isinstance(node, ast.IfExp):
         return frozenset().union(*(dotted(arm, aliases) for arm in _arms(node)))
     return frozenset({""})
+
+
+def _member_aliases(owner: str, member: str, aliases: Aliases) -> frozenset[str]:
+    resolved = alias_value(_bounded_alias(f"{owner}.{member}"), aliases)
+    instance = owner.startswith("@class:") and "/" in owner and "." not in owner
+    return frozenset(
+        f"@bound:{name}" if instance and name.startswith("@function:") else name
+        for name in resolved
+    )
 
 
 def class_aliases(node: ast.expr, aliases: Aliases) -> frozenset[str]:
@@ -396,6 +370,7 @@ def _capture_argument(node: ast.expr, values: dict[str, Value]) -> Argument:
                 value.errors,
                 value.mapping_errors,
                 value.iteration_errors,
+                callables=value.callables,
             ),
         )
         for name in sorted(names)
@@ -427,33 +402,95 @@ def _overlay_mappings(
 
 
 def _mapping_alternatives(
-    node: ast.expr, values: dict[str, Value]
+    node: ast.expr, values: dict[str, Value], *, target: str | None = None
 ) -> tuple[Mapping, ...]:
     if isinstance(node, ast.Name):
         stored = values.get(node.id, Value())
-        if stored.mapping_errors:
-            raise ValueError(sorted(stored.mapping_errors)[0])
-        return stored.mapping_alternatives or ((),)
+        errors = stored.target_errors if target else stored.mapping_errors
+        if errors:
+            raise ValueError(sorted(errors)[0])
+        mappings = stored.target_mappings if target else stored.mapping_alternatives
+        return mappings or ((),)
     if isinstance(node, ast.IfExp):
         return _bounded_mappings(
             mapping
             for arm in _arms(node)
-            for mapping in _mapping_alternatives(arm, values)
+            for mapping in _mapping_alternatives(arm, values, target=target)
         )
     if not isinstance(node, ast.Dict):
         return ((),)
     options: tuple[Mapping, ...] = ((),)
     for key, value in zip(node.keys, node.values, strict=True):
         additions = (
-            _mapping_alternatives(value, values)
+            _mapping_alternatives(value, values, target=target)
             if key is None
-            else tuple(
-                ((name, _capture_argument(value, values)),)
-                for name in strings(key, values)
-            )
+            else _mapping_item(key, value, values, target)
         )
         options = _overlay_mappings(options, additions or ((),))
     return options
+
+
+def _mapping_item(
+    key: ast.expr, value: ast.expr, values: dict[str, Value], target: str | None
+) -> tuple[Mapping, ...]:
+    if target is None:
+        return tuple(
+            ((name, _capture_argument(value, values)),) for name in strings(key, values)
+        )
+    return tuple(
+        ((target, _capture_argument(value, values)),) if matches else ()
+        for matches in _target_key(key, values, target)
+    )
+
+
+def _target_key(node: ast.expr, values: dict[str, Value], target: str) -> set[bool]:
+    if isinstance(node, ast.Name) and (stored := values.get(node.id)) is not None:
+        if stored.target_key_options:
+            return set(stored.target_key_options)
+    if isinstance(node, ast.IfExp):
+        return set().union(*(_target_key(arm, values, target) for arm in _arms(node)))
+    return {name == target for name in _key_strings(node, values)} or {False}
+
+
+def _key_strings(node: ast.expr, values: dict[str, Value]) -> set[str]:
+    if isinstance(node, ast.JoinedStr):
+        return joined([
+            _key_field(part, values) if isinstance(part, ast.FormattedValue)
+            else _key_strings(part, values) for part in node.values
+        ])
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return joined([_key_strings(node.left, values), _key_strings(node.right, values)])
+    if isinstance(node, ast.IfExp):
+        return set().union(*(_key_strings(arm, values) for arm in _arms(node)))
+    return strings(node, values)
+
+
+def _key_field(node: ast.FormattedValue, values: dict[str, Value]) -> set[str]:
+    known = _format_candidates(node.value, values)
+    specs = strings(node.format_spec, values) if node.format_spec else {""}
+    if len(known) * len(specs) > 256:
+        raise ValueError("too many static alternatives in an attribute target")
+    return {
+        _key_format(value, node.conversion, spec)
+        for value in known for spec in specs
+    } or {"?"}
+
+
+def _key_format(value: object, conversion: int, spec: str) -> str:
+    spec = re.sub(r"\d+", lambda match: match[0].lstrip("0") or "0", spec)
+    # String precision truncates; a huge precision does not enlarge a short key.
+    if isinstance(value, str) and conversion in {-1, ord("s")}:
+        match = re.search(r"\.(\d+)(?=s?$)", spec)
+        if match:
+            digits = match[1].lstrip("0") or "0"
+            precision = len(value) if len(digits) > 4 else min(int(digits), len(value))
+            spec = spec[:match.start()] + f".{precision}" + spec[match.end():]
+    try:
+        return _format_literal(value, conversion, spec)
+    except ValueError as error:
+        if str(error) != "formatted attribute target exceeds the size limit":
+            raise
+        return "?"
 
 
 def _object_kinds(node: ast.expr | None, values: dict[str, Value]) -> frozenset[str]:
@@ -482,6 +519,20 @@ def _deferred[T](resolve: Callable[[], T], empty: T) -> tuple[T, frozenset[str]]
         return empty, frozenset({str(error)})
 
 
+def _value_aliases(node: ast.expr | None, values: dict[str, Value]) -> frozenset[str]:
+    if isinstance(node, ast.Name):
+        stored = values.get(node.id)
+        return stored.callables if stored is not None else frozenset({node.id})
+    if isinstance(node, ast.Attribute):
+        return frozenset(
+            _bounded_alias(f"{name}.{node.attr}")
+            for name in _value_aliases(node.value, values)
+        )
+    if isinstance(node, ast.IfExp):
+        return frozenset().union(*(_value_aliases(arm, values) for arm in _arms(node)))
+    return frozenset()
+
+
 def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
     scalar, errors = _deferred(lambda: strings(node, values), set[str]())
     keys, key_errors = _deferred(
@@ -496,6 +547,17 @@ def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
         empty_mappings,
     )
     kinds, _ = _deferred(lambda: _object_kinds(node, values), frozenset[str]())
+    positions, position_errors = _deferred(
+        lambda: _sequence_positions(node, values), ()
+    )
+    targets, target_errors = _deferred(
+        lambda: _mapping_alternatives(node, values, target="in_dict")
+        if node is not None else (), empty_mappings,
+    )
+    target_keys, _ = _deferred(
+        lambda: _target_key(node, values, "in_dict") if node is not None else set(),
+        set[bool](),
+    )
     return Value(
         frozenset(scalar),
         frozenset(keys),
@@ -506,6 +568,12 @@ def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
         errors,
         key_errors | mapping_errors,
         iteration_errors,
+        positions,
+        position_errors,
+        targets,
+        target_errors,
+        frozenset(target_keys),
+        _value_aliases(node, values),
     )
 
 
@@ -516,27 +584,75 @@ def iterated_value(node: ast.expr, values: dict[str, Value]) -> Value:
         return Value(errors=frozenset({str(error)}))
 
 
-def _expanded_positions(expressions: list[ast.expr]) -> Iterator[ast.expr | None]:
+Positions = tuple[Argument | None, ...]
+
+
+def _bounded_positions(options: Iterator[Positions]) -> tuple[Positions, ...]:
+    unique: dict[Positions, None] = {}
+    for option in options:
+        if len(option) > 256 or len(unique) >= 256 and option not in unique:
+            raise ValueError("too many static alternatives in positional arguments")
+        unique[option] = None
+    return tuple(unique)
+
+
+def _sequence_positions(
+    node: ast.expr | None, values: dict[str, Value]
+) -> tuple[Positions, ...]:
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return _expanded_positions(node.elts, values)
+    if isinstance(node, ast.Name):
+        stored = values.get(node.id, Value())
+        if stored.position_errors:
+            raise ValueError(sorted(stored.position_errors)[0])
+        return stored.positions or ((None,),)
+    if isinstance(node, ast.IfExp):
+        return _bounded_positions(
+            option for arm in _arms(node) for option in _sequence_positions(arm, values)
+        )
+    return ((None,),)
+
+
+def _expanded_positions(
+    expressions: list[ast.expr], values: dict[str, Value]
+) -> tuple[Positions, ...]:
+    options: tuple[Positions, ...] = ((),)
     for expression in expressions:
-        if not isinstance(expression, ast.Starred):
-            yield expression
-        elif isinstance(expression.value, (ast.Tuple, ast.List)):
-            yield from _expanded_positions(expression.value.elts)
-        else:
-            # Later arguments have no statically determined positions.
-            yield None
-            return
+        additions = (
+            _sequence_positions(expression.value, values)
+            if isinstance(expression, ast.Starred)
+            else ((_capture_argument(expression, values),),)
+        )
+        options = _bounded_positions(
+            before if None in before else before + after
+            for before in options for after in additions
+        )
+    return options
 
 
 def call_arguments(
     call: ast.Call, values: dict[str, Value], *, keyword_target: str | None = None
 ) -> list[Arguments]:
-    prefix: list[Argument] = []
-    for expression in _expanded_positions(call.args):
-        if expression is None:
-            break
-        prefix.append(_capture_argument(expression, values))
-    positional = tuple(prefix)
+    options = (
+        option
+        for positions in _expanded_positions(call.args, values)
+        for option in _keyword_arguments(
+            call, values, tuple(item for item in positions if item is not None),
+            keyword_target,
+        )
+    )
+    unique: dict[Arguments, None] = {}
+    for option in options:
+        unique[option] = None
+        if len(unique) > 256:
+            raise ValueError("too many static alternatives in call arguments")
+    return list(unique)
+
+
+def _keyword_arguments(
+    call: ast.Call, values: dict[str, Value], positional: tuple[Argument, ...],
+    keyword_target: str | None,
+) -> list[Arguments]:
     if keyword_target is not None:
         if positional:
             return [Arguments(positional, ())]
@@ -551,7 +667,7 @@ def call_arguments(
     options: tuple[Mapping, ...] = ((),)
     for keyword in call.keywords:
         additions = (
-            _mapping_alternatives(keyword.value, values)
+            _mapping_alternatives(keyword.value, values, target=keyword_target)
             if keyword.arg is None
             else (((keyword.arg, _capture_argument(keyword.value, values)),),)
         )
@@ -730,155 +846,6 @@ def _literal_pattern_pairs(
     ):
         return list(zip(pattern.patterns, subject.elts, strict=True))
     return []
-
-
-Env = tuple[dict[str, Value], Aliases]
-
-
-class ClassValues(ScopeValues):
-    """Resolved class lookup plus stored-local alternatives and definite bindings."""
-
-    def __init__(self, values: dict[str, Value]) -> None:
-        super().__init__(values)
-        self.bound: frozenset[str] = (
-            values.bound if isinstance(values, ClassValues) else frozenset()
-        )
-        self.local_values: dict[str, Value] = (
-            dict(values.local_values) if isinstance(values, ClassValues) else {}
-        )
-        self.local_aliases: Aliases = (
-            dict(values.local_aliases) if isinstance(values, ClassValues) else {}
-        )
-        self.closure: Env = (self, {})
-
-
-def copy_namespace(source: Env) -> tuple[ScopeValues, Aliases]:
-    return ScopeValues(source[0]), dict(source[1])
-
-
-def copy_context(closure: Env) -> tuple[ScopeValues, Aliases]:
-    module = module_bindings(*closure)
-    copied_module = copy_namespace(module)
-    copied_module[0].module_bindings = copied_module
-    copied = copied_module if closure[0] is module[0] else copy_namespace(closure)
-    copied[0].module_bindings = copied_module
-    return copied
-
-
-def publish_context(target: Env, source: Env) -> None:
-    pairs = [(module_bindings(*target), module_bindings(*source)), (target, source)]
-    for destination, original in pairs:
-        destination[0].clear()
-        destination[0].update(original[0])
-        destination[1].clear()
-        destination[1].update(original[1])
-
-
-def namespace_key(namespace: Env) -> tuple:
-    return tuple(sorted(namespace[0].items())), tuple(sorted(namespace[1].items()))
-
-
-def merge_namespace(target: Env, source: Env) -> None:
-    union_values(target[0], source[0])
-    for name in target[1].keys() | source[1].keys():
-        target[1][name] = alias_options(name, target[1]) | alias_options(
-            name, source[1]
-        )
-
-
-@dataclass
-class State:
-    values: ClassValues
-    aliases: Aliases
-    closure: Env
-
-    def copy(self) -> State:
-        closure = copy_context(self.closure)
-        values = ClassValues(self.values)
-        values.module_bindings = module_bindings(*closure)
-        values.closure = closure
-        return State(values, dict(self.aliases), closure)
-
-    def key(self) -> tuple:
-        return (
-            namespace_key((self.values, self.aliases)),
-            self.values.bound,
-            namespace_key((self.values.local_values, self.values.local_aliases)),
-            self.values.class_locals,
-            self.values.class_globals,
-            self.values.class_nonlocals,
-            self.values.scope_kind,
-            self.values.lexical_names,
-            self.values.scope_id,
-            namespace_key(self.closure),
-            namespace_key(module_bindings(*self.closure)),
-        )
-
-    def refresh(self) -> None:
-        module = module_bindings(*self.closure)
-        names = (
-            self.values.keys()
-            | self.aliases.keys()
-            | self.values.local_values.keys()
-            | self.values.local_aliases.keys()
-            | module[0].keys()
-            | module[1].keys()
-            | self.closure[0].keys()
-            | self.closure[1].keys()
-        )
-        for name in names:
-            self.refresh_name(name, module)
-
-    def refresh_name(self, name: str, module: Env) -> None:
-        if self.values.scope_kind != "class":
-            self.refresh_lexical_name(name, module)
-            return
-        external = name in self.values.class_globals | self.values.class_nonlocals
-        owner = (
-            module
-            if name in self.values.class_locals | self.values.class_globals
-            else self.closure
-        )
-        self.values.pop(name, None)
-        self.aliases.pop(name, None)
-        if external or name not in self.values.bound:
-            if name in owner[0]:
-                self.values[name] = owner[0][name]
-            if name in owner[1]:
-                self.aliases[name] = owner[1][name]
-        if external:
-            return
-        # Stored-local alternatives exclude the old fallback value, so a later
-        # owner write can replace that fallback without erasing a bound path.
-        if name in self.values.local_values:
-            union_values(self.values, {name: self.values.local_values[name]})
-        if name in self.values.local_aliases:
-            fallback = frozenset() if name in self.values.bound else frozenset({name})
-            self.aliases[name] = (
-                self.aliases.get(name, fallback) | self.values.local_aliases[name]
-            )
-
-    def refresh_lexical_name(self, name: str, module: Env) -> None:
-        owner = (
-            self.closure
-            if self.values.scope_kind == "function"
-            and name in self.values.lexical_names
-            else module
-        )
-        self.values.pop(name, None)
-        self.aliases.pop(name, None)
-        if name in owner[0]:
-            self.values[name] = owner[0][name]
-        if name in owner[1]:
-            self.aliases[name] = owner[1][name]
-
-    def merge(self, other: State) -> None:
-        merge_namespace((self.values, self.aliases), (other.values, other.aliases))
-        merge_namespace(self.closure, other.closure)
-        merge_namespace(module_bindings(*self.closure), module_bindings(*other.closure))
-        union_values(self.values.local_values, other.values.local_values)
-        union_aliases(self.values.local_aliases, other.values.local_aliases)
-        self.values.bound &= other.values.bound
 
 
 def literal_iterations(expression: ast.expr, aliases: Aliases) -> list[ast.expr] | None:
