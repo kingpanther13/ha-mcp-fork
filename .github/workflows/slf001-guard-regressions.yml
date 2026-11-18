@@ -11,7 +11,7 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: 2381471b2f46f9df4e6c5abf4eaa3e8ddbaeaeda
+        default: 38a9aed58c0df7e6d970855336f6a11eff35b136
       baseline_only:
         description: Prove baseline failures before implementation is ready
         type: boolean

@@ -24,10 +24,10 @@ REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
-BASELINE = "2381471b2f46f9df4e6c5abf4eaa3e8ddbaeaeda"
+BASELINE = "38a9aed58c0df7e6d970855336f6a11eff35b136"
 BASELINE_GROUP_COUNTS = {
-    REJECT_NAME: 186,
-    ALLOW_NAME: 166,
+    REJECT_NAME: 212,
+    ALLOW_NAME: 194,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -44,7 +44,7 @@ BASELINE_GROUP_COUNTS = {
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
 assert set(CASE_MANIFEST) == set(CASE_GROUPS.values())
-assert sum(BASELINE_GROUP_COUNTS.values()) == 423
+assert sum(BASELINE_GROUP_COUNTS.values()) == 477
 NEW_CASE_COUNTS = {group: len(CASE_MANIFEST[section]) for group, section in CASE_GROUPS.items()}
 GROUP_COUNTS = {
     group: count + NEW_CASE_COUNTS.get(group, 0)

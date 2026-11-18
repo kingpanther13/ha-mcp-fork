@@ -1,275 +1,50 @@
 {
   "reject": [
     {
-      "id": "literal-star-tuple-private-attribute",
-      "source": "getattr(*(obj, '_helper'))\n",
+      "id": "known-class-static-method-uses-early-global",
+      "source": "NAME = '_helper'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nExample.run()\nNAME = 'public'\n",
       "baseline_fails": true
     },
     {
-      "id": "literal-star-list-private-attribute",
-      "source": "getattr(*[obj, '_helper'])\n",
+      "id": "immediate-known-instance-method-uses-early-global",
+      "source": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample().run()\nNAME = 'public'\n",
       "baseline_fails": true
     },
     {
-      "id": "nested-literal-star-private-attribute",
-      "source": "getattr(*(*[obj], *('_helper',)))\n",
+      "id": "copied-known-instance-method-uses-early-global",
+      "source": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ninvoke = instance.run\ninvoke()\nNAME = 'public'\n",
       "baseline_fails": true
     },
     {
-      "id": "literal-star-private-patch-target",
-      "source": "patch.dict(*('pkg._cache', {}), **{'_data': 1})\n",
+      "id": "known-constructor-init-runs-at-instantiation",
+      "source": "NAME = '_helper'\nclass Example:\n    def __init__(self):\n        getattr(mod, NAME)\nExample()\nNAME = 'public'\n",
       "baseline_fails": true
     },
     {
-      "id": "shadowed-range-parameter-body-is-reachable",
-      "source": "def test_it(range):\n    for item in range(0):\n        getattr(obj, '_helper')\n",
+      "id": "known-constructor-new-runs-at-instantiation",
+      "source": "NAME = '_helper'\nclass Example:\n    def __new__(cls):\n        getattr(mod, NAME)\n        return object.__new__(cls)\nExample()\nNAME = 'public'\n",
       "baseline_fails": true
-    },
-    {
-      "id": "alias-of-shadowed-range-remains-unknown",
-      "source": "def test_it(range):\n    steps = range\n    for item in steps(0):\n        getattr(obj, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "shadowed-set-call-match-is-unknown",
-      "source": "set = lambda: ['public']\nmatch set():\n    case ['public']:\n        getattr(obj, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "nested-shadowed-set-call-match-is-unknown",
-      "source": "set = lambda: ['public']\nmatch (set(),):\n    case (['public'],):\n        getattr(obj, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "or-pattern-first-match-private-capture",
-      "source": "match ('_helper', 'public'):\n    case (name, 'public') | ('_helper', name):\n        getattr(obj, name)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "or-pattern-unknown-earlier-arm-retains-private-capture",
-      "source": "match ('_helper', 'public'):\n    case (name, constants.PUBLIC) | ('_helper', name):\n        getattr(obj, name)\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-module-body-uses-final-private-global",
-      "source": "NAME = 'public'\ndef test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-nested-body-uses-reassigned-closure",
-      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    inner()\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-method-uses-final-module-global",
-      "source": "NAME = 'public'\nclass TestExample:\n    def test_it(self):\n        getattr(mod, NAME)\nNAME = '_helper'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-default-still-runs-at-definition",
-      "source": "NAME = '_helper'\ndef test_it(value=getattr(mod, NAME)):\n    pass\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-decorator-still-runs-at-definition",
-      "source": "NAME = '_helper'\n@getattr(mod, NAME)\ndef test_it():\n    pass\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-direct-call-keeps-call-time-private-global",
-      "source": "NAME = '_helper'\ndef helper():\n    getattr(mod, NAME)\nhelper()\nNAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "partial-delete-restores-builtin-before-target-failure",
-      "source": "getattr = callback\ntry:\n    del getattr, {}['missing']\nexcept KeyError:\n    getattr(mod, '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-lambda-uses-final-private-global",
-      "source": "NAME = 'public'\nrun = lambda: getattr(mod, NAME)\nNAME = '_helper'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-async-uses-final-private-global",
-      "source": "NAME = 'public'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-returned-function-uses-final-private-closure",
-      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    return inner\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-method-keeps-enclosing-function-cell",
-      "source": "NAME = 'public'\ndef outer():\n    NAME = '_helper'\n    class TestExample:\n        NAME = 'public'\n        def test_it(self):\n            getattr(mod, NAME)\n    return TestExample\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-sibling-call-keeps-defining-private-cell",
-      "source": "def outer():\n    NAME = '_helper'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = 'public'\n        inner()\n    caller()\n    NAME = 'public'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "parameter-callable-shadow-precedes-later-import",
-      "source": "def test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    from builtins import range\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "parameter-callable-shadow-precedes-later-assignment",
-      "source": "from builtins import range as builtin_range\ndef test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    range = builtin_range\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "awaited-body-uses-current-module-binding",
-      "source": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    NAME = '_helper'\n    await helper()\n    NAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "immediate-lambda-keeps-private-call-time-binding",
-      "source": "NAME = '_helper'\n(lambda: getattr(mod, NAME))()\nNAME = 'public'\n",
-      "baseline_fails": false
     }
   ],
   "allow": [
     {
-      "id": "literal-star-default-is-not-attribute",
-      "source": "getattr(*(obj, 'public'), '_default')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "literal-star-own-object-private-attribute",
-      "source": "def test_it(self):\n    getattr(*(self, '_helper'))\n",
+      "id": "known-class-method-keeps-public-call-time-global",
+      "source": "NAME = '_data'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = 'public'\nExample.run()\n",
       "baseline_fails": false
     },
     {
-      "id": "unknown-star-does-not-fix-later-positions",
-      "source": "getattr(*arguments, '_data')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "literal-prefix-before-unknown-star-remains-known",
-      "source": "getattr(*(obj, 'public', *defaults))\n",
+      "id": "unrelated-class-call-does-not-run-another-method",
+      "source": "NAME = '_data'\nclass First:\n    def run(self):\n        getattr(mod, NAME)\nclass Second:\n    def run(self):\n        getattr(mod, 'public')\nSecond().run()\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "positional-patch-dict-does-not-resolve-data-keys",
-      "source": "patch.dict({}, **{f\"{'x':>5000}\": 1})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "starred-positional-patch-dict-keeps-data-keys-lazy",
-      "source": "patch.dict(*({},), **{f\"{'x':>5000}\": 1})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "explicit-patch-dict-target-keeps-data-keys-lazy",
-      "source": "patch.dict(in_dict={}, **{f\"{'x':>5000}\": 1})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "unshadowed-builtin-range-empty-body-unreachable",
-      "source": "for item in range(0):\n    getattr(obj, '_data')\n",
+      "id": "rebound-class-name-is-not-the-old-constructor",
+      "source": "NAME = '_data'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample = factory\nExample().run()\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "aliased-builtin-range-empty-body-unreachable",
-      "source": "from builtins import range as steps\nfor item in steps(0):\n    getattr(obj, '_data')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "shadowed-range-public-body",
-      "source": "def test_it(range):\n    for item in range(0):\n        getattr(obj, 'public')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "literal-match-definite-mismatch-stays-unreachable",
-      "source": "match ('different',):\n    case ['public']:\n        getattr(obj, '_data')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "or-pattern-first-match-public-capture",
-      "source": "match ('_data', 'public'):\n    case ('_data', name) | (name, 'public'):\n        getattr(obj, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "or-pattern-skips-definite-mismatch-capture",
-      "source": "match ('_data', 'public'):\n    case (name, 'wrong') | ('_data', name):\n        getattr(obj, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-module-body-drops-former-private-global",
-      "source": "NAME = '_data'\ndef test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-nested-body-drops-former-private-closure",
-      "source": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    inner()\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-method-drops-former-private-global",
-      "source": "NAME = '_data'\nclass TestExample:\n    def test_it(self):\n        getattr(mod, NAME)\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-default-keeps-public-definition-state",
-      "source": "NAME = 'public'\ndef test_it(value=getattr(mod, NAME)):\n    pass\nNAME = '_data'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-decorator-keeps-public-definition-state",
-      "source": "NAME = 'public'\n@getattr(mod, NAME)\ndef test_it():\n    pass\nNAME = '_data'\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-unrelated-call-does-not-run-test-early",
-      "source": "NAME = '_data'\ndef test_it():\n    getattr(mod, NAME)\nother()\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "partial-delete-failure-before-builtin-restored",
-      "source": "getattr = callback\ntry:\n    del {}['missing'], getattr\nexcept KeyError:\n    getattr(mod, '_data')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "deferred-lambda-uses-final-public-global",
-      "source": "NAME = '_data'\nrun = lambda: getattr(mod, NAME)\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-async-uses-final-public-global",
-      "source": "NAME = '_data'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-returned-function-uses-final-public-closure",
-      "source": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    return inner\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-returned-method-uses-final-enclosing-cell",
-      "source": "NAME = 'public'\ndef outer():\n    NAME = '_data'\n    class TestExample:\n        NAME = '_data'\n        def test_it(self):\n            getattr(mod, NAME)\n    NAME = 'public'\n    return TestExample\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "deferred-sibling-call-ignores-callers-private-local",
-      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = '_data'\n        inner()\n    caller()\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "actual-import-replaces-parameter-callable-shadow",
-      "source": "def test_it(range):\n    from builtins import range\n    for item in range(0):\n        getattr(mod, '_data')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "async-creation-does-not-run-body-before-final-binding",
-      "source": "NAME = '_data'\nasync def helper():\n    getattr(mod, NAME)\npending = helper()\nNAME = 'public'\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "immediate-lambda-does-not-replay-after-later-private-store",
-      "source": "NAME = 'public'\n(lambda: getattr(mod, NAME))()\nNAME = '_data'\n",
+      "id": "known-instance-method-own-object-stays-exempt",
+      "source": "class Example:\n    def run(self):\n        getattr(self, '_own')\ninstance = Example()\ninstance.run()\n",
       "baseline_fails": false
     }
   ],
