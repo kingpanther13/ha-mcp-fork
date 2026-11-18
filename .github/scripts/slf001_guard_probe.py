@@ -150,6 +150,31 @@ def definitions(texts: list[str]) -> dict[str, ast.AST]:
     return nodes
 
 
+def server_answer_cases(node: ast.FunctionDef) -> dict[str, tuple[str, bool]]:
+    table = node.decorator_list[0].args[1]
+    if isinstance(table, ast.List):
+        return {
+            next(ast.literal_eval(kw.value) for kw in item.keywords if kw.arg == "id"):
+            tuple(ast.literal_eval(arg) for arg in item.args)
+            for item in table.elts
+        }
+    assert isinstance(table, ast.ListComp)
+    [clause] = table.generators
+    assert not clause.ifs and not clause.is_async
+    assert ast.dump(table.elt) == ast.dump(ast.parse("pytest.param(source, refused, id=case_id)", mode="eval").body)
+    assert ast.dump(clause.target) == ast.dump(ast.parse("for case_id, (source, refused) in rows: pass").body[0].target)
+    assert isinstance(clause.iter, ast.Call) and not clause.iter.args and not clause.iter.keywords
+    assert isinstance(clause.iter.func, ast.Attribute) and clause.iter.func.attr == "items"
+    mapping = clause.iter.func.value
+    assert isinstance(mapping, ast.Dict)
+    result = ast.literal_eval(mapping)
+    assert len(result) == len(mapping.keys) == 31
+    assert all(isinstance(key, str) and isinstance(value, tuple) and len(value) == 2
+               and isinstance(value[0], str) and isinstance(value[1], bool)
+               for key, value in result.items())
+    return result
+
+
 def expected_failures(baseline: str, candidate: str) -> set[str]:
     old_sources = [source(baseline, path) for path in BASELINE_TESTS]
     new_sources = [source(candidate, path) for path in GUARD_TESTS]
@@ -163,6 +188,16 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
         new_node = new_nodes[name]
         if name == LOCATION_NAME:
             continue  # The exact strengthened multiline body is checked above.
+        if name == "test_only_a_typed_in_server_answer_is_refused":
+            assert server_answer_cases(node) == server_answer_cases(new_node)
+            assert ast.dump(node.args) == ast.dump(new_node.args)
+            assert [ast.dump(item) for item in node.body] == [ast.dump(item) for item in new_node.body]
+            assert len(node.decorator_list) == len(new_node.decorator_list) == 1
+            old_decorator = ast.parse(ast.unparse(node.decorator_list[0])).body[0].value
+            new_decorator = ast.parse(ast.unparse(new_node.decorator_list[0])).body[0].value
+            old_decorator.args[1] = new_decorator.args[1] = ast.List(elts=[], ctx=ast.Load())
+            assert ast.dump(old_decorator) == ast.dump(new_decorator)
+            continue
         if name not in CASE_GROUPS:
             assert ast.dump(node) == ast.dump(new_node), (name, "changed prior definition")
             continue

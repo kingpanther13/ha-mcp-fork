@@ -74,6 +74,21 @@
       "id": "bounded-recursive-sequence-still-checks-following-target",
       "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, '_helper')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "lambda-default-keeps-value-before-argument-effect",
+      "source": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-loop-next-iteration-observes-current-global",
+      "source": "NAME = 'public'\ndef values():\n    for item in (1, 2):\n        getattr(mod, NAME)\n        yield None\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-resumed-exception-enters-handler",
+      "source": "NAME = 'public'\ndef values():\n    try:\n        yield None\n        raise ValueError()\n    except ValueError:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
@@ -151,6 +166,21 @@
       "id": "unused-recursive-sequence-snapshot-stays-bounded",
       "source": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, 'public')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "lambda-default-keeps-public-value-before-argument-effect",
+      "source": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(lambda ignored, name=NAME: getattr(mod, name))(switch())\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-loop-yield-defers-following-lookup",
+      "source": "NAME = '_helper'\ndef values():\n    for item in (1,):\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-yield-defers-finally-until-resume",
+      "source": "NAME = '_helper'\ndef values():\n    try:\n        yield None\n    finally:\n        getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+      "baseline_fails": true
     }
   ],
   "error": []
