@@ -112,9 +112,7 @@ class _Deferred:
 _comprehension_nodes = binding_rules.comprehension_nodes
 
 
-def _nodes(
-    scope: ast.AST, *, descend_assignments: bool = True
-) -> Iterator[ast.AST]:
+def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.AST]:
     """Nodes in one lexical scope, leaving nested bodies to their own scope."""
     children: Iterator[ast.AST]
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -127,12 +125,8 @@ def _nodes(
         children = ast.iter_child_nodes(scope)
     for child in children:
         yield child
-        if (
-            isinstance(child, _SCOPES)
-            or (
-                not descend_assignments
-                and isinstance(child, (ast.Assign, ast.AnnAssign))
-            )
+        if isinstance(child, _SCOPES) or (
+            not descend_assignments and isinstance(child, (ast.Assign, ast.AnnAssign))
         ):
             continue
         yield from _nodes(
