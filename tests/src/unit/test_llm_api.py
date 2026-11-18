@@ -85,9 +85,11 @@ async def test_a_call_passes_its_arguments_and_returns_the_servers_result(
 async def test_a_refused_connection_raises_homeassistanterror(
     hass: HomeAssistant,
 ) -> None:
-    with refused_port() as port:
-        with pytest.raises(HomeAssistantError, match="ha_search"):
-            await call(hass, mirrored_tool(port), {})
+    with (
+        refused_port() as port,
+        pytest.raises(HomeAssistantError, match="ha_search"),
+    ):
+        await call(hass, mirrored_tool(port), {})
 
 
 @_LOOPBACK

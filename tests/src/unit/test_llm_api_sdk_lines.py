@@ -175,9 +175,11 @@ class TestSdkV2:
     ) -> None:
         use_sdk_v2(monkeypatch)
 
-        with refused_port() as port:
-            with pytest.raises(HomeAssistantError, match="Could not reach"):
-                await api_instance(hass, port, EXPOSURE_FULL)
+        with (
+            refused_port() as port,
+            pytest.raises(HomeAssistantError, match="Could not reach"),
+        ):
+            await api_instance(hass, port, EXPOSURE_FULL)
 
     async def test_a_protocol_error_is_a_transport_failure(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
@@ -283,6 +285,8 @@ class TestResultKeysMatchAcrossSdkLines:
 
         monkeypatch.setattr(importlib, "import_module", never_loads)
 
-        with refused_port() as port:
-            with pytest.raises(HomeAssistantError, match="Could not reach"):
-                await api_instance(hass, port, EXPOSURE_FULL)
+        with (
+            refused_port() as port,
+            pytest.raises(HomeAssistantError, match="Could not reach"),
+        ):
+            await api_instance(hass, port, EXPOSURE_FULL)

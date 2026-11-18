@@ -312,11 +312,15 @@ class TestLogStartupVersion:
         """The banner passes the release's requires_python on: a pip hint
         would reinstall the old version on a Python the release excludes."""
         monkeypatch.setattr(
-            update_check, "os",
-            SimpleNamespace(environ=os.environ, path=SimpleNamespace(exists=lambda path: False)),
+            update_check,
+            "os",
+            SimpleNamespace(
+                environ=os.environ, path=SimpleNamespace(exists=lambda path: False)
+            ),
         )
         monkeypatch.setattr(
-            update_check, "sys",
+            update_check,
+            "sys",
             SimpleNamespace(version_info=(3, 13, 7, "final", 0), argv=sys.argv),
         )
         monkeypatch.delenv(update_check.DISABLE_ENV)
