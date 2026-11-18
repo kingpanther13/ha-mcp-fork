@@ -8,7 +8,7 @@ import sys
 
 assert sys.platform == "win32", "This proof requires native Windows paths"
 BASELINE = "df7a1399c2e083d0225375620452d1e0fde6fb14"
-GUARDS = ("private_test_access.py", "private_test_bindings.py", "private_test_flow.py")
+GUARDS = ("private_test_access.py", "private_test_bindings.py", "private_test_flow.py", "private_test_expressions.py")
 
 
 def git(*args):
@@ -34,6 +34,8 @@ def main():
         scripts = folder / "scripts"
         scripts.mkdir(parents=True, exist_ok=True)
         for name in GUARDS:
+            if not git("ls-tree", "--name-only", revision, "--", f"scripts/{name}"):
+                continue
             source = subprocess.check_output(
                 ["git", "show", f"{revision}:scripts/{name}"], text=True
             )

@@ -93,7 +93,12 @@
     {
       "id": "assigned-tuple-retains-earlier-private-operand",
       "source": "NAME = '_helper'\ndef clear():\n    global NAME\n    NAME = 'public'\nARGS = (mod, NAME, clear())\ngetattr(*ARGS)\n",
-      "baseline_fails": true
+      "baseline_fails": false
+    },
+    {
+      "id": "loop-tuple-capture-keeps-reject-state-stable",
+      "source": "NAME = '_helper'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
@@ -190,7 +195,12 @@
     {
       "id": "assigned-tuple-retains-earlier-public-operand",
       "source": "NAME = 'public'\ndef change():\n    global NAME\n    NAME = '_helper'\nARGS = (mod, NAME, change())\ngetattr(*ARGS)\nNAME = 'public'\n",
-      "baseline_fails": true
+      "baseline_fails": false
+    },
+    {
+      "id": "loop-tuple-capture-keeps-allow-state-stable",
+      "source": "NAME = 'public'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
+      "baseline_fails": false
     }
   ],
   "error": []

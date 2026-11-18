@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 GUARD_PATH = "scripts/private_test_access.py"
 GUARD_SUPPORT = "scripts/private_test_bindings.py"
 GUARD_FLOW = "scripts/private_test_flow.py"
-GUARD_PATHS = (GUARD_PATH, GUARD_SUPPORT, GUARD_FLOW)
+GUARD_EXPRESSIONS = "scripts/private_test_expressions.py"
+GUARD_PATHS = (GUARD_PATH, GUARD_SUPPORT, GUARD_FLOW, GUARD_EXPRESSIONS)
 FINALLY_NAME = "test_nested_finally_reports_each_source_access_once"
 BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
 PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
