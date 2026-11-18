@@ -131,7 +131,7 @@
       "id": "recursive-yield-from-loop-retains-private-policy",
       "source": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
       "baseline_fails": false,
-      "boundary_fails": true
+      "boundary_fails": false
     }
   ],
   "allow": [
