@@ -487,6 +487,7 @@ runpy.run_path(script, run_name="__main__")
                 "patch-dict-expanded-private-target-survives-large-data-key": "from unittest.mock import patch\npatch.dict(**{'in_dict': 'pkg._helper', f\"{'x':>5000}\": 1})\n",
                 "patch-dict-optional-overlay-keeps-private-target": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._helper', **({'in_dict': {}} if flag else {f\"{'x':>5000}\": 1})}\npatch.dict(**kwargs)\n",
                 "patch-dict-aliased-conditional-key-keeps-private-target": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: 'pkg._helper'})\n",
+                "patch-dict-large-string-precision-retains-short-private-target-key": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
             }.items()
         ),
     ],
@@ -726,6 +727,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "patch-dict-aliased-target-ignores-large-replacement-key": "from unittest.mock import patch\nkwargs = {'in_dict': {}, f\"{'x':>5000}\": 1}\npatch.dict(**kwargs)\n",
                 "patch-dict-definite-overlay-replaces-private-target": "from unittest.mock import patch\nkwargs = {'in_dict': 'pkg._data', f\"{'x':>5000}\": 1, **{'in_dict': {}}}\npatch.dict(**kwargs)\n",
                 "patch-dict-conditional-key-keeps-public-target": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: {}})\n",
+                "patch-dict-large-width-key-keeps-private-looking-replacement-data": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
             }.items()
         ),
     ],
