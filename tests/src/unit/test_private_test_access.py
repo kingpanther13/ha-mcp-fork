@@ -442,6 +442,14 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = 'public'\n    NAME = '_helper'\n    getattr(mod, NAME)\n",
             id="function-assignment-after-class-nonlocal-write",
         ),
+        pytest.param(
+            "NAME = 'public'\nclass Example:\n    if flag:\n        NAME = 'public'\n    class Nested:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+            id="mixed-local-binding-refreshes-unbound-module-path",
+        ),
+        pytest.param(
+            "NAME = 'public'\nclass Example:\n    if flag:\n        NAME = '_helper'\n    class Nested:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+            id="mixed-local-binding-preserves-private-local-path",
+        ),
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -706,16 +714,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
             id="class-deleted-nonlocal-name-does-not-restore-old-value",
         ),
         pytest.param(
-            'dispatch.dict("_data")\n',
-            id="dispatch-dict-is-not-patch",
-        ),
-        pytest.param(
-            'dispatch.object(obj, "_data")\n',
-            id="dispatch-object-is-not-patch",
-        ),
-        pytest.param(
-            "dispatch.multiple(obj, _data=value)\n",
-            id="dispatch-multiple-is-not-patch",
+            'dispatch.dict("_data")\ndispatch.object(obj, "_data")\ndispatch.multiple(obj, _data=value)\n',
+            id="dispatch-methods-are-not-patch",
         ),
         pytest.param(
             'patch.dict(**{"in_dict": "ha_mcp.module.cache", "values": {"_data": "_value"}})\n',
@@ -782,12 +782,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
             id="named-tuple-concatenation-does-not-cross-product",
         ),
         pytest.param(
-            "getattr(mod, f'{-1:x>3}')\n",
-            id="formatted-negative-literal-public-fill",
-        ),
-        pytest.param(
-            "getattr(mod, f'{+1:x>2}')\n",
-            id="formatted-positive-unary-literal-public-fill",
+            "getattr(mod, f'{-1:x>3}')\ngetattr(mod, f'{+1:x>2}')\n",
+            id="formatted-signed-literal-public-fill",
         ),
         pytest.param(
             "class E:\n    NAME = 'public'\n    for item in (0,):\n        break\n    else:\n        NAME = '_data'\n    getattr(mod, NAME)\n",
@@ -824,6 +820,10 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         pytest.param(
             "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\nNAME = '_data'\n",
             id="class-global-write-stays-public-before-later-assignment",
+        ),
+        pytest.param(
+            "NAME = '_data'\nclass Example:\n    if flag:\n        NAME = 'public'\n    class Nested:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+            id="mixed-local-binding-discards-replaced-private-fallback",
         ),
     ],
 )
