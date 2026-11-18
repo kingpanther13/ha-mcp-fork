@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import logging
+import os
 import sys
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 
@@ -309,9 +311,16 @@ class TestLogStartupVersion:
     ) -> None:
         """The banner passes the release's requires_python on: a pip hint
         would reinstall the old version on a Python the release excludes."""
-        monkeypatch.setattr(update_check.os.path, "exists", lambda path: False)
-        monkeypatch.setattr(update_check.sys, "version_info", (3, 13, 7, "final", 0))
+        monkeypatch.setattr(
+            update_check, "os",
+            SimpleNamespace(environ=os.environ, path=SimpleNamespace(exists=lambda path: False)),
+        )
+        monkeypatch.setattr(
+            update_check, "sys",
+            SimpleNamespace(version_info=(3, 13, 7, "final", 0), argv=sys.argv),
+        )
         monkeypatch.delenv(update_check.DISABLE_ENV)
+        monkeypatch.delenv("HA_MCP_EMBEDDED", raising=False)
         pypi.publish("ha-mcp", "9.2.0", ">=3.14")
         warnings = _warnings(await _checked_start(monkeypatch, caplog, "9.1.2", None))
         assert any("uvx --python 3.14 ha-mcp@latest" in m for m in warnings), warnings

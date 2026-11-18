@@ -18,16 +18,29 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _SCOPES = (
     ast.FunctionDef,
     ast.AsyncFunctionDef,
     ast.ClassDef,
     ast.Lambda,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
+    *_COMPREHENSIONS,
 )
+
+
+def _comprehension_nodes(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+) -> Iterator[ast.AST]:
+    """The first iterable belongs to the outer scope, not this body."""
+    if isinstance(scope, ast.DictComp):
+        yield scope.key
+        yield scope.value
+    else:
+        yield scope.elt
+    first, *remaining = scope.generators
+    yield first.target
+    yield from first.ifs
+    yield from remaining
 
 
 def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
@@ -37,6 +50,8 @@ def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
         children = iter(scope.body)
     elif isinstance(scope, ast.Lambda):
         children = iter([scope.body])
+    elif isinstance(scope, _COMPREHENSIONS):
+        children = _comprehension_nodes(scope)
     else:
         children = ast.iter_child_nodes(scope)
     for child in children:
@@ -52,6 +67,8 @@ def _headers(scope: ast.AST) -> Iterator[ast.expr]:
     if isinstance(scope, ast.ClassDef):
         yield from scope.bases
         yield from (keyword.value for keyword in scope.keywords)
+    if isinstance(scope, _COMPREHENSIONS):
+        yield scope.generators[0].iter
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         yield from scope.args.defaults
         yield from (value for value in scope.args.kw_defaults if value is not None)
@@ -122,7 +139,10 @@ def _strings(node: ast.expr | None, values: dict[str, set[str]]) -> set[str]:
 
 
 def _bindings(
-    scope: ast.AST, parent_values: dict[str, set[str]], parent_aliases: dict[str, str]
+    scope: ast.AST,
+    parent_values: dict[str, set[str]],
+    parent_aliases: dict[str, str],
+    initial_values: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, str]]:
     values = {name: set(items) for name, items in parent_values.items()}
     aliases = dict(parent_aliases)
@@ -132,6 +152,9 @@ def _bindings(
         for node in nodes
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
+    imported: dict[str, str] = {}
+    _import_aliases(nodes, imported)
+    local_names.update(imported)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         parameters = [
             *scope.args.posonlyargs,
@@ -146,7 +169,8 @@ def _bindings(
     for name in local_names:
         values.pop(name, None)
         aliases.pop(name, None)
-    _import_aliases(nodes, aliases)
+    aliases.update(imported)
+    values.update(initial_values or {})
     _extend_values(list(_assignments(nodes)), values, aliases)
     return values, aliases
 
@@ -280,15 +304,30 @@ def _private(target: str) -> bool:
 
 
 def _scan_scope(
-    scope: ast.AST, values: dict[str, set[str]], aliases: dict[str, str]
+    scope: ast.AST,
+    values: dict[str, set[str]],
+    aliases: dict[str, str],
+    initial_values: dict[str, set[str]] | None = None,
 ) -> Iterator[tuple[int, str]]:
-    values, aliases = _bindings(scope, values, aliases)
+    closure = (values, aliases)
+    values, aliases = _bindings(scope, values, aliases, initial_values)
+    if not isinstance(scope, ast.ClassDef):
+        closure = (values, aliases)
     for node in _nodes(scope):
         _update_aliases(node, aliases)
         if isinstance(node, _SCOPES):
             for header in _headers(node):
                 yield from _scan_scope(ast.Expression(body=header), values, aliases)
-            yield from _scan_scope(node, values, aliases)
+            first_values: dict[str, set[str]] = {}
+            if isinstance(node, _COMPREHENSIONS) and isinstance(
+                iterator_target := node.generators[0].target, ast.Name
+            ):
+                first_values[iterator_target.id] = _strings(
+                    node.generators[0].iter, values
+                )
+            # Methods and comprehension bodies do not capture a class namespace;
+            # their decorators/defaults/first iterable still execute in it.
+            yield from _scan_scope(node, *closure, first_values)
         elif isinstance(node, ast.Call):
             for target in sorted(_targets(node, aliases, values)):
                 if _private(target):

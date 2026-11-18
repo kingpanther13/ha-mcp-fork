@@ -62,6 +62,10 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         '{getattr(mod, name) for name in ("_helper",)}\n',
         '{name: getattr(mod, name) for name in ("_helper",)}\n',
         'tuple(getattr(mod, name) for name in ("_helper",))\n',
+        'TARGET = "_helper"\n[None for TARGET in getattr(mod, TARGET)]\n',
+        'TARGET = "_helper"\n{None for TARGET in getattr(mod, TARGET)}\n',
+        'TARGET = "_helper"\n{TARGET: None for TARGET in getattr(mod, TARGET)}\n',
+        'TARGET = "_helper"\niterator = (None for TARGET in getattr(mod, TARGET))\n',
         'patch("ha_mcp._vendor.fastmcp._helper")\n',
         'patch("ha_mcp._vendor.fastmcp._internal.helper")\n',
         'getattr(mod, "_looks_like_dunder__")\n',
@@ -74,6 +78,12 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         'TARGET = "_helper"\ndef test_it(TARGET=getattr(mod, TARGET)):\n    pass\n',
         'TARGET = "_helper"\ncallback = lambda TARGET=getattr(mod, TARGET): TARGET\n',
         'TARGET = "_helper"\nclass Example(getattr(mod, TARGET)):\n    TARGET = "public"\n',
+        'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    def method(self):\n        getattr(mod, TARGET)\n',
+        'TARGET = "public"\nclass Example:\n    TARGET = "_helper"\n    def method(self, value=getattr(mod, TARGET)):\n        pass\n',
+        'TARGET = "ha_mcp.mod.public"\nclass Example:\n    TARGET = "ha_mcp.mod._helper"\n    @patch(TARGET)\n    def method(self):\n        pass\n',
+        'def outer():\n    TARGET = "_helper"\n    class Example:\n        TARGET = "public"\n        def method(self):\n            getattr(mod, TARGET)\n',
+        'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    values = [getattr(mod, TARGET) for index in (1,)]\n',
+        'class Example:\n    NAMES = ("_helper",)\n    values = [getattr(mod, name) for name in NAMES]\n',
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -111,6 +121,13 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         '[getattr(cls, name) for name in ("_own_helper",)]\n',
         'name = "public"\n[name for name in ("_data",)]\ngetattr(mod, name)\n',
         'name = "_data"\n[getattr(mod, name) for name in ("public",)]\n',
+        'TARGET = "public"\n[None for TARGET in getattr(mod, TARGET) for TARGET in ("_data",)]\n',
+        'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    def method(self):\n        getattr(mod, TARGET)\n',
+        'TARGET = "_data"\nclass Example:\n    TARGET = "public"\n    def method(self, value=getattr(mod, TARGET)):\n        pass\n',
+        'TARGET = "ha_mcp.mod._data"\nclass Example:\n    TARGET = "ha_mcp.mod.public"\n    @patch(TARGET)\n    def method(self):\n        pass\n',
+        'NAME = "_data"\ndef test_it():\n    from public_constants import NAME\n    getattr(mod, NAME)\n',
+        'NAME = "_data"\ndef test_it():\n    import public_constants as NAME\n    getattr(mod, NAME)\n',
+        'NAME = "_data"\ndef test_it():\n    from public_constants import public as NAME\n    getattr(mod, NAME)\n',
     ],
 )
 def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
