@@ -335,6 +335,7 @@ class Analysis:
 @dataclass
 class Continuation:
     state: State
+    yielded: Value
     steps: list[Callable[[dict[str, State]], dict[str, State]]]
     findings: set[tuple[int, str]]
 
@@ -616,6 +617,7 @@ class Deferred:
         for stage in stages:
             continuation = self.continuations.get(stage)
             if continuation is not None:
+                yield continuation.yielded
                 state = continuation.state.copy()
                 self.refresh_cells(state)
                 values, captured = state.closure
@@ -839,12 +841,26 @@ class Deferred:
         self.cache[key] = result
         return result
 
-    def pause(self, state: State, findings: set[tuple[int, str]]) -> dict[str, State]:
+    def pause(self, state: State, findings: set[tuple[int, str]], yielded: Value) -> dict[str, State]:
         if len(self.continuations) >= 16384:
             raise ValueError("too many generator continuations")
         key = f"yield:{len(self.continuations)}"
-        self.continuations[key] = Continuation(state.copy(), [], findings)
+        self.continuations[key] = Continuation(state.copy(), yielded, [], findings)
         return {key: state}
+
+    def yielded_value(
+        self, names: frozenset[str], closure: Env, default: Value | None = None
+    ) -> Value:
+        merged = {"yielded": Value()}
+        cursors = module_bindings(*closure)[1]
+        for name in names:
+            for stage in cursors.get(f"@resume:{name}", frozenset()):
+                continuation = self.continuations.get(stage)
+                value = continuation.yielded if continuation is not None else (
+                    default if stage == "done" and default is not None else Value()
+                )
+                binding_rules.union_values(merged, {"yielded": value})
+        return merged["yielded"]
 
     def chain(
         self,
