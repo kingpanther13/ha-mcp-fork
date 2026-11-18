@@ -104,6 +104,21 @@
       "id": "deferred-method-keeps-enclosing-function-cell",
       "source": "NAME = 'public'\ndef outer():\n    NAME = '_helper'\n    class TestExample:\n        NAME = 'public'\n        def test_it(self):\n            getattr(mod, NAME)\n    return TestExample\n",
       "baseline_fails": false
+    },
+    {
+      "id": "deferred-sibling-call-keeps-defining-private-cell",
+      "source": "def outer():\n    NAME = '_helper'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = 'public'\n        inner()\n    caller()\n    NAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "parameter-callable-shadow-precedes-later-import",
+      "source": "def test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    from builtins import range\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "parameter-callable-shadow-precedes-later-assignment",
+      "source": "from builtins import range as builtin_range\ndef test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    range = builtin_range\n",
+      "baseline_fails": true
     }
   ],
   "allow": [
@@ -226,6 +241,16 @@
       "id": "deferred-returned-method-uses-final-enclosing-cell",
       "source": "NAME = 'public'\ndef outer():\n    NAME = '_data'\n    class TestExample:\n        NAME = '_data'\n        def test_it(self):\n            getattr(mod, NAME)\n    NAME = 'public'\n    return TestExample\n",
       "baseline_fails": true
+    },
+    {
+      "id": "deferred-sibling-call-ignores-callers-private-local",
+      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = '_data'\n        inner()\n    caller()\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "actual-import-replaces-parameter-callable-shadow",
+      "source": "def test_it(range):\n    from builtins import range\n    for item in range(0):\n        getattr(mod, '_data')\n",
+      "baseline_fails": false
     }
   ],
   "error": []
