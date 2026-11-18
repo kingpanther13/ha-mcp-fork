@@ -120,6 +120,18 @@
       "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('_helper', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
       "baseline_fails": false,
       "boundary_fails": true
+    },
+    {
+      "id": "discarded-conditional-generator-loop-retains-private-policy",
+      "source": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false,
+      "boundary_fails": true
+    },
+    {
+      "id": "recursive-yield-from-loop-retains-private-policy",
+      "source": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false,
+      "boundary_fails": true
     }
   ],
   "allow": [
@@ -248,6 +260,18 @@
       "source": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('visible', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
       "baseline_fails": false,
       "boundary_fails": false
+    },
+    {
+      "id": "discarded-conditional-generator-loop-converges",
+      "source": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, 'public')\n",
+      "baseline_fails": false,
+      "boundary_fails": true
+    },
+    {
+      "id": "recursive-yield-from-loop-converges",
+      "source": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, 'public')\n",
+      "baseline_fails": false,
+      "boundary_fails": true
     }
   ],
   "error": []
