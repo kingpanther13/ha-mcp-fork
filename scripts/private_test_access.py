@@ -18,19 +18,47 @@ from pathlib import Path
 
 from private_test_bindings import (
     Aliases as _Aliases,
+)
+from private_test_bindings import (
     ScopeValues as _ScopeValues,
+)
+from private_test_bindings import (
     Value as _Value,
+)
+from private_test_bindings import (
     assignments as _assignments,
+)
+from private_test_bindings import (
     bound_names as _bound_names,
+)
+from private_test_bindings import (
     class_bindings as _class_bindings,
+)
+from private_test_bindings import (
     dotted as _dotted,
+)
+from private_test_bindings import (
     extend_values as _extend_values,
+)
+from private_test_bindings import (
     import_aliases as _import_aliases,
+)
+from private_test_bindings import (
     mapping_keys as _mapping_keys,
+)
+from private_test_bindings import (
     module_bindings as _module_bindings,
+)
+from private_test_bindings import (
     prepared_assignment as _prepared_assignment,
+)
+from private_test_bindings import (
     strings as _strings,
+)
+from private_test_bindings import (
     union_aliases as _union_aliases,
+)
+from private_test_bindings import (
     union_values as _union_values,
 )
 
@@ -470,12 +498,23 @@ def _scan_repeated_loop(
     # Revisit with carried state: imports become visible only on later trips.
     for _ in range(256):
         iteration, iteration_aliases = _ClassValues(current), dict(current_aliases)
-        yield from _scan_loop_iteration(node, iteration, iteration_aliases, closure, bindings)
+        yield from _scan_loop_iteration(
+            node, iteration, iteration_aliases, closure, bindings
+        )
         exits.append((iteration, iteration_aliases))
         if has_break:
-            break_paths.append((_ClassValues(iteration.observed_values), dict(iteration.observed_aliases)))
+            break_paths.append(
+                (
+                    _ClassValues(iteration.observed_values),
+                    dict(iteration.observed_aliases),
+                )
+            )
         joined, joined_aliases = _ClassValues(current), dict(current_aliases)
-        _join_class_paths(joined, joined_aliases, [(current, current_aliases), (iteration, iteration_aliases)])
+        _join_class_paths(
+            joined,
+            joined_aliases,
+            [(current, current_aliases), (iteration, iteration_aliases)],
+        )
         if joined == current and joined_aliases == current_aliases:
             break
         current, current_aliases = joined, joined_aliases
@@ -498,22 +537,44 @@ def _scan_class_loop(
     has_break = _loop_has_break(node.body)
     bindings: list[tuple[ast.expr, frozenset[str] | None, _Value]] = []
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        bindings = _prepared_assignment([node.target], ast.Constant(value=None), values, aliases)
+        bindings = _prepared_assignment(
+            [node.target], ast.Constant(value=None), values, aliases
+        )
         if isinstance(node.target, ast.Name):
-            bindings = [(node.target, frozenset({""}), _Value(frozenset(
-                _strings(node.iter, values) | _mapping_keys(node.iter, values)
-            )))]
+            bindings = [
+                (
+                    node.target,
+                    frozenset({""}),
+                    _Value(
+                        frozenset(
+                            _strings(node.iter, values)
+                            | _mapping_keys(node.iter, values)
+                        )
+                    ),
+                )
+            ]
     if items is not None and isinstance(node, (ast.For, ast.AsyncFor)):
         # Python evaluates the entire iterable before the first iteration.
-        iterations = [_prepared_assignment([node.target], item, values, aliases) for item in items]
+        iterations = [
+            _prepared_assignment([node.target], item, values, aliases) for item in items
+        ]
         for bindings in iterations:
             iteration = _ClassValues(current)
-            yield from _scan_loop_iteration(node, iteration, current_aliases, closure, bindings)
+            yield from _scan_loop_iteration(
+                node, iteration, current_aliases, closure, bindings
+            )
             current = iteration
             if has_break:
-                break_paths.append((_ClassValues(current.observed_values), dict(current.observed_aliases)))
+                break_paths.append(
+                    (
+                        _ClassValues(current.observed_values),
+                        dict(current.observed_aliases),
+                    )
+                )
     else:
-        yield from _scan_repeated_loop(node, current, current_aliases, closure, bindings, break_paths)
+        yield from _scan_repeated_loop(
+            node, current, current_aliases, closure, bindings, break_paths
+        )
     if isinstance(node, ast.While):
         yield from _scan_expression(node.test, current, current_aliases, closure)
     yield from _scan_class_block(node.orelse, current, current_aliases, closure)
@@ -602,7 +663,10 @@ def _scan_class_try(
     # cannot reach the statements after try. Scan that path without joining it.
     if not identical_finally_input:
         yield from _scan_class_block(
-            node.finalbody, _ClassValues(interrupted_values), interrupted_aliases, closure
+            node.finalbody,
+            _ClassValues(interrupted_values),
+            interrupted_aliases,
+            closure,
         )
 
 
@@ -625,7 +689,10 @@ def _scan_class_match(
             break
         pending_values, pending_aliases = _ClassValues(values), dict(aliases)
         _join_class_paths(pending_values, pending_aliases, remaining)
-        branch_values, branch_aliases = _ClassValues(pending_values), dict(pending_aliases)
+        branch_values, branch_aliases = (
+            _ClassValues(pending_values),
+            dict(pending_aliases),
+        )
         for name in _pattern_names(case.pattern):
             branch_values[name] = _Value()
             branch_aliases[name] = frozenset({""})
@@ -633,14 +700,20 @@ def _scan_class_match(
             branch_values[case.pattern.name] = subject_value
             branch_aliases[case.pattern.name] = subject_aliases
         if case.guard is not None:
-            yield from _scan_expression(case.guard, branch_values, branch_aliases, closure)
-        irrefutable = isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+            yield from _scan_expression(
+                case.guard, branch_values, branch_aliases, closure
+            )
+        irrefutable = (
+            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        )
         guard = case.guard.value if isinstance(case.guard, ast.Constant) else None
         remaining = [] if irrefutable else [(pending_values, pending_aliases)]
         if case.guard is not None and guard is not True:
             remaining.append((_ClassValues(branch_values), dict(branch_aliases)))
         if guard is not False:
-            yield from _scan_class_block(case.body, branch_values, branch_aliases, closure)
+            yield from _scan_class_block(
+                case.body, branch_values, branch_aliases, closure
+            )
             paths.append((branch_values, branch_aliases))
     _join_class_paths(values, aliases, paths + remaining)
 

@@ -230,7 +230,7 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             id="class-literal-unpack-preserves-alias",
         ),
         pytest.param(
-            'matrix["cases"] = (getattr(mod, "_helper"), \'a0\', \'a1\', \'a2\', \'a3\', \'a4\', \'a5\', \'a6\', \'a7\', \'a8\', \'a9\', \'a10\', \'a11\', \'a12\', \'a13\', \'a14\', \'a15\', \'a16\') + (\'b0\', \'b1\', \'b2\', \'b3\', \'b4\', \'b5\', \'b6\', \'b7\', \'b8\', \'b9\', \'b10\', \'b11\', \'b12\', \'b13\', \'b14\', \'b15\', \'b16\')\n',
+            "matrix[\"cases\"] = (getattr(mod, \"_helper\"), 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10', 'a11', 'a12', 'a13', 'a14', 'a15', 'a16') + ('b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'b10', 'b11', 'b12', 'b13', 'b14', 'b15', 'b16')\n",
             id="nonbinding-assignment-still-scans-rhs",
         ),
         pytest.param(
@@ -489,7 +489,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
             id="class-literal-unpack-public-alias",
         ),
         pytest.param(
-            'matrix["cases"] = (\'a0\', \'a1\', \'a2\', \'a3\', \'a4\', \'a5\', \'a6\', \'a7\', \'a8\', \'a9\', \'a10\', \'a11\', \'a12\', \'a13\', \'a14\', \'a15\', \'a16\') + (\'b0\', \'b1\', \'b2\', \'b3\', \'b4\', \'b5\', \'b6\', \'b7\', \'b8\', \'b9\', \'b10\', \'b11\', \'b12\', \'b13\', \'b14\', \'b15\', \'b16\')\n',
+            "matrix[\"cases\"] = ('a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10', 'a11', 'a12', 'a13', 'a14', 'a15', 'a16') + ('b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'b10', 'b11', 'b12', 'b13', 'b14', 'b15', 'b16')\n",
             id="nonbinding-assignment-does-not-expand-data",
         ),
         pytest.param(
