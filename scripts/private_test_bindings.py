@@ -513,7 +513,12 @@ def call_arguments(
             return [Arguments(positional, ())]
         for keyword in call.keywords:
             if keyword.arg == keyword_target:
-                return [Arguments((), ((keyword_target, _capture_argument(keyword.value, values)),))]
+                return [
+                    Arguments(
+                        (),
+                        ((keyword_target, _capture_argument(keyword.value, values)),),
+                    )
+                ]
     options: tuple[Mapping, ...] = ((),)
     for keyword in call.keywords:
         additions = (
