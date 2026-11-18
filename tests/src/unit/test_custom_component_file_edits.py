@@ -384,7 +384,7 @@ class TestEditFileService:
     async def test_refusal_tells_the_model_which_edit_failed(
         self, hass: HomeAssistant, tmp_path: Path
     ) -> None:
-        target = _service_file(hass, b"one\n")
+        _service_file(hass, b"one\n")
         call = await make_file_service(hass, "cards")
 
         response = await call(
