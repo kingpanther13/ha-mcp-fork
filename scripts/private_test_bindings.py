@@ -15,11 +15,14 @@ class Argument:
 
     expression: ast.expr
     bindings: tuple[tuple[str, Value], ...]
+    resolved: Value | None = None
 
     def strings(self) -> set[str]:
         return strings(self.expression, dict(self.bindings))
 
     def value(self) -> Value:
+        if self.resolved is not None:
+            return self.resolved
         return value_of(self.expression, dict(self.bindings))
 
     def aliases(self) -> frozenset[str]:
