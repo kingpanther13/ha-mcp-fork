@@ -18,7 +18,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
-_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+_SCOPES = (
+    ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
+    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+)
 
 
 def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
@@ -47,10 +50,14 @@ def _headers(scope: ast.AST) -> Iterator[ast.expr]:
         yield from scope.args.defaults
         yield from (value for value in scope.args.kw_defaults if value is not None)
         yield from (
-            node.annotation for node in ast.walk(scope.args)
+            node.annotation
+            for node in ast.walk(scope.args)
             if isinstance(node, ast.arg) and node.annotation is not None
         )
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.returns is not None:
+    if (
+        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and scope.returns is not None
+    ):
         yield scope.returns
 
 
@@ -120,9 +127,16 @@ def _bindings(
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        parameters = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs,
-                      scope.args.vararg, scope.args.kwarg]
-        local_names.update(parameter.arg for parameter in parameters if parameter is not None)
+        parameters = [
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+            scope.args.vararg,
+            scope.args.kwarg,
+        ]
+        local_names.update(
+            parameter.arg for parameter in parameters if parameter is not None
+        )
     for name in local_names:
         values.pop(name, None)
         aliases.pop(name, None)
@@ -177,10 +191,21 @@ def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr]]:
             and node.value is not None
         ):
             yield node.target.id, node.value
-        elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(
             node.target, ast.Name
         ):
             yield node.target.id, node.iter
+
+
+def _update_aliases(node: ast.AST, aliases: dict[str, str]) -> None:
+    """Keep the callable binding at each call site, including later shadowing."""
+    _import_aliases([node], aliases)
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        for target, expression in _assignments([node]):
+            if isinstance(expression, (ast.Name, ast.Attribute)):
+                aliases[target] = _dotted(expression, aliases)
+            else:
+                aliases.pop(target, None)
 
 
 def _argument(call: ast.Call, index: int, name: str) -> ast.expr | None:
@@ -253,6 +278,7 @@ def _scan_scope(
 ) -> Iterator[tuple[int, str]]:
     values, aliases = _bindings(scope, values, aliases)
     for node in _nodes(scope):
+        _update_aliases(node, aliases)
         if isinstance(node, _SCOPES):
             for header in _headers(node):
                 yield from _scan_scope(ast.Expression(body=header), values, aliases)
