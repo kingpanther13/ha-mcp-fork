@@ -442,6 +442,8 @@ runpy.run_path(script, run_name="__main__")
                 "list-comprehension-remains-eager-reject": "NAME='_helper'\nitems=[getattr(mod,NAME) for _ in (0,)]\nNAME='public'\n",
                 "tuple-consumes-all-generator-expression-items-reject": "items=(getattr(mod,name) for name in ('public','_helper'))\ntuple(items)\n",
                 "generator-expression-for-break-stops-consumption-reject": "items=(getattr(mod,name) for name in ('_helper','public'))\nfor _ in items:\n    break\n",
+                "unknown-generator-expression-list-converges-reject": "items=(item for item in values)\nlist(items)\ngetattr(mod, '_helper')\n",
+                "unknown-generator-expression-for-converges-reject": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, '_helper')\n",
             }.items()
         ),
     ],
@@ -762,6 +764,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "list-comprehension-remains-eager-allow": "NAME='public'\nitems=[getattr(mod,NAME) for _ in (0,)]\nNAME='_helper'\n",
                 "tuple-consumes-all-generator-expression-items-allow": "items=(getattr(mod,name) for name in ('visible','public'))\ntuple(items)\n",
                 "generator-expression-for-break-stops-consumption-allow": "items=(getattr(mod,name) for name in ('public','_helper'))\nfor _ in items:\n    break\n",
+                "unknown-generator-expression-list-converges-allow": "items=(item for item in values)\nlist(items)\ngetattr(mod, 'public')\n",
+                "unknown-generator-expression-for-converges-allow": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, 'public')\n",
             }.items()
         ),
     ],

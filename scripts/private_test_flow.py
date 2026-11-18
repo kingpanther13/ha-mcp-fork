@@ -626,64 +626,6 @@ class Deferred:
                 )
                 yield Value(callables=callables)
 
-    def call(
-        self,
-        call: ast.Call,
-        env: Env,
-        closure: Env,
-        *,
-        captured: tuple[ast.Call, Env] | None = None,
-    ) -> Iterator[tuple[int, str]]:
-        prepared, inputs = captured if captured is not None else (call, env)
-        names = binding_rules.dotted(prepared.func, inputs[1])
-        if isinstance(call.func, ast.Lambda):
-            if captured is None:
-                headers = list(call.func.args.defaults)
-                headers.extend(
-                    value for value in call.func.args.kw_defaults if value is not None
-                )
-                for header in headers:
-                    yield from self.scan_expression(header, *env, closure, self)
-            token = f"@function:{id(call.func)}"
-            if captured is None or token not in self.scopes:
-                token = self.register(call.func, closure, env)
-            self.pending[-1].discard(token)
-            names = frozenset({token})
-        if names & {"next", "builtins.next"}:
-            options = [
-                arguments
-                for arguments in self.capture_arguments(prepared, inputs)
-                if arguments.positional
-            ]
-            targets = frozenset().union(
-                *(arguments.positional[0].aliases() for arguments in options)
-            )
-            defaults = frozenset(len(arguments.positional) > 1 for arguments in options)
-            yield from self.resume_targets(targets, inputs, closure, defaults=defaults)
-            return
-        classes = binding_rules.class_aliases(prepared.func, inputs[1])
-        if classes:
-            self.allocate(call, classes, env, closure)
-            for constructor in ("__new__", "__init__"):
-                targets = frozenset().union(
-                    *(
-                        env[1].get(f"{name}.{constructor}", frozenset())
-                        for name in classes
-                    )
-                )
-                yield from self.invoke_targets(
-                    targets,
-                    call,
-                    env,
-                    closure,
-                    constructor=True,
-                    captured=(prepared, inputs),
-                )
-            return
-        yield from self.invoke_targets(
-            names, call, env, closure, captured=(prepared, inputs)
-        )
-
     def invoke_targets(
         self,
         names: frozenset[str],

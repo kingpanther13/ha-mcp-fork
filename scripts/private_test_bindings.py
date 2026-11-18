@@ -191,7 +191,7 @@ def alias_options(name: str, aliases: Aliases) -> frozenset[str]:
     if name in aliases:
         return aliases[name]
     if name.startswith("@resume:"):
-        return frozenset({"start"})
+        return frozenset()
     inherited = name.startswith("@class:") and "/" in name and "." in name
     return frozenset({"@inherit" if inherited else name})
 
@@ -374,8 +374,8 @@ def _capture_argument(node: ast.expr, values: dict[str, Value]) -> Argument:
 
 
 def _position_snapshot(value: Value) -> Value:
-    snapshot = replace(value, mapping_alternatives=())
-    # Keep historical sequence and target arguments without allowing assignments
+    snapshot = value
+    # Keep historical sequence and mapping arguments without allowing assignments
     # to grow a snapshot graph indefinitely during fixed-point analysis.
     pending: list[tuple[Value | Argument, int]] = [(snapshot, 0)]
     visited = 0
@@ -388,8 +388,10 @@ def _position_snapshot(value: Value) -> Value:
                 return replace(
                     snapshot,
                     positions=(),
+                    mapping_alternatives=(),
                     target_mappings=(),
                     position_errors=errors,
+                    mapping_errors=errors,
                     target_errors=errors,
                 )
             pending.append((child, depth + 1))
