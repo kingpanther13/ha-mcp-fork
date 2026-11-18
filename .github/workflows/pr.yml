@@ -39,6 +39,7 @@ jobs:
           xargs -r uv run ruff check --fix < /tmp/changed-python || true
           xargs -r uv run ruff format < /tmp/changed-python
           git diff > /tmp/format.patch
+          test ! -s /tmp/format.patch
       - name: Lint and rules
         if: always()
         run: |
@@ -61,7 +62,18 @@ jobs:
           failed=0
           uv run python scripts/test_only_public_names.py > /tmp/public-names.txt 2>&1 || failed=1
           uv run python scripts/stand_in_lists_ratchet.py --base "$BASE" > /tmp/stand-ins.txt 2>&1 || failed=1
-          uv run python scripts/private_test_access.py > /tmp/private-access.txt 2>&1 || failed=1
+          if test -f scripts/private_test_access.py; then
+            uv run python scripts/private_test_access.py > /tmp/private-access.txt 2>&1 || failed=1
+            mkdir -p /tmp/slf001-base
+            git archive "$BASE" tests/src/unit tests/addon | tar -x -C /tmp/slf001-base
+            if uv run python scripts/private_test_access.py --repo /tmp/slf001-base > /tmp/private-access-baseline.txt 2>&1; then
+              failed=1
+            else
+              status=$?
+              test "$status" = 1 || failed=1
+              grep -q 'private string target' /tmp/private-access-baseline.txt || failed=1
+            fi
+          fi
           uv run python scripts/module_size_ratchet.py --check > /tmp/module-size.txt 2>&1 || failed=1
           uv run python scripts/duplicate_code_ratchet.py --check > /tmp/duplicate-code.txt 2>&1 || failed=1
           exit "$failed"
