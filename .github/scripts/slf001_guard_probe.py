@@ -365,7 +365,7 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
         for group, section in CASE_GROUPS.items()
         for case in CASE_MANIFEST[section] if "current_fails" in case
     }
-    assert len(cases) == 4 and sum(cases.values()) == 2
+    assert len(cases) == 10 and sum(cases.values()) == 6
     expected = {name for name, fails in cases.items() if fails}
     evidence = {
         "guard_revision": revision,
@@ -375,7 +375,7 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
     (root / "boundary-sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     data = run_variant(root, "boundary", tuple(f"{GUARD_TEST}::{name}" for name in cases))
     (root / "boundary-results.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
-    assert data["tests"] == 4 and set(data["case_names"]) == set(cases)
+    assert data["tests"] == len(cases) and set(data["case_names"]) == set(cases)
     assert data["exit_code"] == 1 and set(data["failures"]) == expected
     assert data["exception_types"] == {name: "AssertionError" for name in expected}
     assert not data["errors"] and not data["skips"]

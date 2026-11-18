@@ -99,6 +99,36 @@
       "id": "loop-tuple-capture-keeps-reject-state-stable",
       "source": "NAME = '_helper'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
       "baseline_fails": false
+    },
+    {
+      "id": "loop-nested-conditional-mapping-keeps-stable-state-reject",
+      "source": "for item in items:\n    data = {'config': {'error': 'public'}} if flag else None\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "loop-recursive-card-mapping-keeps-bounded-state-reject",
+      "source": "node = {'type': 'tile'}\nfor item in range(limit):\n    node = {'type': 'vertical-stack', 'cards': [node]}\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "loop-compound-tuple-elements-keep-stable-state-reject",
+      "source": "ARGS = (mod, '_helper')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "canonical-loop-expression-keeps-earlier-value-snapshot-reject",
+      "source": "NAME = '_helper'\nSAVED = (mod, NAME)\nfor marker in (True, False):\n    ARGS = (mod, NAME + '')\n    if marker:\n        SAVED = ARGS\n    NAME = 'public'\ngetattr(*SAVED)\n",
+      "baseline_fails": false,
+      "current_fails": false
+    },
+    {
+      "id": "canonical-loop-expression-replays-child-effects-reject",
+      "source": "NAME = 'public'\ndef set_name(name):\n    global NAME\n    NAME = name\nfor marker in ('public', '_helper'):\n    ARGS = (mod, set_name(marker))\ngetattr(mod, NAME)\n",
+      "baseline_fails": false,
+      "current_fails": false
     }
   ],
   "allow": [
@@ -201,6 +231,36 @@
       "id": "loop-tuple-capture-keeps-allow-state-stable",
       "source": "NAME = 'public'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
       "baseline_fails": false
+    },
+    {
+      "id": "loop-nested-conditional-mapping-keeps-stable-state-allow",
+      "source": "for item in items:\n    data = {'config': {'error': 'public'}} if flag else None\ngetattr(mod, 'public')\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "loop-recursive-card-mapping-keeps-bounded-state-allow",
+      "source": "node = {'type': 'tile'}\nfor item in range(limit):\n    node = {'type': 'vertical-stack', 'cards': [node]}\ngetattr(mod, 'public')\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "loop-compound-tuple-elements-keep-stable-state-allow",
+      "source": "ARGS = (mod, 'public')\nfor item in items:\n    ARGS = (mod, 'public' + '')\ngetattr(*ARGS)\n",
+      "baseline_fails": false,
+      "current_fails": true
+    },
+    {
+      "id": "canonical-loop-expression-keeps-earlier-value-snapshot-allow",
+      "source": "NAME = 'public'\nSAVED = (mod, NAME)\nfor marker in (True, False):\n    ARGS = (mod, NAME + '')\n    if marker:\n        SAVED = ARGS\n    NAME = '_helper'\ngetattr(*SAVED)\n",
+      "baseline_fails": false,
+      "current_fails": false
+    },
+    {
+      "id": "canonical-loop-expression-replays-child-effects-allow",
+      "source": "NAME = 'public'\ndef set_name(name):\n    global NAME\n    NAME = name\nfor marker in ('_helper', 'public'):\n    ARGS = (mod, set_name(marker))\ngetattr(mod, NAME)\n",
+      "baseline_fails": false,
+      "current_fails": false
     }
   ],
   "error": []
