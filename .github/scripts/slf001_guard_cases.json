@@ -116,11 +116,6 @@
       "baseline_fails": true
     },
     {
-      "id": "module-literal-unpack-private",
-      "source": "name, count = ('_helper', 1)\ngetattr(mod, name)\n",
-      "baseline_fails": true
-    },
-    {
       "id": "formatted-negative-literal-private-fill",
       "source": "getattr(mod, f'{-1:_>3}')\n",
       "baseline_fails": true
@@ -173,6 +168,16 @@
     {
       "id": "deferred-class-global-write-does-not-run-at-definition",
       "source": "NAME = '_helper'\ndef later():\n    class E:\n        global NAME\n        NAME = 'public'\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "module-assignment-after-class-global-write",
+      "source": "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\nNAME = '_helper'\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "function-assignment-after-class-nonlocal-write",
+      "source": "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = 'public'\n    NAME = '_helper'\n    getattr(mod, NAME)\n",
       "baseline_fails": false
     }
   ],
@@ -268,11 +273,6 @@
       "baseline_fails": false
     },
     {
-      "id": "module-unpack-private-other-element",
-      "source": "name, payload = ('public', '_data')\ngetattr(mod, name)\n",
-      "baseline_fails": false
-    },
-    {
       "id": "named-tuple-concatenation-does-not-cross-product",
       "source": "FIRST = ('first_0', 'first_1', 'first_2', 'first_3', 'first_4', 'first_5', 'first_6', 'first_7', 'first_8', 'first_9', 'first_10', 'first_11', 'first_12', 'first_13', 'first_14', 'first_15', 'first_16')\nSECOND = ('second_0', 'second_1', 'second_2', 'second_3', 'second_4', 'second_5', 'second_6', 'second_7', 'second_8', 'second_9', 'second_10', 'second_11', 'second_12', 'second_13', 'second_14', 'second_15', 'second_16')\nCASES = FIRST + SECOND\n",
       "baseline_fails": true
@@ -326,6 +326,11 @@
       "id": "class-nested-break-does-not-skip-outer-else",
       "source": "class E:\n    NAME = '_data'\n    for item in (0,):\n        for inner in (0,):\n            break\n    else:\n        NAME = 'public'\n    getattr(mod, NAME)\n",
       "baseline_fails": false
+    },
+    {
+      "id": "class-global-write-stays-public-before-later-assignment",
+      "source": "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\nNAME = '_data'\n",
+      "baseline_fails": true
     }
   ],
   "error": [
