@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 assert sys.platform == "win32", "This proof requires native Windows paths"
-BASELINE = "db84b3148eb761eb81a3c978841fee45d80766c6"
+BASELINE = "497008f3208c53fa3bcc05749ffc4861438bd442"
 GUARDS = ("private_test_access.py", "private_test_bindings.py", "private_test_flow.py", "private_test_expressions.py")
 
 
