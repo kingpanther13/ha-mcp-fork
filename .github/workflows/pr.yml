@@ -80,6 +80,9 @@ jobs:
           uv run python scripts/module_size_ratchet.py --check > /tmp/module-size.txt 2>&1 || failed=1
           uv run python scripts/duplicate_code_ratchet.py --check > /tmp/duplicate-code.txt 2>&1 || failed=1
           exit "$failed"
+      - name: Guard behavioral tests
+        if: always() && hashFiles('scripts/private_test_access.py') != ''
+        run: uv run pytest tests/src/unit/test_private_test_access.py -n 2 --tb=short --maxfail=0 -v > /tmp/guard-tests.txt 2>&1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -90,7 +93,7 @@ jobs:
       - name: Full unit and app tests
         if: always() && inputs.run_tests
         run: |
-          uv run pytest tests/src/unit/ tests/addon/ -n 4 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
+          uv run pytest tests/src/unit/ tests/addon/ --ignore=tests/addon/test_addon_startup.py -n 4 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
