@@ -227,9 +227,7 @@ def _named_targets(
                 )
             )
         )
-        return target_strings | (
-            set() if _own_object(target) else keys
-        )
+        return target_strings | (set() if _own_object(target) else keys)
     if patch_method == ["patch", "object"]:
         return target_strings | (
             set()
@@ -271,9 +269,7 @@ def _comprehension_values(
     if isinstance(scope, _COMPREHENSIONS):
         first = scope.generators[0]
         if isinstance(first.target, ast.Name):
-            return {
-                first.target.id: binding_rules.iterable_strings(first.iter, values)
-            }
+            return {first.target.id: binding_rules.iterable_strings(first.iter, values)}
     return {}
 
 
@@ -381,7 +377,9 @@ def _add_outcome(outcomes: _Outcomes, kind: str, state: _State) -> None:
         outcomes[kind] = state.copy()
 
 
-def _store_class_name(values: _ClassValues, aliases: binding_rules.Aliases, name: str) -> None:
+def _store_class_name(
+    values: _ClassValues, aliases: binding_rules.Aliases, name: str
+) -> None:
     values.bound |= {name}
     if name in values.class_globals:
         owner = binding_rules.module_bindings(*values.closure)
@@ -395,7 +393,9 @@ def _store_class_name(values: _ClassValues, aliases: binding_rules.Aliases, name
     owner[1][name] = aliases.get(name, frozenset({name}))
 
 
-def _restore_class_fallback(name: str, values: _ClassValues, aliases: binding_rules.Aliases, closure: _Env) -> None:
+def _restore_class_fallback(
+    name: str, values: _ClassValues, aliases: binding_rules.Aliases, closure: _Env
+) -> None:
     values.pop(name, None)
     values.bound -= {name}
     if name in values.class_nonlocals | values.class_globals:
@@ -416,7 +416,9 @@ class _ClassFlow:
         self.findings: set[tuple[int, str]] = set()
 
     def expression(self, node: ast.expr, state: _State) -> None:
-        self.findings.update(_scan_expression(node, state.values, state.aliases, state.closure))
+        self.findings.update(
+            _scan_expression(node, state.values, state.aliases, state.closure)
+        )
 
     def block(self, body: list[ast.stmt], incoming: _State) -> _Outcomes:
         key = (tuple(map(id, body)), incoming.key())
@@ -438,7 +440,9 @@ class _ClassFlow:
     def statement(self, node: ast.stmt, state: _State) -> _Outcomes:
         before = state.copy()
         outcomes = self.dispatch(node, state)
-        if isinstance(node, (ast.ClassDef, ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match)):
+        if isinstance(
+            node, (ast.ClassDef, ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match)
+        ):
             # Evaluating a class header, condition, iterable or subject can fail
             # before any selected suite runs.
             _add_outcome(outcomes, "raise", before)
@@ -470,15 +474,23 @@ class _ClassFlow:
         if isinstance(node, ast.Delete):
             self.delete(node.targets, state)
         else:
-            nodes: Iterator[ast.AST] = chain([node], _nodes(node, descend_assignments=False))
+            nodes: Iterator[ast.AST] = chain(
+                [node], _nodes(node, descend_assignments=False)
+            )
             if isinstance(node, (*_SCOPES, ast.Assign, ast.AnnAssign)):
                 nodes = iter([node])
-            self.findings.update(_scan_nodes(nodes, state.values, state.aliases, state.closure, set()))
+            self.findings.update(
+                _scan_nodes(nodes, state.values, state.aliases, state.closure, set())
+            )
         if isinstance(node, ast.Raise):
             return {"raise": state}
         # Retain a conservative interrupted path even for an assignment whose
         # RHS is literal; static analysis does not execute user expressions.
-        return {"normal": state, "raise": before} if not isinstance(node, (ast.Pass, ast.Global, ast.Nonlocal)) else {"normal": state}
+        return (
+            {"normal": state, "raise": before}
+            if not isinstance(node, (ast.Pass, ast.Global, ast.Nonlocal))
+            else {"normal": state}
+        )
 
     def definition(self, node: ast.ClassDef, state: _State) -> _Outcomes:
         for header in _headers(node):
@@ -505,7 +517,9 @@ class _ClassFlow:
     def delete(self, targets: list[ast.expr], state: _State) -> None:
         for target in targets:
             if isinstance(target, ast.Name):
-                _restore_class_fallback(target.id, state.values, state.aliases, state.closure)
+                _restore_class_fallback(
+                    target.id, state.values, state.aliases, state.closure
+                )
             elif isinstance(target, (ast.Tuple, ast.List)):
                 self.delete(target.elts, state)
             else:
@@ -513,53 +527,101 @@ class _ClassFlow:
 
     def bind(self, bindings: _Bindings, state: _State) -> None:
         for target, resolved, value in bindings:
-            self.findings.update(_scan_assignment_target(target, resolved, state.values, state.aliases, state.closure, value))
+            self.findings.update(
+                _scan_assignment_target(
+                    target, resolved, state.values, state.aliases, state.closure, value
+                )
+            )
 
-    def loop_plan(self, node: ast.For | ast.AsyncFor | ast.While, state: _State) -> tuple[list[_Bindings] | None, _Bindings]:
+    def loop_plan(
+        self, node: ast.For | ast.AsyncFor | ast.While, state: _State
+    ) -> tuple[list[_Bindings] | None, _Bindings]:
         expression = node.test if isinstance(node, ast.While) else node.iter
         self.expression(expression, state)
-        literal = isinstance(expression, (ast.List, ast.Tuple)) and not any(isinstance(item, ast.Starred) for item in expression.elts)
+        literal = isinstance(expression, (ast.List, ast.Tuple)) and not any(
+            isinstance(item, ast.Starred) for item in expression.elts
+        )
         iterations: list[_Bindings] | None = None
         bindings: _Bindings = []
         if not isinstance(node, ast.While):
-            bindings = binding_rules.prepared_assignment([node.target], ast.Constant(value=None), state.values, state.aliases)
+            bindings = binding_rules.prepared_assignment(
+                [node.target], ast.Constant(value=None), state.values, state.aliases
+            )
             if isinstance(node.target, ast.Name):
-                bindings = [(node.target, frozenset({""}), binding_rules.Value(frozenset(binding_rules.iterable_strings(expression, state.values))))]
+                bindings = [
+                    (
+                        node.target,
+                        frozenset({""}),
+                        binding_rules.Value(
+                            frozenset(
+                                binding_rules.iterable_strings(expression, state.values)
+                            )
+                        ),
+                    )
+                ]
             if literal and isinstance(expression, (ast.List, ast.Tuple)):
-                iterations = [binding_rules.prepared_assignment([node.target], item, state.values, state.aliases) for item in expression.elts]
+                iterations = [
+                    binding_rules.prepared_assignment(
+                        [node.target], item, state.values, state.aliases
+                    )
+                    for item in expression.elts
+                ]
         return iterations, bindings
 
-    def loop_step(self, node: ast.For | ast.AsyncFor | ast.While, current: _State, bindings: _Bindings, outcomes: _Outcomes) -> _State | None:
+    def loop_step(
+        self,
+        node: ast.For | ast.AsyncFor | ast.While,
+        current: _State,
+        bindings: _Bindings,
+        outcomes: _Outcomes,
+    ) -> _State | None:
         if isinstance(node, ast.While):
             self.expression(node.test, current)
         self.bind(bindings, current)
         body = self.block(node.body, current)
         for kind in ("raise", "break"):
             if kind in body:
-                _add_outcome(outcomes, "normal" if kind == "break" else kind, body[kind])
+                _add_outcome(
+                    outcomes, "normal" if kind == "break" else kind, body[kind]
+                )
         carried: _Outcomes = {}
         for kind in ("normal", "continue"):
             if kind in body:
                 _add_outcome(carried, "normal", body[kind])
         return carried.get("normal")
 
-    def loop(self, node: ast.For | ast.AsyncFor | ast.While, state: _State) -> _Outcomes:
+    def loop(
+        self, node: ast.For | ast.AsyncFor | ast.While, state: _State
+    ) -> _Outcomes:
         iterations, bindings = self.loop_plan(node, state)
         outcomes: _Outcomes = {}
         exhaustion: _Outcomes = {}
         current: _State | None = state.copy()
         if iterations is None and self.may_skip(node):
-            _add_outcome(exhaustion, "normal", current)
-        if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and not node.test.value:
+            _add_outcome(exhaustion, "normal", state)
+        if (
+            isinstance(node, ast.While)
+            and isinstance(node.test, ast.Constant)
+            and not node.test.value
+        ):
             iterations = []
         seen: set[tuple] = set()
         for index in range(len(iterations) if iterations is not None else 256):
             assert current is not None
-            current = self.loop_step(node, current, iterations[index] if iterations is not None else bindings, outcomes)
+            current = self.loop_step(
+                node,
+                current,
+                iterations[index] if iterations is not None else bindings,
+                outcomes,
+            )
             if current is None:
                 break
             if iterations is None:
-                if not (isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value):
+                if not (
+                    isinstance(node, ast.While)
+                    and isinstance(node.test, ast.Constant)
+                    and node.test.value
+                ):
                     _add_outcome(exhaustion, "normal", current)
                 signature = current.key()
                 if signature in seen:
@@ -568,7 +630,20 @@ class _ClassFlow:
         else:
             if iterations is None:
                 raise ValueError("too many static alternatives in a loop")
-        if iterations is not None and current is not None:
+        return self.loop_exits(
+            node, outcomes, exhaustion, current, exact=iterations is not None
+        )
+
+    def loop_exits(
+        self,
+        node: ast.For | ast.AsyncFor | ast.While,
+        outcomes: _Outcomes,
+        exhaustion: _Outcomes,
+        current: _State | None,
+        *,
+        exact: bool,
+    ) -> _Outcomes:
+        if exact and current is not None:
             _add_outcome(exhaustion, "normal", current)
         if "normal" in exhaustion:
             for kind, result in self.block(node.orelse, exhaustion["normal"]).items():
@@ -581,7 +656,10 @@ class _ClassFlow:
             return not isinstance(node.test, ast.Constant) or not node.test.value
         if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)):
             return not any(not isinstance(item, ast.Starred) for item in node.iter.elts)
-        return not (isinstance(node.iter, ast.Dict) and any(key is not None for key in node.iter.keys))
+        return not (
+            isinstance(node.iter, ast.Dict)
+            and any(key is not None for key in node.iter.keys)
+        )
 
     def handlers(self, node: ast.Try | ast.TryStar, raised: _State) -> _Outcomes:
         outcomes: _Outcomes = {}
@@ -591,11 +669,22 @@ class _ClassFlow:
             if handler.type is not None:
                 self.expression(handler.type, caught)
             if handler.name is not None:
-                self.bind([(ast.Name(id=handler.name), frozenset({""}), binding_rules.Value())], caught)
+                self.bind(
+                    [
+                        (
+                            ast.Name(id=handler.name),
+                            frozenset({""}),
+                            binding_rules.Value(),
+                        )
+                    ],
+                    caught,
+                )
             handled = self.block(handler.body, caught)
             for kind, result in handled.items():
                 if handler.name is not None:
-                    _restore_class_fallback(handler.name, result.values, result.aliases, result.closure)
+                    _restore_class_fallback(
+                        handler.name, result.values, result.aliases, result.closure
+                    )
                 _add_outcome(outcomes, kind, result)
                 if isinstance(node, ast.TryStar):
                     raised.merge(result)
@@ -620,17 +709,35 @@ class _ClassFlow:
                 _add_outcome(finished, previous if kind == "normal" else kind, result)
         return finished
 
-    def match_case(self, case: ast.match_case, subject: ast.expr, subjects: _State, remaining: _State) -> tuple[_State, _State | None, bool]:
+    def match_case(
+        self,
+        case: ast.match_case,
+        subject: ast.expr,
+        subjects: _State,
+        remaining: _State,
+    ) -> tuple[_State, _State | None, bool]:
         branch = remaining.copy()
         captures = {
             name: (binding_rules.Value(), frozenset({""}))
             for name in binding_rules.bound_names(list(ast.walk(case.pattern)))
         }
-        captures.update(binding_rules.pattern_bindings(case.pattern, subject, subjects.values, subjects.aliases))
-        self.bind([(ast.Name(id=name), aliases, value) for name, (value, aliases) in captures.items()], branch)
+        captures.update(
+            binding_rules.pattern_bindings(
+                case.pattern, subject, subjects.values, subjects.aliases
+            )
+        )
+        self.bind(
+            [
+                (ast.Name(id=name), aliases, value)
+                for name, (value, aliases) in captures.items()
+            ],
+            branch,
+        )
         if case.guard is not None:
             self.expression(case.guard, branch)
-        irrefutable = isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        irrefutable = (
+            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        )
         guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
         pending: _Outcomes = {}
         if not irrefutable:
@@ -647,7 +754,9 @@ class _ClassFlow:
         for case in node.cases:
             if remaining is None:
                 break
-            branch, remaining, accepted = self.match_case(case, node.subject, subjects, remaining)
+            branch, remaining, accepted = self.match_case(
+                case, node.subject, subjects, remaining
+            )
             if accepted:
                 for kind, result in self.block(case.body, branch).items():
                     _add_outcome(outcomes, kind, result)
@@ -655,14 +764,24 @@ class _ClassFlow:
             _add_outcome(outcomes, "normal", remaining)
         return outcomes
 
-    def with_items(self, items: list[ast.withitem], body: list[ast.stmt], state: _State) -> _Outcomes:
+    def with_items(
+        self, items: list[ast.withitem], body: list[ast.stmt], state: _State
+    ) -> _Outcomes:
         if not items:
             return self.block(body, state)
         item, *remaining = items
         self.expression(item.context_expr, state)
         entry = state.copy()
         if item.optional_vars is not None:
-            self.bind(binding_rules.prepared_assignment([item.optional_vars], ast.Constant(value=None), state.values, state.aliases), state)
+            self.bind(
+                binding_rules.prepared_assignment(
+                    [item.optional_vars],
+                    ast.Constant(value=None),
+                    state.values,
+                    state.aliases,
+                ),
+                state,
+            )
         outcomes = self.with_items(remaining, body, state)
         # A successfully entered manager may suppress an inner exception.
         if "raise" in outcomes:
@@ -751,7 +870,10 @@ def _scan_scope(
     closure = (values, aliases)
     yield from _scan_nodes(
         _nodes(scope, descend_assignments=False),
-        values, aliases, closure, assigned_names,
+        values,
+        aliases,
+        closure,
+        assigned_names,
     )
 
 
