@@ -415,6 +415,7 @@ runpy.run_path(script, run_name="__main__")
                 "generator-live-continuation-local-preserves-inner-cursor": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('_helper', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
                 "discarded-conditional-generator-loop-retains-private-policy": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, '_helper')\n",
                 "recursive-yield-from-loop-retains-private-policy": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
+                "lazy-lambda-annotation-private-body-is-checked": "def f(value: (lambda: getattr(mod, '_helper'))):\n    pass\n",
             }.items()
         ),
     ],
@@ -708,6 +709,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "generator-live-continuation-local-public-control": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('visible', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
                 "discarded-conditional-generator-loop-converges": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, 'public')\n",
                 "recursive-yield-from-loop-converges": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, 'public')\n",
+                "lazy-lambda-annotation-public-body-is-allowed": "def f(value: (lambda: getattr(mod, 'public'))):\n    pass\n",
             }.items()
         ),
     ],
