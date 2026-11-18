@@ -137,6 +137,11 @@ runpy.run_path(script, run_name="__main__")
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "known-class-static-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nExample.run()\nNAME = 'public'\n",
+                "immediate-known-instance-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample().run()\nNAME = 'public'\n",
+                "copied-known-instance-method-uses-early-global": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ninvoke = instance.run\ninvoke()\nNAME = 'public'\n",
+                "known-constructor-init-runs-at-instantiation": "NAME = '_helper'\nclass Example:\n    def __init__(self):\n        getattr(mod, NAME)\nExample()\nNAME = 'public'\n",
+                "known-constructor-new-runs-at-instantiation": "NAME = '_helper'\nclass Example:\n    def __new__(cls):\n        getattr(mod, NAME)\n        return object.__new__(cls)\nExample()\nNAME = 'public'\n",
                 "awaited-body-uses-current-module-binding": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    NAME = '_helper'\n    await helper()\n    NAME = 'public'\n",
                 "immediate-lambda-keeps-private-call-time-binding": "NAME = '_helper'\n(lambda: getattr(mod, NAME))()\nNAME = 'public'\n",
                 "deferred-sibling-call-keeps-defining-private-cell": "def outer():\n    NAME = '_helper'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = 'public'\n        inner()\n    caller()\n    NAME = 'public'\n",
@@ -347,6 +352,10 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "known-class-method-keeps-public-call-time-global": "NAME = '_data'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = 'public'\nExample.run()\n",
+                "unrelated-class-call-does-not-run-another-method": "NAME = '_data'\nclass First:\n    def run(self):\n        getattr(mod, NAME)\nclass Second:\n    def run(self):\n        getattr(mod, 'public')\nSecond().run()\nNAME = 'public'\n",
+                "rebound-class-name-is-not-the-old-constructor": "NAME = '_data'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\nExample = factory\nExample().run()\nNAME = 'public'\n",
+                "known-instance-method-own-object-stays-exempt": "class Example:\n    def run(self):\n        getattr(self, '_own')\ninstance = Example()\ninstance.run()\n",
                 "async-creation-does-not-run-body-before-final-binding": "NAME = '_data'\nasync def helper():\n    getattr(mod, NAME)\npending = helper()\nNAME = 'public'\n",
                 "immediate-lambda-does-not-replay-after-later-private-store": "NAME = 'public'\n(lambda: getattr(mod, NAME))()\nNAME = '_data'\n",
                 "deferred-sibling-call-ignores-callers-private-local": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = '_data'\n        inner()\n    caller()\n",
