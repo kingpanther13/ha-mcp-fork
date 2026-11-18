@@ -21,9 +21,8 @@ from __future__ import annotations
 
 import argparse
 import ast
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import replace
-from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,7 +62,7 @@ def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.
     elif isinstance(scope, ast.Lambda):
         children = iter([scope.body])
     elif isinstance(scope, _COMPREHENSIONS):
-        children = binding_rules.comprehension_nodes(scope)
+        children = flow_rules.comprehension_nodes(scope)
     else:
         children = ast.iter_child_nodes(scope)
     for child in children:
@@ -78,7 +77,7 @@ def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.
         )
 
 
-_headers = binding_rules.scope_headers
+_headers = flow_rules.scope_headers
 
 
 def _bindings(
@@ -97,7 +96,8 @@ def _bindings(
     global_names = {
         name for node in nodes if isinstance(node, ast.Global) for name in node.names
     }
-    local_names -= global_names
+    nonlocal_names = binding_rules.declared_names(nodes, ast.Nonlocal)
+    local_names -= global_names | nonlocal_names
     values = flow_rules.ScopeValues(parent_values)
     aliases = dict(parent_aliases)
     imported: binding_rules.Aliases = {}
@@ -117,6 +117,9 @@ def _bindings(
         local_names.update(parameter_names)
     values.scope_id = scope
     values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
+    values.cell_owners.update({name: scope for name in local_names})
+    for name in global_names:
+        values.cell_owners.pop(name, None)
     values.lexical_names = (
         frozenset()
         if isinstance(scope, ast.Module)
@@ -128,6 +131,11 @@ def _bindings(
     aliases.update(imported)
     values.update(initial_values or {})
     binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
+    for name in nonlocal_names:
+        values.pop(name, None)
+        if name in parent_values:
+            values[name] = parent_values[name]
+        aliases[name] = parent_aliases.get(name, frozenset({name}))
     for name in parameter_names:
         values.pop(name, None)
         aliases[name] = frozenset({""})
@@ -284,11 +292,12 @@ def _scan_assignment(
     on_error: Callable[[], None] | None = None,
 ) -> Iterator[tuple[int, str]]:
     value = node.value
+    inputs = (values, aliases)
     if isinstance(value, ast.Lambda):
         for header in _headers(value):
             yield from _scan_expression(header, values, aliases, closure, context)
     elif value is not None:
-        yield from _scan_expression(value, values, aliases, closure, context)
+        value, inputs = yield from _scan_expression(value, values, aliases, closure, context)
     token = (
         context.register(
             value,
@@ -305,7 +314,7 @@ def _scan_assignment(
         node.targets if isinstance(node, ast.Assign) else [node.target]
     )
     for target, resolved, assigned_value in binding_rules.prepared_assignment(
-        targets, value, values, aliases
+        targets, value, *inputs
     ):
         if on_error is not None and not isinstance(target, ast.Name):
             on_error()
@@ -331,8 +340,6 @@ def _scan_nested_scope(
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     context: _Deferred,
 ) -> Iterator[tuple[int, str]]:
-    if isinstance(node, ast.Lambda) and node in context.immediate:
-        return
     for header in _headers(node):
         yield from _scan_expression(header, values, aliases, closure, context)
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -354,11 +361,7 @@ _Outcomes = dict[str, _State]
 _Bindings = list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]]
 
 
-def _add_outcome(outcomes: _Outcomes, kind: str, state: _State) -> None:
-    if kind in outcomes:
-        outcomes[kind].merge(state)
-    else:
-        outcomes[kind] = state.copy()
+_add_outcome = flow_rules.add_outcome
 
 
 def _store_class_name(
@@ -423,21 +426,33 @@ class _ClassFlow:
 
     def block(self, body: list[ast.stmt], incoming: _State) -> _Outcomes:
         key = (tuple(map(id, body)), incoming.key())
-        if key in self.cache:
+        generating = bool(self.context.generating and self.context.generating[-1])
+        if not generating and key in self.cache:
             return {kind: state.copy() for kind, state in self.cache[key].items()}
         if len(self.cache) >= 16384:
             raise ValueError("too many distinct class flow states")
         outcomes = {"normal": incoming.copy()}
-        for node in body:
+        for index, node in enumerate(body):
             state = outcomes.pop("normal", None)
             if state is None:
                 break
             state.refresh()
             self.context.remember(state.closure)
-            for kind, result in self.statement(node, state).items():
+            results = self.statement(node, state)
+            self.context.chain(results, lambda outcomes, rest=body[index + 1:]: self.follow(outcomes, rest))
+            for kind, result in results.items():
                 _add_outcome(outcomes, kind, result)
-        self.cache[key] = {kind: state.copy() for kind, state in outcomes.items()}
+        if not generating:
+            self.cache[key] = {kind: state.copy() for kind, state in outcomes.items()}
         return outcomes
+
+    def follow(self, outcomes: _Outcomes, body: list[ast.stmt]) -> _Outcomes:
+        remaining = dict(outcomes)
+        normal = remaining.pop("normal", None)
+        if normal is not None:
+            for kind, state in self.block(body, normal).items():
+                _add_outcome(remaining, kind, state)
+        return remaining
 
     def statement(self, node: ast.stmt, state: _State) -> _Outcomes:
         before = state.copy()
@@ -459,6 +474,10 @@ class _ClassFlow:
         return outcomes
 
     def dispatch(self, node: ast.stmt, state: _State) -> _Outcomes:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Yield) and self.context.generating and self.context.generating[-1]:
+            if node.value.value is not None:
+                self.expression(node.value.value, state)
+            return self.context.pause(state, self.findings)
         if isinstance(node, ast.ClassDef):
             return self.definition(node, state)
         if isinstance(node, ast.If):
@@ -500,17 +519,13 @@ class _ClassFlow:
             self.delete(node.targets, state, outcomes)
             outcomes["normal"] = state
             return outcomes
-        nodes: Iterator[ast.AST] = chain(
-            [node], _nodes(node, descend_assignments=False)
+        self.findings.update(
+            _scan_node(node, state.values, state.aliases, state.closure, self.context)
         )
-        if isinstance(node, _SCOPES):
-            nodes = iter([node])
-        for child in nodes:
-            self.findings.update(
-                _scan_node(
-                    child, state.values, state.aliases, state.closure, self.context
-                )
-            )
+        if not isinstance(node, _SCOPES):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.expr):
+                    self.expression(child, state)
         if isinstance(node, ast.Raise):
             return {"raise": state}
         if isinstance(node, ast.Return):
@@ -620,14 +635,16 @@ class _ClassFlow:
         current: _State,
         bindings: _Bindings,
         outcomes: _Outcomes,
+        resume: Callable[[_Outcomes], _Outcomes],
     ) -> _State | None:
         _add_outcome(outcomes, "raise", current)
         if isinstance(node, ast.While):
             self.expression(node.test, current)
         self.bind(bindings, current)
         body = self.block(node.body, current)
-        for kind in ("raise", "break", "return"):
-            if kind in body:
+        self.context.chain(body, resume)
+        for kind in body:
+            if kind not in {"normal", "continue"}:
                 _add_outcome(
                     outcomes, "normal" if kind == "break" else kind, body[kind]
                 )
@@ -641,10 +658,13 @@ class _ClassFlow:
         self, node: ast.For | ast.AsyncFor | ast.While, state: _State
     ) -> _Outcomes:
         iterations, bindings = self.loop_plan(node, state)
+        return self.iterate(node, state, iterations, bindings, 0)
+
+    def iterate(self, node: ast.For | ast.AsyncFor | ast.While, state: _State, iterations: list[_Bindings] | None, bindings: _Bindings, start: int) -> _Outcomes:
         outcomes: _Outcomes = {}
         exhaustion: _Outcomes = {}
         current: _State | None = state.copy()
-        if iterations is None and self.may_skip(node):
+        if iterations is None and binding_rules.loop_may_skip(node):
             _add_outcome(exhaustion, "normal", state)
         if (
             isinstance(node, ast.While)
@@ -653,13 +673,14 @@ class _ClassFlow:
         ):
             iterations = []
         seen: set[tuple] = set()
-        for index in range(len(iterations) if iterations is not None else 256):
+        for index in range(start, len(iterations) if iterations is not None else 256):
             assert current is not None
             current = self.loop_step(
                 node,
                 current,
                 iterations[index] if iterations is not None else bindings,
                 outcomes,
+                lambda result, index=index: self.resume_loop(node, result, iterations, bindings, index + 1),
             )
             if current is None:
                 break
@@ -681,6 +702,16 @@ class _ClassFlow:
             node, outcomes, exhaustion, current, exact=iterations is not None
         )
 
+    def resume_loop(self, node: ast.For | ast.AsyncFor | ast.While, incoming: _Outcomes, iterations: list[_Bindings] | None, bindings: _Bindings, start: int) -> _Outcomes:
+        outcomes: _Outcomes = {}
+        for kind, state in incoming.items():
+            if kind in {"normal", "continue"}:
+                for result_kind, result in self.iterate(node, state, iterations, bindings, start).items():
+                    _add_outcome(outcomes, result_kind, result)
+            else:
+                _add_outcome(outcomes, "normal" if kind == "break" else kind, state)
+        return outcomes
+
     def loop_exits(
         self,
         node: ast.For | ast.AsyncFor | ast.While,
@@ -697,16 +728,6 @@ class _ClassFlow:
                 _add_outcome(outcomes, kind, result)
         return outcomes
 
-    @staticmethod
-    def may_skip(node: ast.For | ast.AsyncFor | ast.While) -> bool:
-        if isinstance(node, ast.While):
-            return not isinstance(node.test, ast.Constant) or not node.test.value
-        if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)):
-            return not any(not isinstance(item, ast.Starred) for item in node.iter.elts)
-        return not (
-            isinstance(node.iter, ast.Dict)
-            and any(key is not None for key in node.iter.keys)
-        )
 
     def handlers(self, node: ast.Try | ast.TryStar, raised: _State) -> _Outcomes:
         outcomes: _Outcomes = {}
@@ -739,6 +760,11 @@ class _ClassFlow:
 
     def try_block(self, node: ast.Try | ast.TryStar, state: _State) -> _Outcomes:
         body = self.block(node.body, state)
+        return self.finish_try(node, body)
+
+    def finish_try(self, node: ast.Try | ast.TryStar, body: _Outcomes) -> _Outcomes:
+        suspended = {kind: state for kind, state in body.items() if kind in self.context.continuations}
+        self.context.chain(suspended, lambda result: self.finish_try(node, result))
         outcomes: _Outcomes = {}
         if "normal" in body:
             outcomes.update(self.block(node.orelse, body["normal"]))
@@ -748,11 +774,20 @@ class _ClassFlow:
         if "raise" in body:
             for kind, result in self.handlers(node, body["raise"]).items():
                 _add_outcome(outcomes, kind, result)
-        if not node.finalbody:
+        return suspended | self.finish_final(node.finalbody, outcomes)
+
+    def finish_final(self, body: list[ast.stmt], outcomes: _Outcomes) -> _Outcomes:
+        if not body:
             return outcomes
+        self.context.chain(outcomes, lambda result: self.finish_final(body, result))
         finished: _Outcomes = {}
         for previous, incoming in outcomes.items():
-            for kind, result in self.block(node.finalbody, incoming).items():
+            if previous in self.context.continuations:
+                finished[previous] = incoming
+                continue
+            results = self.block(body, incoming)
+            self.context.chain(results, lambda result, previous=previous: flow_rules.restore_outcome(result, previous))
+            for kind, result in results.items():
                 _add_outcome(finished, previous if kind == "normal" else kind, result)
         return finished
 
@@ -852,13 +887,6 @@ def _scan_node(
         yield from _scan_assignment(node, values, aliases, closure, context)
     elif isinstance(node, _SCOPES):
         yield from _scan_nested_scope(node, values, aliases, closure, context)
-    elif isinstance(node, ast.Await):
-        yield from context.await_expression(node, (values, aliases), closure)
-    elif isinstance(node, ast.Call):
-        yield from context.call(node, (values, aliases), closure)
-        for target in sorted(_targets(node, aliases, values)):
-            if _private(target):
-                yield node.lineno, target
     else:
         imported: binding_rules.Aliases = {}
         binding_rules.import_aliases([node], imported)
@@ -877,16 +905,9 @@ def _scan_expression(
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     context: _Deferred,
-) -> Iterator[tuple[int, str]]:
-    # Expressions do not create lexical scopes. Only their nested functions or
-    # comprehensions do; preserve the surrounding class's closure distinction.
-    descendants = (
-        iter(())
-        if isinstance(expression, _SCOPES)
-        else _nodes(expression, descend_assignments=False)
-    )
-    for node in chain([expression], descendants):
-        yield from _scan_node(node, values, aliases, closure, context)
+) -> Generator[tuple[int, str], None, tuple[ast.expr, _Env]]:
+    evaluator = flow_rules.Expression(context, _scan_node, _targets, _private, _SCOPES)
+    return (yield from evaluator.scan(expression, (values, aliases), closure))
 
 
 def _scan_scope(
@@ -934,8 +955,11 @@ def _scan_expression_body(
     context.effects.append(effects)
     state = _State(_ClassValues(values), aliases, closure).copy()
     try:
-        for node in _nodes(scope, descend_assignments=False):
-            yield from _scan_node(node, values, aliases, closure, context)
+        assert isinstance(scope, (ast.Lambda, *_COMPREHENSIONS))
+        expressions = [scope.body] if isinstance(scope, ast.Lambda) else flow_rules.comprehension_nodes(scope)
+        for node in expressions:
+            if isinstance(node, ast.expr):
+                yield from _scan_expression(node, values, aliases, closure, context)
     except flow_rules.Interrupted:
         effects.normal = False
     finally:
@@ -959,11 +983,11 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 source = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
                 violations.extend(
-                    f"{path.relative_to(args.repo)}:{line}: private string target {target!r}"
+                    f"{path.relative_to(args.repo).as_posix()}:{line}: private string target {target!r}"
                     for line, target in _scan_scope(source, {}, {})
                 )
             except (SyntaxError, ValueError) as error:
-                violations.append(f"{path.relative_to(args.repo)}: {error}")
+                violations.append(f"{path.relative_to(args.repo).as_posix()}: {error}")
     if violations:
         print("\n".join(dict.fromkeys(violations)))
         print("Use the public entry point or real configuration; no test is exempt.")

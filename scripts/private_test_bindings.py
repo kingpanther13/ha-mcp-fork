@@ -5,13 +5,13 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import product
 
 
 @dataclass(frozen=True)
 class Argument:
-    """An unevaluated call value with its assignment-time scalar bindings."""
+    """A call value retaining bounded assignment-time bindings and sequence shape."""
 
     expression: ast.expr
     bindings: tuple[tuple[str, Value], ...]
@@ -363,29 +363,43 @@ def mapping_keys(node: ast.expr, values: dict[str, Value]) -> set[str]:
 
 def _capture_argument(node: ast.expr, values: dict[str, Value]) -> Argument:
     names = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
-    # A requested keyword needs scalar expression inputs, not recursively nested
-    # mapping payloads. This also prevents self-referencing data from growing
-    # snapshots during fixed-point analysis.
     snapshot = tuple(
-        (
-            name,
-            Value(
-                value.strings,
-                value.mapping_keys,
-                value.iterable_elements,
-                (),
-                value.is_iterable,
-                value.object_kinds,
-                value.errors,
-                value.mapping_errors,
-                value.iteration_errors,
-                callables=value.callables,
-            ),
-        )
+        (name, _position_snapshot(value))
         for name in sorted(names)
         if (value := values.get(name)) is not None
     )
     return Argument(node, snapshot)
+
+
+def _position_snapshot(value: Value) -> Value:
+    snapshot = replace(value, mapping_alternatives=(), target_mappings=())
+    # Keep historical sequence arguments without allowing recursive assignments
+    # to grow a snapshot graph indefinitely during fixed-point analysis.
+    pending: list[tuple[Value | Argument, int]] = [(snapshot, 0)]
+    visited = 0
+    while pending:
+        current, depth = pending.pop()
+        visited += 1
+        for child in _snapshot_children(current):
+            if depth >= 16 or visited + len(pending) >= 256:
+                return replace(snapshot, positions=(), position_errors=frozenset({
+                    "nested positional argument snapshot exceeds the size limit"
+                }))
+            pending.append((child, depth + 1))
+    return snapshot
+
+
+def _snapshot_children(value: Value | Argument) -> Iterator[Value | Argument]:
+    if isinstance(value, Argument):
+        yield from (bound for _, bound in value.bindings)
+        if value.resolved is not None:
+            yield value.resolved
+    else:
+        yield from (item for option in value.positions for item in option if item is not None)
+        yield from (
+            argument for option in value.mapping_alternatives + value.target_mappings
+            for _, argument in option
+        )
 
 
 Mapping = tuple[tuple[str, Argument], ...]
@@ -940,40 +954,12 @@ def _sequence_matches(pattern: ast.MatchSequence, value: object) -> bool | None:
     return False if False in alternatives else (None if None in alternatives else True)
 
 
-def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
-    """Decorators, bases and defaults execute before entering the new scope."""
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        yield from scope.decorator_list
-    if isinstance(scope, ast.ClassDef):
-        yield from scope.bases
-        yield from (keyword.value for keyword in scope.keywords)
-    if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        yield scope.generators[0].iter
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        yield from scope.args.defaults
-        yield from (value for value in scope.args.kw_defaults if value is not None)
-        yield from (
-            node.annotation
-            for node in ast.walk(scope.args)
-            if isinstance(node, ast.arg) and node.annotation is not None
-        )
-    if (
-        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and scope.returns is not None
-    ):
-        yield scope.returns
-
-
-def comprehension_nodes(
-    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
-) -> Iterator[ast.AST]:
-    """The first iterable belongs to the outer scope, not this body."""
-    if isinstance(scope, ast.DictComp):
-        yield scope.key
-        yield scope.value
-    else:
-        yield scope.elt
-    first, *remaining = scope.generators
-    yield first.target
-    yield from first.ifs
-    yield from remaining
+def loop_may_skip(node: ast.For | ast.AsyncFor | ast.While) -> bool:
+    if isinstance(node, ast.While):
+        return not isinstance(node.test, ast.Constant) or not node.test.value
+    if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)):
+        return not any(not isinstance(item, ast.Starred) for item in node.iter.elts)
+    return not (
+        isinstance(node.iter, ast.Dict)
+        and any(key is not None for key in node.iter.keys)
+    )
