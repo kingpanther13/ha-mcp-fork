@@ -128,6 +128,14 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         'NAME = "_data"\ndef test_it():\n    from public_constants import NAME\n    getattr(mod, NAME)\n',
         'NAME = "_data"\ndef test_it():\n    import public_constants as NAME\n    getattr(mod, NAME)\n',
         'NAME = "_data"\ndef test_it():\n    from public_constants import public as NAME\n    getattr(mod, NAME)\n',
+        'def getattr(obj, name):\n    return name\ngetattr(None, "_data")\n',
+        'NAME = "_data"\ndef test_it():\n    def NAME():\n        pass\n    getattr(mod, NAME)\n',
+        'NAME = "_data"\ndef test_it():\n    class NAME:\n        pass\n    getattr(mod, NAME)\n',
+        'from builtins import getattr as read\ndef read(obj, name):\n    return name\nread(None, "_data")\n',
+        'from builtins import getattr as read\nclass read:\n    pass\nread(None, "_data")\n',
+        'patch.dict({"ha_mcp.module._cache": 1}, {"_data": 2})\n',
+        'DATA = {"ha_mcp.module._cache": 1}\npatch.dict(in_dict=DATA, values={"_data": 2})\n',
+        'DATA = {"ha_mcp.module._cache": 1}\nCOPY = DATA\npatch.dict(COPY, {"_data": 2})\n',
     ],
 )
 def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
@@ -150,21 +158,6 @@ def test_local_definitions_shadow_an_imported_reflection_alias(tmp_path, definit
         f"    {definition}\n"
         '    read(None, "_data")\n'
     )
-    result = _run(tmp_path, source)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'def getattr(obj, name):\n    return name\ngetattr(None, "_data")\n',
-        'NAME = "_data"\ndef test_it():\n    def NAME():\n        pass\n    getattr(mod, NAME)\n',
-        'NAME = "_data"\ndef test_it():\n    class NAME:\n        pass\n    getattr(mod, NAME)\n',
-        'from builtins import getattr as read\ndef read(obj, name):\n    return name\nread(None, "_data")\n',
-        'from builtins import getattr as read\nclass read:\n    pass\nread(None, "_data")\n',
-    ],
-)
-def test_defined_names_do_not_retain_inherited_private_targets(tmp_path, source):
     result = _run(tmp_path, source)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -211,19 +204,6 @@ def test_patch_dict_checks_only_its_import_target(
     assert result.returncode == int(private), result.stdout + result.stderr
     if private:
         assert f"private string target {target!r}" in result.stdout
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'patch.dict({"ha_mcp.module._cache": 1}, {"_data": 2})\n',
-        'DATA = {"ha_mcp.module._cache": 1}\npatch.dict(in_dict=DATA, values={"_data": 2})\n',
-        'DATA = {"ha_mcp.module._cache": 1}\nCOPY = DATA\npatch.dict(COPY, {"_data": 2})\n',
-    ],
-)
-def test_patch_dict_mapping_contents_are_data(tmp_path, source):
-    result = _run(tmp_path, source)
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("tree", ["tests/src/unit/nested", "tests/addon/nested"])
