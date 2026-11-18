@@ -21,8 +21,16 @@ REPO = Path(__file__).resolve().parent.parent
 TREES = ("tests/src/unit", "tests/addon")
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _BRANCHES = (
-    ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.TryStar, ast.Match,
-    ast.With, ast.AsyncWith, ast.Delete,
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Try,
+    ast.TryStar,
+    ast.Match,
+    ast.With,
+    ast.AsyncWith,
+    ast.Delete,
 )
 _SCOPES = (
     ast.FunctionDef,
@@ -46,13 +54,20 @@ class _ClassValues(dict[str, _Value]):
         super().__init__(values)
         self.observed_values = dict(values)
         self.observed_aliases: _Aliases = {}
+        self.has_alias_snapshot = False
 
     def observe(self, aliases: _Aliases) -> None:
         _union_values(self.observed_values, self)
-        for name, value in aliases.items():
-            self.observed_aliases[name] = (
-                self.observed_aliases.get(name, frozenset({name})) | value
-            )
+        if not self.has_alias_snapshot:
+            self.observed_aliases.update(aliases)
+            self.has_alias_snapshot = True
+            return
+        # A missing name in an actual earlier/later snapshot uses its ordinary
+        # lookup, but a shadowed name in the first snapshot never did.
+        for name in self.observed_aliases.keys() | aliases.keys():
+            fallback = frozenset({name})
+            previous = self.observed_aliases.get(name, fallback)
+            self.observed_aliases[name] = previous | aliases.get(name, fallback)
 
 
 _Aliases = dict[str, frozenset[str]]
@@ -102,10 +117,13 @@ def _nodes(
         children = ast.iter_child_nodes(scope)
     for child in children:
         yield child
-        if isinstance(child, _SCOPES) or (
-            not descend_assignments and isinstance(child, (ast.Assign, ast.AnnAssign))
-        ) or (
-            not descend_branches and isinstance(child, _BRANCHES)
+        if (
+            isinstance(child, _SCOPES)
+            or (
+                not descend_assignments
+                and isinstance(child, (ast.Assign, ast.AnnAssign))
+            )
+            or (not descend_branches and isinstance(child, _BRANCHES))
         ):
             continue
         yield from _nodes(
@@ -250,12 +268,14 @@ def _import_aliases(nodes: list[ast.AST], aliases: _Aliases) -> None:
     for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                aliases[alias.asname or alias.name.split(".")[0]] = frozenset({
-                    alias.name if alias.asname else alias.name.split(".")[0]
-                })
+                aliases[alias.asname or alias.name.split(".")[0]] = frozenset(
+                    {alias.name if alias.asname else alias.name.split(".")[0]}
+                )
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                aliases[alias.asname or alias.name] = frozenset({f"{node.module}.{alias.name}"})
+                aliases[alias.asname or alias.name] = frozenset(
+                    {f"{node.module}.{alias.name}"}
+                )
 
 
 def _extend_values(
@@ -313,10 +333,10 @@ def _own_object(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in {"self", "cls"}
 
 
-def _targets(
-    call: ast.Call, aliases: _Aliases, values: dict[str, _Value]
-) -> set[str]:
-    return set().union(*(_named_targets(call, name, values) for name in _dotted(call.func, aliases)))
+def _targets(call: ast.Call, aliases: _Aliases, values: dict[str, _Value]) -> set[str]:
+    return set().union(
+        *(_named_targets(call, name, values) for name in _dotted(call.func, aliases))
+    )
 
 
 def _named_targets(call: ast.Call, name: str, values: dict[str, _Value]) -> set[str]:
@@ -415,9 +435,13 @@ def _scan_assignment_target(
     elif isinstance(target, (ast.Tuple, ast.List)):
         for item in target.elts:
             # Unpacked elements are unknown, not inherited callable aliases.
-            yield from _scan_assignment_target(item, frozenset({""}), values, aliases, closure)
+            yield from _scan_assignment_target(
+                item, frozenset({""}), values, aliases, closure
+            )
     elif isinstance(target, ast.Starred):
-        yield from _scan_assignment_target(target.value, frozenset({""}), values, aliases, closure)
+        yield from _scan_assignment_target(
+            target.value, frozenset({""}), values, aliases, closure
+        )
     else:
         yield from _scan_expression(target, values, aliases, closure)
 
@@ -540,7 +564,9 @@ def _scan_class_loop(
     _extend_values(list(_assignments(body_nodes)), body_values, seeded_aliases)
     _union_aliases(body_aliases, seeded_aliases)
     if not isinstance(node, ast.While):
-        iterated = _Value(frozenset(_strings(node.iter, values) | _mapping_keys(node.iter, values)))
+        iterated = _Value(
+            frozenset(_strings(node.iter, values) | _mapping_keys(node.iter, values))
+        )
         yield from _scan_assignment_target(
             node.target, frozenset({""}), body_values, body_aliases, closure, iterated
         )
@@ -550,7 +576,9 @@ def _scan_class_loop(
     if isinstance(node, ast.While) or not _definitely_nonempty(node.iter):
         paths.append((_ClassValues(values), dict(aliases)))
     if any(isinstance(part, (ast.Break, ast.Continue)) for part in body_nodes):
-        paths.append((_ClassValues(body_values.observed_values), body_values.observed_aliases))
+        paths.append(
+            (_ClassValues(body_values.observed_values), body_values.observed_aliases)
+        )
     _join_class_paths(values, aliases, paths)
     if isinstance(node, ast.While):
         yield from _scan_expression(node.test, values, aliases, closure)
@@ -604,13 +632,19 @@ def _scan_class_try(
         caught_values = _ClassValues(handler_start_values)
         caught_aliases = dict(handler_start_aliases)
         if handler.type is not None:
-            yield from _scan_expression(handler.type, caught_values, caught_aliases, closure)
+            yield from _scan_expression(
+                handler.type, caught_values, caught_aliases, closure
+            )
         if handler.name is not None:
             caught_values[handler.name] = _Value()
             caught_aliases[handler.name] = frozenset({""})
-        yield from _scan_class_block(handler.body, caught_values, caught_aliases, closure)
+        yield from _scan_class_block(
+            handler.body, caught_values, caught_aliases, closure
+        )
         if handler.name is not None:
-            _restore_class_fallback(handler.name, caught_values, caught_aliases, closure)
+            _restore_class_fallback(
+                handler.name, caught_values, caught_aliases, closure
+            )
         paths.append((caught_values, caught_aliases))
         interrupted_handler = _ClassValues(caught_values.observed_values)
         interrupted_handler_aliases = dict(caught_values.observed_aliases)
@@ -639,7 +673,9 @@ def _scan_class_match(
     yield from _scan_expression(node.subject, values, aliases, closure)
     paths: list[tuple[_ClassValues, _Aliases]] = []
     if not any(
-        case.guard is None and isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        case.guard is None
+        and isinstance(case.pattern, ast.MatchAs)
+        and case.pattern.pattern is None
         for case in node.cases
     ):
         paths.append((_ClassValues(values), dict(aliases)))
@@ -649,7 +685,9 @@ def _scan_class_match(
             branch_values[name] = _Value()
             branch_aliases[name] = frozenset({""})
         if case.guard is not None:
-            yield from _scan_expression(case.guard, branch_values, branch_aliases, closure)
+            yield from _scan_expression(
+                case.guard, branch_values, branch_aliases, closure
+            )
         yield from _scan_class_block(case.body, branch_values, branch_aliases, closure)
         paths.append((branch_values, branch_aliases))
     _join_class_paths(values, aliases, paths)
@@ -679,8 +717,12 @@ def _scan_class_with(
     yield from _scan_class_block(node.body, body_values, body_aliases, closure)
     # A context manager may suppress an exception between body assignments.
     _join_class_paths(
-        values, aliases,
-        [(body_values, body_aliases), (_ClassValues(body_values.observed_values), body_values.observed_aliases)],
+        values,
+        aliases,
+        [
+            (body_values, body_aliases),
+            (_ClassValues(body_values.observed_values), body_values.observed_aliases),
+        ],
     )
 
 
@@ -707,7 +749,9 @@ def _scan_class_branch(
 ) -> Iterator[tuple[int, str]]:
     if isinstance(node, ast.If):
         yield from _scan_expression(node.test, values, aliases, closure)
-        yield from _scan_class_choices([node.body, node.orelse], values, aliases, closure)
+        yield from _scan_class_choices(
+            [node.body, node.orelse], values, aliases, closure
+        )
     elif isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
         yield from _scan_class_loop(node, values, aliases, closure)
     elif isinstance(node, (ast.Try, ast.TryStar)):

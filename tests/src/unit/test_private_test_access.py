@@ -109,29 +109,106 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         'from builtins import getattr as read\nholder[read(mod, "_helper")], *read = public_values\n',
         'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    def method(value=[getattr(mod, TARGET) for index in (1,)]):\n        pass\n',
         'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    def method(value=lambda: getattr(mod, TARGET)):\n        pass\n',
-        pytest.param('TARGET = "_helper"\nclass Example:\n    TARGET = getattr(mod, TARGET)\n', id="class-inherited-rhs"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    TARGET: object = getattr(mod, TARGET)\n', id="class-annotated-rhs"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    getattr(mod, TARGET)\n    TARGET = "public"\n', id="class-read-before-rebind"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    COPY = TARGET\n    TARGET = "public"\n    getattr(mod, COPY)\n', id="class-copy-before-rebind"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    if flag:\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-optional-override"),
-        pytest.param('TARGET = "public"\nclass Example:\n    if flag:\n        TARGET = "_helper"\n    else:\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-value-join"),
-        pytest.param('TARGET = "ha_mcp.module._cache"\nclass Example:\n    if flag:\n        TARGET = {"_data": 1}\n    patch.dict(TARGET, {})\n', id="class-mapping-string-join"),
-        pytest.param('from builtins import getattr as read\nclass Example:\n    if flag:\n        read = public_callback\n    read(mod, "_helper")\n', id="class-optional-alias"),
-        pytest.param('read = public_callback\nclass Example:\n    if flag:\n        read = getattr\n    else:\n        read = public_callback\n    read(mod, "_helper")\n', id="class-alias-join"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    for item in items:\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-loop-zero-iterations"),
-        pytest.param('TARGET = "public"\nclass Example:\n    while getattr(mod, TARGET):\n        TARGET = "_helper"\n', id="class-loop-later-condition"),
-        pytest.param('TARGET = "public"\nclass Example:\n    try:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    except Exception:\n        getattr(mod, TARGET)\n', id="class-handler-intermediate-value"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    try:\n        TARGET = "public"\n    except Exception:\n        getattr(mod, TARGET)\n', id="class-handler-inherited-value"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    match value:\n        case 0:\n            TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-match-no-case"),
-        pytest.param('KEYS = {"_helper": 1}\nclass Example:\n    if flag:\n        KEYS = {"public": 2}\n    patch.multiple(mod, **KEYS)\n', id="class-mapping-key-join"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    TARGET: str\n    getattr(mod, TARGET)\n', id="class-annotation-only"),
-        pytest.param('TARGET = "public"\nclass Example:\n    for item in items:\n        TARGET = "_helper"\n        if flag:\n            break\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-loop-break-value"),
-        pytest.param('TARGET = "public"\nclass Example:\n    try:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    except Specific:\n        TARGET = "public"\n    finally:\n        getattr(mod, TARGET)\n', id="class-finally-unhandled-value"),
-        pytest.param('TARGET = "public"\nclass Example:\n    with suppress(Exception):\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-suppressed-intermediate-value"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    try:\n        raise Exception()\n    except Exception as TARGET:\n        pass\n    getattr(mod, TARGET)\n', id="class-exception-name-fallback"),
-        pytest.param('TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    del TARGET\n    getattr(mod, TARGET)\n', id="class-deleted-value-fallback"),
-        pytest.param('from builtins import getattr as read\nclass Example:\n    read = public_callback\n    del read\n    read(mod, "_helper")\n', id="class-deleted-alias-fallback"),
-        pytest.param('TARGET = "public"\nclass Example:\n    try:\n        pass\n    except Specific:\n        pass\n    else:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    finally:\n        getattr(mod, TARGET)\n', id="class-finally-else-intermediate"),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    TARGET = getattr(mod, TARGET)\n',
+            id="class-inherited-rhs",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    TARGET: object = getattr(mod, TARGET)\n',
+            id="class-annotated-rhs",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    getattr(mod, TARGET)\n    TARGET = "public"\n',
+            id="class-read-before-rebind",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    COPY = TARGET\n    TARGET = "public"\n    getattr(mod, COPY)\n',
+            id="class-copy-before-rebind",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    if flag:\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-optional-override",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    if flag:\n        TARGET = "_helper"\n    else:\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-value-join",
+        ),
+        pytest.param(
+            'TARGET = "ha_mcp.module._cache"\nclass Example:\n    if flag:\n        TARGET = {"_data": 1}\n    patch.dict(TARGET, {})\n',
+            id="class-mapping-string-join",
+        ),
+        pytest.param(
+            'from builtins import getattr as read\nclass Example:\n    if flag:\n        read = public_callback\n    read(mod, "_helper")\n',
+            id="class-optional-alias",
+        ),
+        pytest.param(
+            'read = public_callback\nclass Example:\n    if flag:\n        read = getattr\n    else:\n        read = public_callback\n    read(mod, "_helper")\n',
+            id="class-alias-join",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    for item in items:\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-loop-zero-iterations",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    while getattr(mod, TARGET):\n        TARGET = "_helper"\n',
+            id="class-loop-later-condition",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    try:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    except Exception:\n        getattr(mod, TARGET)\n',
+            id="class-handler-intermediate-value",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    try:\n        TARGET = "public"\n    except Exception:\n        getattr(mod, TARGET)\n',
+            id="class-handler-inherited-value",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    match value:\n        case 0:\n            TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-match-no-case",
+        ),
+        pytest.param(
+            'KEYS = {"_helper": 1}\nclass Example:\n    if flag:\n        KEYS = {"public": 2}\n    patch.multiple(mod, **KEYS)\n',
+            id="class-mapping-key-join",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    TARGET: str\n    getattr(mod, TARGET)\n',
+            id="class-annotation-only",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    for item in items:\n        TARGET = "_helper"\n        if flag:\n            break\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-loop-break-value",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    try:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    except Specific:\n        TARGET = "public"\n    finally:\n        getattr(mod, TARGET)\n',
+            id="class-finally-unhandled-value",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    with suppress(Exception):\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-suppressed-intermediate-value",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    try:\n        raise Exception()\n    except Exception as TARGET:\n        pass\n    getattr(mod, TARGET)\n',
+            id="class-exception-name-fallback",
+        ),
+        pytest.param(
+            'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    del TARGET\n    getattr(mod, TARGET)\n',
+            id="class-deleted-value-fallback",
+        ),
+        pytest.param(
+            'from builtins import getattr as read\nclass Example:\n    read = public_callback\n    del read\n    read(mod, "_helper")\n',
+            id="class-deleted-alias-fallback",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    try:\n        pass\n    except Specific:\n        pass\n    else:\n        TARGET = "_helper"\n        risky()\n        TARGET = "public"\n    finally:\n        getattr(mod, TARGET)\n',
+            id="class-finally-else-intermediate",
+        ),
+        pytest.param(
+            'class Example:\n    try:\n        risky()\n        getattr = public_callback\n    except Exception:\n        getattr(mod, "_helper")\n',
+            id="class-handler-before-builtin-rebinding",
+        ),
+        pytest.param(
+            'class Example:\n    getattr = public_callback\n    try:\n        del getattr\n        risky()\n    except Exception:\n        getattr(mod, "_helper")\n',
+            id="class-handler-after-builtin-restored",
+        ),
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -207,30 +284,102 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         'from builtins import getattr as read\n*read, holder[read(None, "_data")] = public_values\n',
         'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    def method(value=[getattr(mod, TARGET) for index in (1,)]):\n        pass\n',
         'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    def method(value=lambda: getattr(mod, TARGET)):\n        pass\n',
-        pytest.param('TARGET = "_data"\nclass Example:\n    TARGET = "public"\n    TARGET = getattr(mod, TARGET)\n', id="class-prior-public-rhs"),
-        pytest.param('TARGET = "public"\nclass Example:\n    TARGET = getattr(mod, TARGET)\n', id="class-public-rhs"),
-        pytest.param('TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-definite-public-overwrite"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    if flag:\n        TARGET = "public"\n        getattr(mod, TARGET)\n', id="class-public-within-branch"),
-        pytest.param('TARGET = "public"\nclass Example:\n    if flag:\n        TARGET = "_data"\n    else:\n        TARGET = "public"\n        getattr(mod, TARGET)\n', id="class-independent-else"),
-        pytest.param('TARGET = "ha_mcp.module.cache"\nclass Example:\n    if flag:\n        TARGET = {"_data": 1}\n    patch.dict(TARGET, {})\n', id="class-public-or-mapping"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    if flag:\n        TARGET = "public"\n    else:\n        TARGET = "also_public"\n    getattr(mod, TARGET)\n', id="class-both-branches-public"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    from constants import TARGET\n    getattr(mod, TARGET)\n', id="class-imported-value"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    with context as TARGET:\n        getattr(mod, TARGET)\n', id="class-with-bound-value"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    match value:\n        case TARGET:\n            getattr(mod, TARGET)\n', id="class-match-capture"),
-        pytest.param('CACHE = "ha_mcp.module._cache"\nclass Example:\n    CACHE = {"_data": 1}\n    patch.dict(CACHE, {})\n', id="class-mapping-data"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    for item in items:\n        TARGET = "public"\n        getattr(mod, TARGET)\n', id="class-public-within-loop"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    try:\n        risky()\n    except Exception:\n        TARGET = "public"\n        getattr(mod, TARGET)\n', id="class-public-within-handler"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    for TARGET in ("public",):\n        pass\n    getattr(mod, TARGET)\n', id="class-nonempty-iteration"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    match value:\n        case _:\n            TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-exhaustive-match"),
-        pytest.param('TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    try:\n        raise Exception()\n    except Exception as TARGET:\n        pass\n    getattr(mod, TARGET)\n', id="class-exception-name-public-fallback"),
-        pytest.param('TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    del TARGET\n    getattr(mod, TARGET)\n', id="class-deleted-public-fallback"),
-        pytest.param('read = public_callback\nclass Example:\n    read = getattr\n    del read\n    read(None, "_data")\n', id="class-deleted-public-alias"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    TARGET = "public"\n    with context:\n        pass\n    getattr(mod, TARGET)\n', id="class-with-keeps-prior-overwrite"),
-        pytest.param('TARGET = "_data"\nclass Example:\n    try:\n        risky()\n    finally:\n        TARGET = "public"\n    getattr(mod, TARGET)\n', id="class-finally-public-override"),
-        pytest.param('TARGET = "public"\nclass Example:\n    try:\n        risky()\n    except First:\n        TARGET = "_data"\n    except Second:\n        getattr(mod, TARGET)\n', id="class-independent-handlers"),
-        pytest.param('from builtins import getattr as read\nclass Example:\n    if flag:\n        read = public_callback\n    else:\n        read = other_callback\n    read(None, "_data")\n', id="class-both-aliases-public"),
-        pytest.param('TARGET = "public"\nclass Example:\n    while flag:\n        TARGET = "public"\n        getattr(mod, TARGET)\n        TARGET = "_data"\n', id="class-loop-definite-public-prefix"),
-        pytest.param('getattr = public_callback\nclass Example:\n    try:\n        raise Exception()\n    finally:\n        getattr(None, "_data")\n', id="class-exceptional-finally-keeps-alias"),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    TARGET = "public"\n    TARGET = getattr(mod, TARGET)\n',
+            id="class-prior-public-rhs",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    TARGET = getattr(mod, TARGET)\n',
+            id="class-public-rhs",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-definite-public-overwrite",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    if flag:\n        TARGET = "public"\n        getattr(mod, TARGET)\n',
+            id="class-public-within-branch",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    if flag:\n        TARGET = "_data"\n    else:\n        TARGET = "public"\n        getattr(mod, TARGET)\n',
+            id="class-independent-else",
+        ),
+        pytest.param(
+            'TARGET = "ha_mcp.module.cache"\nclass Example:\n    if flag:\n        TARGET = {"_data": 1}\n    patch.dict(TARGET, {})\n',
+            id="class-public-or-mapping",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    if flag:\n        TARGET = "public"\n    else:\n        TARGET = "also_public"\n    getattr(mod, TARGET)\n',
+            id="class-both-branches-public",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    from constants import TARGET\n    getattr(mod, TARGET)\n',
+            id="class-imported-value",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    with context as TARGET:\n        getattr(mod, TARGET)\n',
+            id="class-with-bound-value",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    match value:\n        case TARGET:\n            getattr(mod, TARGET)\n',
+            id="class-match-capture",
+        ),
+        pytest.param(
+            'CACHE = "ha_mcp.module._cache"\nclass Example:\n    CACHE = {"_data": 1}\n    patch.dict(CACHE, {})\n',
+            id="class-mapping-data",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    for item in items:\n        TARGET = "public"\n        getattr(mod, TARGET)\n',
+            id="class-public-within-loop",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    try:\n        risky()\n    except Exception:\n        TARGET = "public"\n        getattr(mod, TARGET)\n',
+            id="class-public-within-handler",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    for TARGET in ("public",):\n        pass\n    getattr(mod, TARGET)\n',
+            id="class-nonempty-iteration",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    match value:\n        case _:\n            TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-exhaustive-match",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    try:\n        raise Exception()\n    except Exception as TARGET:\n        pass\n    getattr(mod, TARGET)\n',
+            id="class-exception-name-public-fallback",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    TARGET = "_data"\n    del TARGET\n    getattr(mod, TARGET)\n',
+            id="class-deleted-public-fallback",
+        ),
+        pytest.param(
+            'read = public_callback\nclass Example:\n    read = getattr\n    del read\n    read(None, "_data")\n',
+            id="class-deleted-public-alias",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    TARGET = "public"\n    with context:\n        pass\n    getattr(mod, TARGET)\n',
+            id="class-with-keeps-prior-overwrite",
+        ),
+        pytest.param(
+            'TARGET = "_data"\nclass Example:\n    try:\n        risky()\n    finally:\n        TARGET = "public"\n    getattr(mod, TARGET)\n',
+            id="class-finally-public-override",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    try:\n        risky()\n    except First:\n        TARGET = "_data"\n    except Second:\n        getattr(mod, TARGET)\n',
+            id="class-independent-handlers",
+        ),
+        pytest.param(
+            'from builtins import getattr as read\nclass Example:\n    if flag:\n        read = public_callback\n    else:\n        read = other_callback\n    read(None, "_data")\n',
+            id="class-both-aliases-public",
+        ),
+        pytest.param(
+            'TARGET = "public"\nclass Example:\n    while flag:\n        TARGET = "public"\n        getattr(mod, TARGET)\n        TARGET = "_data"\n',
+            id="class-loop-definite-public-prefix",
+        ),
+        pytest.param(
+            'getattr = public_callback\nclass Example:\n    try:\n        raise Exception()\n    finally:\n        getattr(None, "_data")\n',
+            id="class-exceptional-finally-keeps-alias",
+        ),
     ],
 )
 def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
