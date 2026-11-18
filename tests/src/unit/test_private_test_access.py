@@ -356,6 +356,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "conditional-instance-stores-keep-class-inheritance-live": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nfirst = Example()\nsecond = Example()\nif flag:\n    selected = first if choice else second\n    selected.run = callback\nExample.run = other_callback\nNAME = '_data'\nfirst.run()\nsecond.run()\nNAME = 'public'\n",
                 "known-local-class-patch-is-not-unittest-patch": "class Example:\n    @staticmethod\n    def patch(data):\n        pass\nExample.patch('_data')\n",
                 "class-member-store-replaces-deferred-method": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\nExample.run = callback\nExample.run()\nNAME = 'public'\n",
                 "instance-member-store-replaces-only-that-method": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ninstance.run()\nNAME = 'public'\n",
