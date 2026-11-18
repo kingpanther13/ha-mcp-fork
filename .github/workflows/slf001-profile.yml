@@ -1,0 +1,39 @@
+name: SLF001 guard profile
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  profile:
+    if: github.repository == 'kingpanther13/ha-mcp-fork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: proof
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: candidate
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          version: '0.13.9'
+          python-version: '3.14'
+      - name: Profile the whole-tree hotspot on the exact candidate
+        env:
+          PROBE_CANDIDATE: ${{ inputs.revision }}
+        working-directory: candidate
+        run: uv run --no-project python ../proof/.github/scripts/slf001_profile.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: slf001-profile
+          path: /tmp/slf001-profile
+          if-no-files-found: error
