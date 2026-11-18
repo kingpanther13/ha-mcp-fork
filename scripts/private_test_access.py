@@ -93,6 +93,7 @@ def _bindings(
         scope, parent_values, parent_aliases, list(_nodes(scope)), initial_values
     )
 
+
 def _targets(
     call: ast.Call,
     aliases: binding_rules.Aliases,
@@ -648,7 +649,13 @@ class _ClassFlow:
                 current,
                 iterations[index] if iterations is not None else bindings,
                 outcomes,
-                partial(self.resume_loop, node, iterations=iterations, bindings=bindings, start=index + 1),
+                partial(
+                    self.resume_loop,
+                    node,
+                    iterations=iterations,
+                    bindings=bindings,
+                    start=index + 1,
+                ),
             )
             if current is None:
                 break
@@ -889,7 +896,9 @@ def _scan_expression(
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
     context: _Deferred,
 ) -> Generator[tuple[int, str], None, tuple[ast.expr, _Env]]:
-    evaluator = expression_rules.Expression(context, _scan_node, _targets, _private, _SCOPES)
+    evaluator = expression_rules.Expression(
+        context, _scan_node, _targets, _private, _SCOPES
+    )
     return (yield from evaluator.scan(expression, (values, aliases), closure))
 
 
