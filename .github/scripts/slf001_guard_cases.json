@@ -77,7 +77,7 @@
     {
       "id": "later-comprehension-target-binding-reject",
       "source": "[getattr(obj, name) for x in (1,) for name in ('_helper',)]\n",
-      "baseline_fails": true
+      "baseline_fails": false
     },
     {
       "id": "comprehension-filters-precede-element-reject",
@@ -98,6 +98,16 @@
       "id": "lazy-annotation-still-checks-private-policy-reject",
       "source": "from __future__ import annotations\ndef f(value: getattr(obj, '_helper')):\n    pass\n",
       "baseline_fails": false
+    },
+    {
+      "id": "starred-generator-next-default-preserves-normal-continuation",
+      "source": "def items():\n    yield None\npending = items()\nnext(pending)\narguments = (pending, None)\nnext(*arguments)\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "starred-generator-next-checks-before-first-yield",
+      "source": "NAME = '_helper'\ndef items():\n    getattr(mod, NAME)\n    yield None\npending = items()\nnext(*(pending, None))\nNAME = 'public'\n",
+      "baseline_fails": true
     }
   ],
   "allow": [
@@ -204,6 +214,16 @@
       "id": "lazy-annotation-still-checks-private-policy-allow",
       "source": "from __future__ import annotations\ndef f(value: getattr(obj, 'public')):\n    pass\n",
       "baseline_fails": false
+    },
+    {
+      "id": "starred-generator-next-without-default-stops-at-exhaustion",
+      "source": "def items():\n    yield None\npending = items()\nnext(*(pending,))\nnext(*(pending,))\ngetattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "starred-generator-next-default-keeps-real-exception",
+      "source": "def items():\n    yield None\n    raise ValueError()\npending = items()\nnext(pending)\nnext(*(pending, None))\ngetattr(mod, '_data')\n",
+      "baseline_fails": true
     }
   ],
   "error": []

@@ -145,6 +145,24 @@ def server_answer_cases(node: ast.FunctionDef) -> dict[str, tuple[str, bool]]:
             for item in table.elts
         }
     assert isinstance(table, ast.ListComp)
+    if len(table.generators) == 2:
+        outer, inner = table.generators
+        assert not outer.ifs and not outer.is_async and not inner.ifs and not inner.is_async
+        assert ast.dump(table.elt) == ast.dump(ast.parse("pytest.param(source, refused, id=case_id)", mode="eval").body)
+        assert ast.dump(outer.target) == ast.dump(ast.parse("for refused, cases in rows: pass").body[0].target)
+        assert ast.dump(inner.target) == ast.dump(ast.parse("for case_id, source in rows: pass").body[0].target)
+        assert ast.dump(inner.iter) == ast.dump(ast.parse("cases.items()", mode="eval").body)
+        assert isinstance(outer.iter, ast.Call) and not outer.iter.args and not outer.iter.keywords
+        assert isinstance(outer.iter.func, ast.Attribute) and outer.iter.func.attr == "items"
+        mapping = outer.iter.func.value
+        assert isinstance(mapping, ast.Dict)
+        groups = ast.literal_eval(mapping)
+        assert set(groups) == {False, True} and len(mapping.keys) == 2
+        assert all(isinstance(rows, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in rows.items()) for rows in groups.values())
+        assert all(isinstance(value, ast.Dict) and len(ast.literal_eval(value)) == len(value.keys) for value in mapping.values)
+        result = {key: (source, refused) for refused, rows in groups.items() for key, source in rows.items()}
+        assert len(result) == sum(len(rows) for rows in groups.values()) == 31
+        return result
     [clause] = table.generators
     assert not clause.ifs and not clause.is_async
     assert ast.dump(table.elt) == ast.dump(ast.parse("pytest.param(source, refused, id=case_id)", mode="eval").body)
