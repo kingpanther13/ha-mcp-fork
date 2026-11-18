@@ -490,6 +490,21 @@ runpy.run_path(script, run_name="__main__")
                 "patch-dict-large-string-precision-retains-short-private-target-key": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
                 "helper-bound-method-argument-resolves-live-method": "NAME = '_helper'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
                 "helper-tuple-argument-preserves-ordered-shape": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nlookup(args)\n",
+                "raising-call-evaluates-private-argument-first": "def stop(value):\n    raise RuntimeError\nstop(getattr(mod, '_helper'))\n",
+                "false-and-skips-interruption-before-private-access": "def stop():\n    raise RuntimeError\nFalse and stop()\ngetattr(mod, '_helper')\n",
+                "true-or-skips-interruption-before-private-access": "def stop():\n    raise RuntimeError\nTrue or stop()\ngetattr(mod, '_helper')\n",
+                "unknown-and-keeps-normal-continuation": "def stop():\n    raise RuntimeError\nflag and stop()\ngetattr(mod, '_helper')\n",
+                "later-tuple-operand-sees-completed-global-write": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\n(switch(), getattr(mod, NAME))\nNAME = 'public'\n",
+                "helper-argument-captured-before-later-argument-write": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\n",
+                "callee-alias-captured-before-argument-write": "read = getattr\ndef switch():\n    global read\n    read = public_function\nread(mod, '_helper', switch())\n",
+                "await-unknown-alternative-retains-normal-continuation": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop() if flag else client.read()\n    await pending\n    getattr(mod, '_helper')\n",
+                "generator-access-before-first-yield-is-checked": "NAME = '_helper'\ndef values():\n    getattr(mod, NAME)\n    yield None\npending = values()\nnext(pending)\nNAME = 'public'\n",
+                "generator-resume-observes-current-private-global": "NAME = 'public'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+                "known-call-replays-nonlocal-write": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n    switch()\n    getattr(mod, name)\n",
+                "known-call-replays-nonlocal-write-on-raise": "def test_it():\n    name = 'public'\n    def switch():\n        nonlocal name\n        name = '_helper'\n        raise ValueError()\n    try:\n        switch()\n    except ValueError:\n        getattr(mod, name)\n",
+                "stored-keyword-tuple-keeps-private-target-shape": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nopts = {'args': args}\nlookup(**opts)\n",
+                "stored-keyword-list-keeps-private-shape-after-rebind": "def lookup(args):\n    getattr(*args)\nargs = [mod, '_helper']\nopts = {'args': args}\nargs = [mod, 'public']\nlookup(**opts)\n",
+                "bounded-recursive-sequence-still-checks-following-target": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, '_helper')\n",
             }.items()
         ),
     ],
@@ -732,6 +747,21 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "patch-dict-large-width-key-keeps-private-looking-replacement-data": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
                 "helper-bound-method-argument-keeps-public-target": "NAME = 'public'\nclass Example:\n    def run(self):\n        getattr(mod, NAME)\ninstance = Example()\ndef lookup(read):\n    read()\nlookup(instance.run)\nNAME = 'public'\n",
                 "helper-tuple-argument-keeps-public-target": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nlookup(args)\n",
+                "raising-call-skips-following-private-expression": "def stop(value):\n    raise RuntimeError\nstop(None)\ngetattr(mod, '_helper')\n",
+                "true-and-preserves-executed-interruption": "def stop():\n    raise RuntimeError\nTrue and stop()\ngetattr(mod, '_helper')\n",
+                "false-or-preserves-executed-interruption": "def stop():\n    raise RuntimeError\nFalse or stop()\ngetattr(mod, '_helper')\n",
+                "short-circuited-private-operand-is-not-evaluated": "False and getattr(mod, '_helper')\n",
+                "later-tuple-operand-sees-completed-public-write": "NAME = '_helper'\ndef switch():\n    global NAME\n    NAME = 'public'\n(switch(), getattr(mod, NAME))\n",
+                "helper-public-argument-keeps-value-before-later-write": "NAME = 'public'\ndef switch():\n    global NAME\n    NAME = '_helper'\ndef use(name, ignored):\n    getattr(mod, name)\nuse(NAME, switch())\nNAME = 'public'\n",
+                "public-callee-captured-before-argument-replacement": "read = public_function\ndef switch():\n    global read\n    read = getattr\nread(mod, '_helper', switch())\n",
+                "definite-named-await-still-has-no-normal-continuation": "async def stop():\n    raise ValueError()\nasync def test_it():\n    pending = stop()\n    await pending\n    getattr(mod, '_helper')\n",
+                "generator-first-next-stops-before-private-later-lookup": "NAME = '_helper'\ndef values():\n    yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+                "generator-conditional-yield-retains-continuation": "NAME = '_helper'\ndef values():\n    if True:\n        yield None\n    getattr(mod, NAME)\npending = values()\nnext(pending)\nNAME = 'public'\nnext(pending)\n",
+                "ordinary-callee-local-does-not-write-enclosing-name": "def test_it():\n    name = 'public'\n    def switch():\n        name = '_data'\n    switch()\n    getattr(mod, name)\n",
+                "nonlocal-public-write-replaces-old-private-name": "def test_it():\n    name = '_data'\n    def switch():\n        nonlocal name\n        name = 'public'\n    switch()\n    getattr(mod, name)\n",
+                "stored-keyword-list-keeps-public-target-shape": "def lookup(args):\n    getattr(*args)\nargs = [mod, 'public']\nopts = {'args': args}\nlookup(**opts)\n",
+                "stored-keyword-tuple-keeps-public-shape-after-rebind": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nopts = {'args': args}\nargs = (mod, '_data')\nlookup(**opts)\n",
+                "unused-recursive-sequence-snapshot-stays-bounded": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, 'public')\n",
             }.items()
         ),
     ],
@@ -851,7 +881,7 @@ def test_the_guard_covers_every_python_file_in_both_trees(tmp_path, tree):
 
 
 def test_multiline_private_access_reports_its_call_line(tmp_path):
-    result = _run(tmp_path, "name = '_helper'\n\ngetattr(mod, name)\n")
+    result = _run(tmp_path, "name = '_helper'\n\ngetattr(\n    mod,\n    name,\n)\n")
     assert result.returncode == 1, result.stdout + result.stderr
     assert (
         "tests/src/unit/test_sample.py:3: private string target '_helper'"

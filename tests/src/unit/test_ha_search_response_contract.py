@@ -23,7 +23,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp.client.rest_client import HomeAssistantClient
+from ha_mcp.client.rest_client import (
+    HomeAssistantClient,
+    HomeAssistantConnectionError,
+)
 from ha_mcp.errors import ErrorCode, create_error_response
 from ha_mcp.tools.smart_search import SmartSearchTools
 
@@ -70,14 +73,20 @@ async def test_no_surface_answering_is_a_structured_error(
 
     # A domain listing runs the entity surface only.
     with (
-        patch.object(core_client, "get_states", AsyncMock(side_effect=TimeoutError)),
+        patch.object(
+            core_client,
+            "get_states",
+            AsyncMock(
+                side_effect=HomeAssistantConnectionError("Request timeout: states response")
+            ),
+        ),
         pytest.raises(ToolError) as excinfo,
     ):
         await _build_ha_search(core_client)(domain_filter="light")
 
     payload = json.loads(str(excinfo.value))
     assert payload["success"] is False
-    assert payload["error"]["code"] == "TIMEOUT_OPERATION"
+    assert payload["error"]["code"] == "CONNECTION_TIMEOUT"
 
 
 async def test_no_surface_answering_keeps_the_first_branch_tool_error(
