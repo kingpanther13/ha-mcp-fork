@@ -132,6 +132,13 @@
       "source": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
       "baseline_fails": false,
       "boundary_fails": false
+    },
+    {
+      "id": "lazy-lambda-annotation-private-body-is-checked",
+      "source": "def f(value: (lambda: getattr(mod, '_helper'))):\n    pass\n",
+      "baseline_fails": false,
+      "boundary_fails": true,
+      "boundary_revision": "0322d2452cca34b7041639a010f2b50d26529de3"
     }
   ],
   "allow": [
@@ -272,6 +279,13 @@
       "source": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, 'public')\n",
       "baseline_fails": false,
       "boundary_fails": true
+    },
+    {
+      "id": "lazy-lambda-annotation-public-body-is-allowed",
+      "source": "def f(value: (lambda: getattr(mod, 'public'))):\n    pass\n",
+      "baseline_fails": false,
+      "boundary_fails": true,
+      "boundary_revision": "0322d2452cca34b7041639a010f2b50d26529de3"
     }
   ],
   "error": []

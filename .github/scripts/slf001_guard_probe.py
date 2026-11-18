@@ -416,14 +416,22 @@ def restore_sources(sources: dict[str, str | None]) -> None:
 
 
 def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
-    """Reproduce only the new boundary cases on an exact, unchanged guard."""
+    """Reproduce targeted regressions against their exact introducing guard."""
+    groups: dict[str, dict[str, bool]] = {}
+    for group, section in CASE_GROUPS.items():
+        for case in CASE_MANIFEST[section]:
+            if "boundary_fails" in case:
+                reference = case.get("boundary_revision", revision)
+                groups.setdefault(reference, {})[group + "[" + case["id"] + "]"] = case["boundary_fails"]
+    assert groups
+    for reference, cases in groups.items():
+        label = "boundary" if reference == revision else f"boundary-{reference[:8]}"
+        revision_proof(root, reference, candidate_guards, cases, label)
+
+
+def revision_proof(root: Path, revision: str, candidate_guards: dict, cases: dict[str, bool], label: str) -> None:
     assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
     reference_guards = {path: existing_source(revision, path) for path in GUARD_PATHS}
-    cases = {
-        group + "[" + case["id"] + "]": case["boundary_fails"]
-        for group, section in CASE_GROUPS.items()
-        for case in CASE_MANIFEST[section] if "boundary_fails" in case
-    }
     assert cases and any(cases.values()), "No targeted intermediate-regression cases"
     expected = {name for name, fails in cases.items() if fails}
     evidence = {
@@ -431,14 +439,14 @@ def boundary_proof(root: Path, revision: str, candidate_guards: dict) -> None:
         "guard_blobs": {path: git("rev-parse", f"{revision}:{path}") for path in GUARD_PATHS},
         "expected_failure_names": sorted(expected),
     }
-    (root / "boundary-sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    (root / f"{label}-sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     restore_sources(reference_guards)
     try:
-        data = run_variant(root, "boundary", tuple(f"{GUARD_TEST}::{name}" for name in cases))
+        data = run_variant(root, label, tuple(f"{GUARD_TEST}::{name}" for name in cases))
     finally:
         restore_sources(candidate_guards)
     assert not git("status", "--porcelain", "--untracked-files=no")
-    (root / "boundary-results.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+    (root / f"{label}-results.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     assert data["tests"] == len(cases) and set(data["case_names"]) == set(cases)
     assert data["exit_code"] == 1 and set(data["failures"]) == expected
     assert data["exception_types"] == {name: "AssertionError" for name in expected}
