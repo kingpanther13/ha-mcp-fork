@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      PROBE_ROOT: ${{ runner.temp }}/slf001-guard-proof
+      PROBE_ROOT: /tmp/slf001-guard-proof
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
