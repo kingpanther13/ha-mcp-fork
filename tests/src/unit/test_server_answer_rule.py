@@ -413,6 +413,8 @@ runpy.run_path(script, run_name="__main__")
                 "starred-generator-next-checks-before-first-yield": "NAME = '_helper'\ndef items():\n    getattr(mod, NAME)\n    yield None\npending = items()\nnext(*(pending, None))\nNAME = 'public'\n",
                 "generator-live-captured-parameter-preserves-inner-cursor": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(saved):\n    next(saved)\n    yield None\nfor member in ('_helper', 'public'):\n    pending = inner(member)\n    next(pending)\n    if unknown:\n        holder = outer(pending)\nnext(holder)\n",
                 "generator-live-continuation-local-preserves-inner-cursor": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('_helper', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
+                "discarded-conditional-generator-loop-retains-private-policy": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, '_helper')\n",
+                "recursive-yield-from-loop-retains-private-policy": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
             }.items()
         ),
     ],
@@ -704,6 +706,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "starred-generator-next-default-keeps-real-exception": "def items():\n    yield None\n    raise ValueError()\npending = items()\nnext(pending)\nnext(*(pending, None))\ngetattr(mod, '_data')\n",
                 "generator-live-captured-parameter-public-control": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(saved):\n    next(saved)\n    yield None\nfor member in ('visible', 'public'):\n    pending = inner(member)\n    next(pending)\n    if unknown:\n        holder = outer(pending)\nnext(holder)\n",
                 "generator-live-continuation-local-public-control": "def inner(name):\n    yield None\n    getattr(mod, name)\ndef outer(name):\n    saved = inner(name)\n    next(saved)\n    yield None\n    next(saved)\nfor member in ('visible', 'public'):\n    pending = outer(member)\n    next(pending)\n    if unknown:\n        holder = pending\nnext(holder)\n",
+                "discarded-conditional-generator-loop-converges": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, 'public')\n",
+                "recursive-yield-from-loop-converges": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, 'public')\n",
             }.items()
         ),
     ],
