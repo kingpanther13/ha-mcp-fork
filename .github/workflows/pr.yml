@@ -5,6 +5,10 @@ on:
       revision:
         required: true
         type: string
+      test_selection:
+        type: choice
+        options: [full, auth-probe]
+        default: full
       run_tests:
         type: boolean
         default: true
@@ -90,10 +94,16 @@ jobs:
           path: |
             /tmp/*.txt
             /tmp/format.patch
-      - name: Full unit and app tests
+      - name: Unit and app tests
         if: always() && inputs.run_tests
+        env:
+          TEST_SELECTION: ${{ inputs.test_selection }}
         run: |
-          uv run pytest tests/src/unit/ tests/addon/ --ignore=tests/addon/test_addon_startup.py -n 4 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
+          if [ "$TEST_SELECTION" = "auth-probe" ]; then
+            uv run pytest tests/src/unit/test_auth_close_probe.py -n 0 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
+          else
+            uv run pytest tests/src/unit/ tests/addon/ --ignore=tests/addon/test_addon_startup.py -n 4 --tb=short --maxfail=0 -v > /tmp/pytest.txt 2>&1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
