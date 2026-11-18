@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import product
 
@@ -54,7 +54,9 @@ def class_bindings(
     values = ScopeValues(parent_values)
     values.class_globals = frozenset(_declared_names(nodes, ast.Global))
     values.class_nonlocals = frozenset(_declared_names(nodes, ast.Nonlocal))
-    values.class_locals = frozenset(bound_names(nodes, class_scope=True)) - values.class_globals
+    values.class_locals = (
+        frozenset(bound_names(nodes, class_scope=True)) - values.class_globals
+    )
     aliases = dict(parent_aliases)
     outer_values, outer_aliases = module_bindings(parent_values, parent_aliases)
     # Class-bound names use LOAD_NAME's module fallback until assigned;
@@ -210,12 +212,16 @@ def _format_literal(value: object, conversion: int, spec: str) -> str:
         len(number) > 4 or int(number) > 4096 for number in re.findall(r"\d+", spec)
     ):
         raise ValueError("formatted attribute target exceeds the size limit")
-    converters = {ord("s"): str, ord("r"): repr, ord("a"): ascii}
+    converters: dict[int, Callable[[object], str]] = {
+        ord("s"): str,
+        ord("r"): repr,
+        ord("a"): ascii,
+    }
     if conversion in converters:
         value = converters[conversion](value)
     try:
         result = format(value, spec)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return "?"
     if len(result) > 4096:
         raise ValueError("formatted attribute target exceeds the size limit")
@@ -249,7 +255,9 @@ def _iterable_elements(node: ast.expr | None, values: dict[str, Value]) -> set[s
     if isinstance(node, ast.Name):
         return set(values.get(node.id, Value()).iterable_elements)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _iterable_elements(node.left, values) | _iterable_elements(node.right, values)
+        return _iterable_elements(node.left, values) | _iterable_elements(
+            node.right, values
+        )
     if isinstance(node, ast.IfExp):
         return set().union(*(_iterable_elements(arm, values) for arm in _arms(node)))
     return set()
@@ -278,7 +286,9 @@ def mapping_keys(node: ast.expr, values: dict[str, Value]) -> set[str]:
     return set()
 
 
-def _mapping_strings(node: ast.expr, values: dict[str, Value]) -> dict[str, frozenset[str]]:
+def _mapping_strings(
+    node: ast.expr, values: dict[str, Value]
+) -> dict[str, frozenset[str]]:
     if isinstance(node, ast.Name):
         return dict(values.get(node.id, Value()).mapping_strings)
     entries: dict[str, frozenset[str]] = {}
@@ -287,11 +297,14 @@ def _mapping_strings(node: ast.expr, values: dict[str, Value]) -> dict[str, froz
             if key is None:
                 entries.update(_mapping_strings(value, values))
             else:
-                entries.update((name, frozenset(strings(value, values))) for name in strings(key, values))
+                entries.update(
+                    (name, frozenset(strings(value, values)))
+                    for name in strings(key, values)
+                )
     elif isinstance(node, ast.IfExp):
         for arm in _arms(node):
-            for key, candidates in _mapping_strings(arm, values).items():
-                entries[key] = entries.get(key, frozenset()) | candidates
+            for entry_name, candidates in _mapping_strings(arm, values).items():
+                entries[entry_name] = entries.get(entry_name, frozenset()) | candidates
     return entries
 
 
@@ -300,7 +313,9 @@ def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
         frozenset(strings(node, values)),
         frozenset(mapping_keys(node, values)) if node is not None else frozenset(),
         frozenset(_iterable_elements(node, values)),
-        tuple(sorted(_mapping_strings(node, values).items())) if node is not None else (),
+        tuple(sorted(_mapping_strings(node, values).items()))
+        if node is not None
+        else (),
         _is_iterable(node, values),
     )
 
@@ -489,7 +504,9 @@ class ClassValues(ScopeValues):
 
     def __init__(self, values: dict[str, Value]) -> None:
         super().__init__(values)
-        self.bound: frozenset[str] = values.bound if isinstance(values, ClassValues) else frozenset()
+        self.bound: frozenset[str] = (
+            values.bound if isinstance(values, ClassValues) else frozenset()
+        )
         self.closure: Env = (self, {})
 
 
@@ -541,17 +558,35 @@ class State:
 
     def key(self) -> tuple:
         return (
-            namespace_key((self.values, self.aliases)), self.values.bound,
-            self.values.class_locals, self.values.class_globals, self.values.class_nonlocals,
+            namespace_key((self.values, self.aliases)),
+            self.values.bound,
+            self.values.class_locals,
+            self.values.class_globals,
+            self.values.class_nonlocals,
             namespace_key(self.closure),
             namespace_key(module_bindings(*self.closure)),
         )
 
     def refresh(self) -> None:
         module = module_bindings(*self.closure)
-        names = self.values.keys() | self.aliases.keys() | module[0].keys() | module[1].keys() | self.closure[0].keys() | self.closure[1].keys()
-        for name in (names - self.values.bound) | self.values.class_globals | self.values.class_nonlocals:
-            owner = module if name in self.values.class_locals | self.values.class_globals else self.closure
+        names = (
+            self.values.keys()
+            | self.aliases.keys()
+            | module[0].keys()
+            | module[1].keys()
+            | self.closure[0].keys()
+            | self.closure[1].keys()
+        )
+        for name in (
+            (names - self.values.bound)
+            | self.values.class_globals
+            | self.values.class_nonlocals
+        ):
+            owner = (
+                module
+                if name in self.values.class_locals | self.values.class_globals
+                else self.closure
+            )
             self.values.pop(name, None)
             self.aliases.pop(name, None)
             if name in owner[0]:

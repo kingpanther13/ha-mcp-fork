@@ -300,143 +300,143 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         ),
         pytest.param(
             'patch.dict(**{"in_dict": "ha_mcp.module._cache", "values": {}})\n',
-            id='unpacked-patch-dict-target',
+            id="unpacked-patch-dict-target",
         ),
         pytest.param(
             'OPTIONS = {"in_dict": "ha_mcp.module._cache", "values": {}}\npatch.dict(**OPTIONS)\n',
-            id='aliased-unpacked-patch-dict-target',
+            id="aliased-unpacked-patch-dict-target",
         ),
         pytest.param(
             'patch.dict(**{**{"in_dict": "ha_mcp.module._cache"}, "values": {}})\n',
-            id='nested-unpacked-patch-dict-target',
+            id="nested-unpacked-patch-dict-target",
         ),
         pytest.param(
             'patch.object(**{"target": obj, "attribute": "_helper", "new": replacement})\n',
-            id='unpacked-patch-object-attribute',
+            id="unpacked-patch-object-attribute",
         ),
         pytest.param(
             'OPTIONS = {"target": obj, "name": "_helper", "value": replacement}\nmonkeypatch.setattr(**OPTIONS)\n',
-            id='aliased-unpacked-setattr-name',
+            id="aliased-unpacked-setattr-name",
         ),
         pytest.param(
             "class Example:\n    match ('_helper',):\n        case [name]:\n            getattr(mod, name)\n",
-            id='literal-sequence-capture',
+            id="literal-sequence-capture",
         ),
         pytest.param(
             "class Example:\n    match [('public', '_helper')]:\n        case [[other, name]]:\n            getattr(mod, name)\n",
-            id='nested-sequence-capture',
+            id="nested-sequence-capture",
         ),
         pytest.param(
             "from builtins import getattr as read\nclass Example:\n    match (read,):\n        case [lookup]:\n            lookup(mod, '_helper')\n",
-            id='sequence-capture-callable-alias',
+            id="sequence-capture-callable-alias",
         ),
         pytest.param(
             "FIRST = ('public',)\nSECOND = ('_helper',)\nCASES = FIRST + SECOND\nfor name in CASES:\n    getattr(mod, name)\n",
-            id='concatenated-iterable-private-loop',
+            id="concatenated-iterable-private-loop",
         ),
         pytest.param(
             "FIRST = ('public',)\nSECOND = ('_helper',)\nresults = [getattr(mod, name) for name in FIRST + SECOND]\n",
-            id='concatenated-iterable-private-comprehension',
+            id="concatenated-iterable-private-comprehension",
         ),
         pytest.param(
             "name = '_helper' if flag else 'public'\ngetattr(mod, name)\n",
-            id='conditional-private-string',
+            id="conditional-private-string",
         ),
         pytest.param(
             "class Example:\n    name = 'public' if flag else '_helper'\n    getattr(mod, name)\n",
-            id='conditional-private-class-string',
+            id="conditional-private-class-string",
         ),
         pytest.param(
             "names = ('_helper',) if flag else ('public',)\nfor name in names:\n    getattr(mod, name)\n",
-            id='conditional-private-iterable',
+            id="conditional-private-iterable",
         ),
         pytest.param(
             "options = {'_helper': 1} if flag else {'public': 2}\npatch.multiple(mod, **options)\n",
-            id='conditional-private-mapping-key',
+            id="conditional-private-mapping-key",
         ),
         pytest.param(
             "from builtins import getattr as read\nlookup = read if flag else callback\nlookup(mod, '_helper')\n",
-            id='conditional-reflection-alias',
+            id="conditional-reflection-alias",
         ),
         pytest.param(
-            'getattr(mod, f"{\'helper\':_>7}")\n',
-            id='formatted-private-fill',
+            "getattr(mod, f\"{'helper':_>7}\")\n",
+            id="formatted-private-fill",
         ),
         pytest.param(
             "getattr(mod, f'{12:_>3}')\n",
-            id='formatted-private-literal-number',
+            id="formatted-private-literal-number",
         ),
         pytest.param(
-            'getattr(mod, f"{\'helper\'!r:_>9}")\n',
-            id='formatted-private-conversion-and-fill',
+            "getattr(mod, f\"{'helper'!r:_>9}\")\n",
+            id="formatted-private-conversion-and-fill",
         ),
         pytest.param(
-            'SPEC = \'_>7\'\ngetattr(mod, f"{\'helper\':{SPEC}}")\n',
-            id='formatted-private-spec-variable',
+            "SPEC = '_>7'\ngetattr(mod, f\"{'helper':{SPEC}}\")\n",
+            id="formatted-private-spec-variable",
         ),
         pytest.param(
-            'getattr(mod, f"{\'_helper\'!s}")\n',
-            id='formatted-private-string-conversion',
+            "getattr(mod, f\"{'_helper'!s}\")\n",
+            id="formatted-private-string-conversion",
         ),
         pytest.param(
             "getattr(mod, f'_{runtime!r}')\n",
-            id='formatted-unknown-field-private-prefix',
+            id="formatted-unknown-field-private-prefix",
         ),
         pytest.param(
             "def test_it():\n    name, count = ('_helper', 1)\n    getattr(mod, name)\n",
-            id='function-literal-unpack-private',
+            id="function-literal-unpack-private",
         ),
         pytest.param(
             "def test_it():\n    [other, (name, count)] = ['public', ('_helper', 1)]\n    getattr(mod, name)\n",
-            id='function-nested-literal-unpack-private',
+            id="function-nested-literal-unpack-private",
         ),
         pytest.param(
             "name, count = ('_helper', 1)\ngetattr(mod, name)\n",
-            id='module-literal-unpack-private',
+            id="module-literal-unpack-private",
         ),
         pytest.param(
             "getattr(mod, f'{-1:_>3}')\n",
-            id='formatted-negative-literal-private-fill',
+            id="formatted-negative-literal-private-fill",
         ),
         pytest.param(
             "getattr(mod, f'{+1:_>2}')\n",
-            id='formatted-positive-unary-literal-private-fill',
+            id="formatted-positive-unary-literal-private-fill",
         ),
         pytest.param(
             "class E:\n    NAME = 'public'\n    for item in (0,):\n        NAME = '_helper'\n        continue\n        NAME = 'public'\n    getattr(mod, NAME)\n",
-            id='class-continue-keeps-live-binding',
+            id="class-continue-keeps-live-binding",
         ),
         pytest.param(
             "class E:\n    NAME = 'public'\n    for item in (0,):\n        NAME = '_helper'\n        continue\n        NAME = 'public'\n    else:\n        getattr(mod, NAME)\n",
-            id='class-continue-reaches-loop-else',
+            id="class-continue-reaches-loop-else",
         ),
         pytest.param(
             "class E:\n    getattr = public_callback\n    try:\n        raise ExceptionGroup('group', [ValueError(), TypeError()])\n    except* ValueError as getattr:\n        pass\n    except* TypeError:\n        getattr(mod, '_helper')\n",
-            id='class-except-star-cleanup-restores-builtin',
+            id="class-except-star-cleanup-restores-builtin",
         ),
         pytest.param(
             "class E:\n    NAME = 'public'\n    try:\n        try:\n            raise ValueError()\n        finally:\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
-            id='class-exceptional-finally-reaches-outer-handler',
+            id="class-exceptional-finally-reaches-outer-handler",
         ),
         pytest.param(
             "NAME = 'public'\nclass E:\n    global NAME\n    NAME = '_helper'\ngetattr(mod, NAME)\n",
-            id='class-global-write-reaches-module',
+            id="class-global-write-reaches-module",
         ),
         pytest.param(
             "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
-            id='class-nonlocal-write-reaches-function',
+            id="class-nonlocal-write-reaches-function",
         ),
         pytest.param(
             "NAME = 'public'\nclass E:\n    class Nested:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
-            id='nested-class-global-write-reaches-parent-class',
+            id="nested-class-global-write-reaches-parent-class",
         ),
         pytest.param(
             "NAME = 'public'\nclass E:\n    if flag:\n        global NAME\n        NAME = '_helper'\ngetattr(mod, NAME)\n",
-            id='class-conditional-global-write-keeps-private-path',
+            id="class-conditional-global-write-keeps-private-path",
         ),
         pytest.param(
             "NAME = '_helper'\ndef later():\n    class E:\n        global NAME\n        NAME = 'public'\ngetattr(mod, NAME)\n",
-            id='deferred-class-global-write-does-not-run-at-definition',
+            id="deferred-class-global-write-does-not-run-at-definition",
         ),
     ],
 )
@@ -703,123 +703,123 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         ),
         pytest.param(
             'dispatch.dict("_data")\n',
-            id='dispatch-dict-is-not-patch',
+            id="dispatch-dict-is-not-patch",
         ),
         pytest.param(
             'dispatch.object(obj, "_data")\n',
-            id='dispatch-object-is-not-patch',
+            id="dispatch-object-is-not-patch",
         ),
         pytest.param(
-            'dispatch.multiple(obj, _data=value)\n',
-            id='dispatch-multiple-is-not-patch',
+            "dispatch.multiple(obj, _data=value)\n",
+            id="dispatch-multiple-is-not-patch",
         ),
         pytest.param(
             'patch.dict(**{"in_dict": "ha_mcp.module.cache", "values": {"_data": "_value"}})\n',
-            id='unpacked-patch-dict-replacement-data',
+            id="unpacked-patch-dict-replacement-data",
         ),
         pytest.param(
             'OPTIONS = {"in_dict": "ha_mcp.module.cache", "values": {"_data": 1}}\npatch.dict(**OPTIONS)\n',
-            id='aliased-unpacked-public-patch-dict',
+            id="aliased-unpacked-public-patch-dict",
         ),
         pytest.param(
             'patch.object(**{"target": self, "attribute": "_own_helper", "new": replacement})\n',
-            id='unpacked-own-object-stays-exempt',
+            id="unpacked-own-object-stays-exempt",
         ),
         pytest.param(
             "class Example:\n    match ('public', '_data'):\n        case [name, payload]:\n            getattr(mod, name)\n",
-            id='literal-sequence-public-capture',
+            id="literal-sequence-public-capture",
         ),
         pytest.param(
             "class Example:\n    match [('_data', 'public')]:\n        case [[payload, name]]:\n            getattr(mod, name)\n",
-            id='nested-sequence-public-capture',
+            id="nested-sequence-public-capture",
         ),
         pytest.param(
             "class Example:\n    match (callback,):\n        case [lookup]:\n            lookup(mod, '_data')\n",
-            id='sequence-public-callable-capture',
+            id="sequence-public-callable-capture",
         ),
         pytest.param(
             "name = '_data' if False else 'public'\ngetattr(mod, name)\n",
-            id='conditional-reachable-public-string',
+            id="conditional-reachable-public-string",
         ),
         pytest.param(
             "name = 'public' if flag else 'other'\ngetattr(mod, name)\n",
-            id='conditional-both-public-strings',
+            id="conditional-both-public-strings",
         ),
         pytest.param(
             "data = ('_data',) if flag else {'_metadata': 1}\npatch.dict(data, {'_replacement': 2})\n",
-            id='conditional-private-data-container',
+            id="conditional-private-data-container",
         ),
         pytest.param(
             "FIRST = ('pub',)\nSECOND = ('lic',)\nfor name in FIRST + SECOND:\n    getattr(mod, name)\n",
-            id='concatenated-public-iterable',
+            id="concatenated-public-iterable",
         ),
         pytest.param(
             "EMPTY = ()\nDATA = EMPTY + ('_data',)\npatch.dict({}, {'payload': DATA})\n",
-            id='concatenated-empty-private-data',
+            id="concatenated-empty-private-data",
         ),
         pytest.param(
-            'getattr(mod, f"{\'helper\':x>7}")\n',
-            id='formatted-public-fill',
+            "getattr(mod, f\"{'helper':x>7}\")\n",
+            id="formatted-public-fill",
         ),
         pytest.param(
-            'getattr(mod, f"{\'_data\'!r}")\n',
-            id='formatted-repr-quotes-private-looking-value',
+            "getattr(mod, f\"{'_data'!r}\")\n",
+            id="formatted-repr-quotes-private-looking-value",
         ),
         pytest.param(
-            'getattr(mod, f"{\'_data\'!a}")\n',
-            id='formatted-ascii-quotes-private-looking-value',
+            "getattr(mod, f\"{'_data'!a}\")\n",
+            id="formatted-ascii-quotes-private-looking-value",
         ),
         pytest.param(
             "def test_it():\n    name, payload = ('public', '_data')\n    getattr(mod, name)\n",
-            id='function-unpack-private-other-element',
+            id="function-unpack-private-other-element",
         ),
         pytest.param(
             "name, payload = ('public', '_data')\ngetattr(mod, name)\n",
-            id='module-unpack-private-other-element',
+            id="module-unpack-private-other-element",
         ),
         pytest.param(
             "FIRST = ('first_0', 'first_1', 'first_2', 'first_3', 'first_4', 'first_5', 'first_6', 'first_7', 'first_8', 'first_9', 'first_10', 'first_11', 'first_12', 'first_13', 'first_14', 'first_15', 'first_16')\nSECOND = ('second_0', 'second_1', 'second_2', 'second_3', 'second_4', 'second_5', 'second_6', 'second_7', 'second_8', 'second_9', 'second_10', 'second_11', 'second_12', 'second_13', 'second_14', 'second_15', 'second_16')\nCASES = FIRST + SECOND\n",
-            id='named-tuple-concatenation-does-not-cross-product',
+            id="named-tuple-concatenation-does-not-cross-product",
         ),
         pytest.param(
             "getattr(mod, f'{-1:x>3}')\n",
-            id='formatted-negative-literal-public-fill',
+            id="formatted-negative-literal-public-fill",
         ),
         pytest.param(
             "getattr(mod, f'{+1:x>2}')\n",
-            id='formatted-positive-unary-literal-public-fill',
+            id="formatted-positive-unary-literal-public-fill",
         ),
         pytest.param(
             "class E:\n    NAME = 'public'\n    for item in (0,):\n        break\n    else:\n        NAME = '_data'\n    getattr(mod, NAME)\n",
-            id='class-definite-break-skips-loop-else',
+            id="class-definite-break-skips-loop-else",
         ),
         pytest.param(
             "class E:\n    for item in (0,):\n        continue\n        getattr(mod, '_data')\n",
-            id='class-continue-skips-private-access',
+            id="class-continue-skips-private-access",
         ),
         pytest.param(
             "class E:\n    for item in (0,):\n        break\n        getattr(mod, '_data')\n",
-            id='class-break-skips-private-access',
+            id="class-break-skips-private-access",
         ),
         pytest.param(
             "NAME = 'public'\nclass E:\n    NAME = '_data'\ngetattr(mod, NAME)\n",
-            id='class-ordinary-write-stays-in-class',
+            id="class-ordinary-write-stays-in-class",
         ),
         pytest.param(
             "NAME = '_data'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\n",
-            id='class-definite-global-write-removes-old-private-value',
+            id="class-definite-global-write-removes-old-private-value",
         ),
         pytest.param(
             "NAME = 'public'\nclass E:\n    if flag:\n        global NAME\n        NAME = '_data'\n    else:\n        getattr(mod, NAME)\n",
-            id='class-global-branch-does-not-affect-sibling',
+            id="class-global-branch-does-not-affect-sibling",
         ),
         pytest.param(
             "class E:\n    for item in (0,):\n        try:\n            pass\n        finally:\n            continue\n        getattr(mod, '_data')\n",
-            id='class-finally-continue-skips-remainder',
+            id="class-finally-continue-skips-remainder",
         ),
         pytest.param(
             "class E:\n    NAME = '_data'\n    for item in (0,):\n        for inner in (0,):\n            break\n    else:\n        NAME = 'public'\n    getattr(mod, NAME)\n",
-            id='class-nested-break-does-not-skip-outer-else',
+            id="class-nested-break-does-not-skip-outer-else",
         ),
     ],
 )
@@ -968,12 +968,12 @@ def test_nested_finally_reports_each_source_access_once(tmp_path, private):
     "source",
     [
         pytest.param(
-            'getattr(mod, f"{\'helper\':_>1000000000}")\n',
-            id='formatted-width-bounded-before-allocation',
+            "getattr(mod, f\"{'helper':_>1000000000}\")\n",
+            id="formatted-width-bounded-before-allocation",
         ),
         pytest.param(
             "getattr(mod, f'{1:.1000000000f}')\n",
-            id='formatted-precision-bounded-before-allocation',
+            id="formatted-precision-bounded-before-allocation",
         ),
     ],
 )
@@ -990,5 +990,7 @@ def test_nested_finally_reuses_repeated_states(tmp_path):
     try:
         result = _run(tmp_path, source)
     except subprocess.TimeoutExpired as error:
-        raise AssertionError("Repeated finally states must finish within the guard timeout") from error
+        raise AssertionError(
+            "Repeated finally states must finish within the guard timeout"
+        ) from error
     assert result.returncode == 0, result.stdout + result.stderr
