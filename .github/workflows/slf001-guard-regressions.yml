@@ -11,7 +11,11 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: abbdff7aebc5d8ea2566b90cca709bbc18dd2817
+        default: bc85c657585d2c02f610b13070d16c509df8fe06
+      baseline_only:
+        description: Prove baseline failures before implementation is ready
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +28,7 @@ jobs:
     env:
       PROBE_ROOT: /tmp/slf001-review-proof
       PROBE_BASELINE: ${{ inputs.baseline }}
+      PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
       PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
       - name: Check out the isolated proof driver
