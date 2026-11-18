@@ -84,6 +84,13 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         'def outer():\n    TARGET = "_helper"\n    class Example:\n        TARGET = "public"\n        def method(self):\n            getattr(mod, TARGET)\n',
         'TARGET = "_helper"\nclass Example:\n    TARGET = "public"\n    values = [getattr(mod, TARGET) for index in (1,)]\n',
         'class Example:\n    NAMES = ("_helper",)\n    values = [getattr(mod, name) for name in NAMES]\n',
+        'DATA = {"_helper": 1}\nif flag:\n    DATA = {"public": 2}\nCOPY = DATA\npatch.multiple(mod, **COPY)\n',
+        'for name in {"ha_mcp.module._cache": 0}:\n    patch.dict(name, {})\n',
+        '[patch.dict(name, {}) for name in {"ha_mcp.module._cache": 0}]\n',
+        'NAMES = {"ha_mcp.module._cache": 0}\nCOPY = NAMES\nfor name in COPY:\n    patch.dict(name, {})\n',
+        'BASE = {"_helper": 1}\nCOPY = {**BASE}\npatch.multiple(mod, **COPY)\n',
+        'def TARGET():\n    pass\nTARGET = "ha_mcp.module._cache"\npatch.dict(TARGET, {})\n',
+        'class TARGET:\n    pass\nTARGET = "ha_mcp.module._cache"\npatch.dict(TARGET, {})\n',
     ],
 )
 def test_reflective_private_access_fails_with_a_source_location(tmp_path, source):
@@ -136,6 +143,13 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         'patch.dict({"ha_mcp.module._cache": 1}, {"_data": 2})\n',
         'DATA = {"ha_mcp.module._cache": 1}\npatch.dict(in_dict=DATA, values={"_data": 2})\n',
         'DATA = {"ha_mcp.module._cache": 1}\nCOPY = DATA\npatch.dict(COPY, {"_data": 2})\n',
+        'from builtins import getattr as read\nclass Example:\n    def read(value=read(mod, "public")):\n        pass\n    read(None, "_data")\n',
+        'from builtins import getattr as read\nclass Example:\n    class read(read(mod, "public")):\n        pass\n    read(None, "_data")\n',
+        'from builtins import getattr as read\nclass Example:\n    def read(*args):\n        pass\n    @read(None, "_data")\n    def other():\n        pass\n',
+        'NAME = "_data"\nclass Example:\n    def NAME():\n        pass\n    getattr(mod, NAME)\n',
+        'DATA = {"ha_mcp.module._cache": 1}\nif flag:\n    DATA = {"ha_mcp.module._other": 2}\nCOPY = DATA\npatch.dict(COPY, {})\n',
+        'BASE = {"ha_mcp.module._cache": 1}\nDATA = {**BASE}\npatch.dict(DATA, {})\n',
+        'from builtins import getattr as read\nclass Example:\n    read = public_callback\n    def method(value=read(None, "_data")):\n        pass\n',
     ],
 )
 def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
@@ -169,6 +183,13 @@ def test_local_definitions_shadow_an_imported_reflection_alias(tmp_path, definit
         'from builtins import getattr as read\ndef read(value=read(mod, "_helper")):\n    pass\n',
         'from builtins import getattr as read\nclass read(read(mod, "_helper")):\n    pass\n',
         'from builtins import getattr as read\nclass read:\n    value = read(mod, "_helper")\n',
+        'from builtins import getattr as read\nclass Example:\n    def read(value=read(mod, "_helper")):\n        pass\n',
+        'from builtins import getattr as read\nclass Example:\n    @read(mod, "_helper")\n    def read():\n        pass\n',
+        'from builtins import getattr as read\nclass Example:\n    class read(read(mod, "_helper")):\n        pass\n',
+        'from builtins import getattr as read\ndef outer():\n    class Example:\n        def read(value=read(mod, "_helper")):\n            pass\n',
+        'from builtins import getattr as read\nclass Example:\n    async def read(value=read(mod, "_helper")):\n        pass\n',
+        'NAME = "_helper"\nclass Example:\n    def NAME(value=getattr(mod, NAME)):\n        pass\n',
+        'from builtins import getattr as read\nclass Example:\n    def method(value=read(mod, "_helper")):\n        pass\n    read = public_callback\n',
     ],
 )
 def test_definition_headers_and_unshadowed_aliases_still_reject_private_access(
@@ -204,6 +225,38 @@ def test_patch_dict_checks_only_its_import_target(
     assert result.returncode == int(private), result.stdout + result.stderr
     if private:
         assert f"private string target {target!r}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("assignments", "target"),
+    [
+        ('TARGET = PATH\nif flag:\n    TARGET = {"_data": 1}\n', "TARGET"),
+        ('TARGET = {"_data": 1}\nif flag:\n    TARGET = PATH\n', "TARGET"),
+        ('TARGET = PATH\nif flag:\n    TARGET = {"_data": 1}\nCOPY = TARGET\n', "COPY"),
+        ('TARGET = {"_data": 1}\nif flag:\n    TARGET = PATH\nCOPY = TARGET\n', "COPY"),
+        ('if flag:\n    TARGET = PATH\nelse:\n    TARGET = {"_data": 1}\n', "TARGET"),
+        ('if flag:\n    TARGET = {"_data": 1}\nelse:\n    TARGET = PATH\n', "TARGET"),
+    ],
+    ids=[
+        "mapping-last",
+        "string-last",
+        "mapping-alias",
+        "string-alias",
+        "else-mapping",
+        "else-string",
+    ],
+)
+@pytest.mark.parametrize("private", [False, True], ids=["public", "private"])
+def test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys(
+    tmp_path, assignments, target, private
+):
+    path = "ha_mcp.module._cache" if private else "ha_mcp.module.cache"
+    source = f"PATH = {path!r}\n{assignments}patch.dict({target}, {{}})\n"
+    result = _run(tmp_path, source)
+    assert result.returncode == int(private), result.stdout + result.stderr
+    assert "private string target '_data'" not in result.stdout
+    if private:
+        assert f"private string target {path!r}" in result.stdout
 
 
 @pytest.mark.parametrize("tree", ["tests/src/unit/nested", "tests/addon/nested"])
