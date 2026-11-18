@@ -77,6 +77,9 @@ class ScopeValues(dict[str, Value]):
         self.lexical_names: frozenset[str] = (
             values.lexical_names if isinstance(values, ScopeValues) else frozenset()
         )
+        self.scope_id: ast.AST | None = (
+            values.scope_id if isinstance(values, ScopeValues) else None
+        )
 
 
 def module_bindings(
@@ -484,10 +487,33 @@ def iterated_value(node: ast.expr, values: dict[str, Value]) -> Value:
         return Value(errors=frozenset({str(error)}))
 
 
-def call_arguments(call: ast.Call, values: dict[str, Value]) -> list[Arguments]:
-    positional = tuple(
-        _capture_argument(expression, values) for expression in call.args
-    )
+def _expanded_positions(expressions: list[ast.expr]) -> Iterator[ast.expr | None]:
+    for expression in expressions:
+        if not isinstance(expression, ast.Starred):
+            yield expression
+        elif isinstance(expression.value, (ast.Tuple, ast.List)):
+            yield from _expanded_positions(expression.value.elts)
+        else:
+            # Later arguments have no statically determined positions.
+            yield None
+            return
+
+
+def call_arguments(
+    call: ast.Call, values: dict[str, Value], *, keyword_target: str | None = None
+) -> list[Arguments]:
+    prefix: list[Argument] = []
+    for expression in _expanded_positions(call.args):
+        if expression is None:
+            break
+        prefix.append(_capture_argument(expression, values))
+    positional = tuple(prefix)
+    if keyword_target is not None:
+        if positional:
+            return [Arguments(positional, ())]
+        for keyword in call.keywords:
+            if keyword.arg == keyword_target:
+                return [Arguments((), ((keyword_target, _capture_argument(keyword.value, values)),))]
     options: tuple[Mapping, ...] = ((),)
     for keyword in call.keywords:
         additions = (
@@ -642,11 +668,21 @@ def _pattern_subjects(
         if pattern.pattern is not None:
             yield from _pattern_subjects(pattern.pattern, subject)
     elif isinstance(pattern, ast.MatchOr):
-        for alternative in pattern.patterns:
-            yield from _pattern_subjects(alternative, subject)
+        yield from _or_pattern_subjects(pattern, subject)
     elif isinstance(pattern, ast.MatchSequence):
         for subpattern, element in _literal_pattern_pairs(pattern, subject):
             yield from _pattern_subjects(subpattern, element)
+
+
+def _or_pattern_subjects(
+    pattern: ast.MatchOr, subject: ast.expr
+) -> Iterator[tuple[str, ast.expr]]:
+    for alternative in pattern.patterns:
+        matched = pattern_matches(alternative, subject)
+        if matched is not False:
+            yield from _pattern_subjects(alternative, subject)
+        if matched is True:
+            break
 
 
 def _literal_pattern_pairs(
@@ -737,6 +773,7 @@ class State:
             self.values.class_nonlocals,
             self.values.scope_kind,
             self.values.lexical_names,
+            self.values.scope_id,
             namespace_key(self.closure),
             namespace_key(module_bindings(*self.closure)),
         )
@@ -846,6 +883,9 @@ def pattern_matches(pattern: ast.pattern, subject: ast.expr) -> bool | None:
         return (
             True if True in alternatives else (None if None in alternatives else False)
         )
+    if any(isinstance(node, ast.Call) for node in ast.walk(subject)):
+        # literal_eval specially accepts set(), but that name can be shadowed.
+        return None
     try:
         value = ast.literal_eval(subject)
         if isinstance(pattern, ast.MatchValue):
@@ -871,3 +911,55 @@ def _sequence_matches(pattern: ast.MatchSequence, value: object) -> bool | None:
         for item, element in zip(pattern.patterns, value, strict=True)
     ]
     return False if False in alternatives else (None if None in alternatives else True)
+
+
+def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
+    """Decorators, bases and defaults execute before entering the new scope."""
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield from scope.decorator_list
+    if isinstance(scope, ast.ClassDef):
+        yield from scope.bases
+        yield from (keyword.value for keyword in scope.keywords)
+    if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        yield scope.generators[0].iter
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        yield from scope.args.defaults
+        yield from (value for value in scope.args.kw_defaults if value is not None)
+        yield from (
+            node.annotation
+            for node in ast.walk(scope.args)
+            if isinstance(node, ast.arg) and node.annotation is not None
+        )
+    if (
+        isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and scope.returns is not None
+    ):
+        yield scope.returns
+
+
+def private_target(target: str) -> bool:
+    parts = target.replace(":", ".").split(".")
+    for index, part in enumerate(parts):
+        if not part.startswith("_") or (
+            len(part) > 4 and part.startswith("__") and part.endswith("__")
+        ):
+            continue
+        if index == 1 and parts[0] == "ha_mcp" and part == "_vendor":
+            continue
+        return True
+    return False
+
+
+def comprehension_nodes(
+    scope: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+) -> Iterator[ast.AST]:
+    """The first iterable belongs to the outer scope, not this body."""
+    if isinstance(scope, ast.DictComp):
+        yield scope.key
+        yield scope.value
+    else:
+        yield scope.elt
+    first, *remaining = scope.generators
+    yield first.target
+    yield from first.ifs
+    yield from remaining
