@@ -114,6 +114,11 @@
       "id": "patch-dict-aliased-conditional-key-keeps-private-target",
       "source": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: 'pkg._helper'})\n",
       "baseline_fails": true
+    },
+    {
+      "id": "patch-dict-large-string-precision-retains-short-private-target-key",
+      "source": "from unittest.mock import patch\npatch.dict(**{f\"{'in_dict':.5000s}\": 'pkg._helper'})\n",
+      "baseline_fails": true
     }
   ],
   "allow": [
@@ -200,6 +205,11 @@
     {
       "id": "patch-dict-conditional-key-keeps-public-target",
       "source": "from unittest.mock import patch\nkey = 'in_dict' if flag else f\"{'x':>5000}\"\npatch.dict(**{key: {}})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "patch-dict-large-width-key-keeps-private-looking-replacement-data",
+      "source": "from unittest.mock import patch\npatch.dict(**{'in_dict': {}, f\"{'in_dict':>5000}\": 'pkg._data'})\n",
       "baseline_fails": true
     }
   ],
