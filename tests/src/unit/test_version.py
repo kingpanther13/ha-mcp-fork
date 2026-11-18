@@ -314,14 +314,20 @@ class TestLogStartupVersion:
         monkeypatch.setattr(
             update_check,
             "os",
+            # No container marker files: a bare-metal install.
             SimpleNamespace(
-                environ=os.environ, path=SimpleNamespace(exists=lambda path: False)
+                **{
+                    **vars(os),
+                    "path": SimpleNamespace(
+                        **{**vars(os.path), "exists": lambda path: False}
+                    ),
+                }
             ),
         )
         monkeypatch.setattr(
             update_check,
             "sys",
-            SimpleNamespace(version_info=(3, 13, 7, "final", 0), argv=sys.argv),
+            SimpleNamespace(**{**vars(sys), "version_info": (3, 13, 7, "final", 0)}),
         )
         monkeypatch.delenv(update_check.DISABLE_ENV)
         monkeypatch.delenv("HA_MCP_EMBEDDED", raising=False)

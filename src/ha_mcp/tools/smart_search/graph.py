@@ -131,12 +131,7 @@ _UNSUPPORTED_STRIKES_REQUIRED = 2
 
 
 def _monotonic() -> float:
-    """Monotonic clock read, isolated so tests can advance it deterministically.
-
-    Mirrors ``component_api._monotonic``. The seam matters because ``_graph.time``
-    IS the stdlib ``time`` module, so patching ``monotonic`` through it would
-    replace the clock for every module in the process, not just this one.
-    """
+    """Monotonic clock read for the unsupported-graph TTL."""
     return time.monotonic()
 
 
