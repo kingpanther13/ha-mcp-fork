@@ -1,4 +1,4 @@
-"""Prove the full guard suite before and after the class/mapping fixes."""
+"""Prove the full guard suite before and after the assignment-order fixes."""
 
 import ast
 from collections import Counter
@@ -12,11 +12,13 @@ import xml.etree.ElementTree as ET
 
 GUARD_PATH = "scripts/private_test_access.py"
 GUARD_TEST = "tests/src/unit/test_private_test_access.py"
+REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
+ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    "test_reflective_private_access_fails_with_a_source_location": 64,
-    "test_public_targets_and_non_target_strings_are_allowed": 47,
+    REJECT_NAME: 82,
+    ALLOW_NAME: 63,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -25,11 +27,16 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {HEADER_NAME: 7, MAPPING_NAME: 9}
-MAPPING_CASES = (
-    "mapping-last", "string-last", "mapping-alias", "string-alias",
-    "else-mapping", "else-string",
-)
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 10, ALLOW_NAME: 7}
+# In the 18 new rejection cases: five RHS aliases, two lambda defaults,
+# one chained target expression, and two nested class-header expressions fail.
+# In the 16 allowed cases: two unpackings, one builtin replacement, two ordered
+# unpacked targets, and two nested class-header expressions fail on the baseline.
+NEW_CASE_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 16}
+FAILING_ADDED_INDICES = {
+    REJECT_NAME: (0, 1, 2, 3, 4, 8, 9, 12, 16, 17),
+    ALLOW_NAME: (7, 8, 9, 12, 13, 14, 15),
+}
 EXCEPTION_PLUGIN = '''import json
 import os
 from pathlib import Path
@@ -60,29 +67,29 @@ def source(revision: str, path: str) -> str:
     ).stdout
 
 
-def header_cases(text: str) -> list[str]:
+def parameter_cases(text: str, name: str) -> list[str]:
     [node] = [
         node for node in ast.parse(text).body
-        if isinstance(node, ast.FunctionDef) and node.name == HEADER_NAME
+        if isinstance(node, ast.FunctionDef) and node.name == name
     ]
     return ast.literal_eval(node.decorator_list[0].args[1])
 
 
 def expected_failures(baseline: str, candidate: str) -> set[str]:
-    old = header_cases(source(baseline, GUARD_TEST))
-    new = header_cases(source(candidate, GUARD_TEST))
-    added = [value for value in new if value not in old]
-    assert len(added) == 7, added
-    names = {
-        HEADER_NAME + "[" + value.encode("unicode_escape").decode("ascii") + "]"
-        for value in added
-    }
-    names.update(f"{MAPPING_NAME}[private-{case}]" for case in MAPPING_CASES)
-    names.update(
-        f"{MAPPING_NAME}[public-{case}]"
-        for case in ("string-last", "string-alias", "else-string")
-    )
-    assert len(names) == 16
+    old_source = source(baseline, GUARD_TEST)
+    new_source = source(candidate, GUARD_TEST)
+    names = set()
+    for group, count in NEW_CASE_COUNTS.items():
+        old = parameter_cases(old_source, group)
+        new = parameter_cases(new_source, group)
+        assert set(old) <= set(new), group
+        added = [value for value in new if value not in old]
+        assert len(added) == count, (group, added)
+        names.update(
+            group + "[" + added[index].encode("unicode_escape").decode("ascii") + "]"
+            for index in FAILING_ADDED_INDICES[group]
+        )
+    assert len(names) == 17
     return names
 
 
@@ -128,11 +135,11 @@ def run_variant(root: Path, label: str) -> dict:
 
 def validate(results: dict, expected: set[str]) -> None:
     for label, data in results.items():
-        assert data["tests"] == 173, (label, data["tests"])
+        assert data["tests"] == 207, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 173
+        assert len(set(data["case_names"])) == 207
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -197,7 +204,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 173 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 207 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":
