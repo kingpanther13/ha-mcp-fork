@@ -1,4 +1,4 @@
-"""Prove 47 guard cases and one repeat-call regression with real Core fixtures."""
+"""Prove the full 140-case guard suite and one repeat-call regression with real Core fixtures."""
 
 import ast
 from collections import Counter
@@ -14,18 +14,36 @@ GUARD_PATH = "scripts/private_test_access.py"
 GUARD_TEST = "tests/src/unit/test_private_test_access.py"
 HELPER_TEST = "tests/src/unit/test_tools_addons_array_patch.py"
 GROUP_COUNTS = {
+    "test_reflective_private_access_fails_with_a_source_location": 57,
+    "test_public_targets_and_non_target_strings_are_allowed": 40,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
-    "test_defined_names_do_not_retain_inherited_private_targets": 5,
     "test_definition_headers_and_unshadowed_aliases_still_reject_private_access": 4,
     "test_patch_dict_checks_only_its_import_target": 32,
-    "test_patch_dict_mapping_contents_are_data": 3,
+    "test_the_guard_covers_every_python_file_in_both_trees": 2,
+    "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
+    "test_a_suppression_comment_does_not_exempt_private_access": 1,
     "test_repeated_calls_capture_only_their_own_post": 1,
 }
-GUARD_NAMES = list(GROUP_COUNTS)[:-1]
-HELPER_NAME = list(GROUP_COUNTS)[-1]
-NODE_IDS = [f"{GUARD_TEST}::{name}" for name in GUARD_NAMES] + [
-    f"{HELPER_TEST}::TestApplyArrayOps::{HELPER_NAME}"
+HELPER_NAME = "test_repeated_calls_capture_only_their_own_post"
+NODE_IDS = [GUARD_TEST, f"{HELPER_TEST}::TestApplyArrayOps::{HELPER_NAME}"]
+FAILURE_GROUP_COUNTS = {
+    "test_public_targets_and_non_target_strings_are_allowed": 5,
+    "test_local_definitions_shadow_an_imported_reflection_alias": 3,
+    "test_patch_dict_checks_only_its_import_target": 16,
+    HELPER_NAME: 1,
+}
+PUBLIC_REGRESSION_SOURCES = [
+    'def getattr(obj, name):\n    return name\ngetattr(None, "_data")\n',
+    'NAME = "_data"\ndef test_it():\n    def NAME():\n        pass\n    getattr(mod, NAME)\n',
+    'NAME = "_data"\ndef test_it():\n    class NAME:\n        pass\n    getattr(mod, NAME)\n',
+    'from builtins import getattr as read\ndef read(obj, name):\n    return name\nread(None, "_data")\n',
+    'from builtins import getattr as read\nclass read:\n    pass\nread(None, "_data")\n',
 ]
+PUBLIC_FAILURE_NAMES = {
+    "test_public_targets_and_non_target_strings_are_allowed["
+    + item.encode("unicode_escape").decode("ascii") + "]"
+    for item in PUBLIC_REGRESSION_SOURCES
+}
 
 
 def git(*args: str) -> str:
@@ -100,8 +118,8 @@ def run_variant(root: Path, label: str) -> dict:
 def expected_failure(case_id: str) -> bool:
     name = case_id.rsplit("::", 1)[1]
     return (
-        name.startswith(GUARD_NAMES[0] + "[")
-        or name.startswith(GUARD_NAMES[1] + "[")
+        name.startswith("test_local_definitions_shadow_an_imported_reflection_alias[")
+        or name in PUBLIC_FAILURE_NAMES
         # The innermost parametrize decorator is private=[False, True].
         or name.startswith("test_patch_dict_checks_only_its_import_target[True-")
         or name == HELPER_NAME
@@ -110,17 +128,21 @@ def expected_failure(case_id: str) -> bool:
 
 def validate(results: dict) -> None:
     for label, data in results.items():
-        assert data["tests"] == 48, (label, data["tests"])
+        assert data["tests"] == 141, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_ids"])) == 48
+        assert len(set(data["case_ids"])) == 141
     before = results["baseline"]
     after = results["candidate"]
     assert set(before["case_ids"]) == set(after["case_ids"])
     expected = {case for case in before["case_ids"] if expected_failure(case)}
     assert len(expected) == 25, expected
     assert set(before["failures"]) == expected, set(before["failures"]) ^ expected
+    failure_groups = Counter(
+        case.rsplit("::", 1)[1].split("[", 1)[0] for case in before["failures"]
+    )
+    assert dict(failure_groups) == FAILURE_GROUP_COUNTS, failure_groups
     for case, failure in before["failures"].items():
         if case.endswith("::" + HELPER_NAME):
             assert "ValueError: too many values to unpack (expected 1, got 2)" in failure, failure
@@ -160,6 +182,7 @@ def main() -> None:
         },
         "selected_nodes": NODE_IDS,
         "expected_group_counts": GROUP_COUNTS,
+        "expected_failure_group_counts": FAILURE_GROUP_COUNTS,
         "expected_baseline_failures": {"guard_assertions": 24, "helper_value_error": 1},
     }
     (root / "sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
@@ -186,7 +209,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: 47 guard cases and one repeated-call helper case\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 140 guard cases and one repeated-call helper case\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":
