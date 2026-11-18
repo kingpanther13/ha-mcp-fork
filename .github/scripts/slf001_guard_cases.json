@@ -159,7 +159,7 @@
     },
     {
       "id": "mixed-next-eager-raise-public-control",
-      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, 'public')\n",
+      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, 'public')\n",
       "baseline_fails": false,
       "boundary_fails": false,
       "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
@@ -311,7 +311,7 @@
       "source": "NAME = 'public'\ndef gen():\n    yield ('x', 1)\n    getattr(mod, NAME)\npending = gen()\nnext(pending)\ndef clear():\n    global pending\n    pending = None\nNAME = '_data'\ndict(pending, ignored=clear())\nNAME = 'public'\n",
       "baseline_fails": true,
       "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190",
-      "boundary_fails": false
+      "boundary_fails": true
     },
     {
       "id": "definitely-infinite-generator-tuple-reject",
@@ -325,7 +325,7 @@
     },
     {
       "id": "mixed-next-eager-raise-preserves-next-normal-branch",
-      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\nadvance(gen())\ngetattr(mod, '_data')\n",
+      "source": "def gen():\n    yield None\n    raise ValueError()\nadvance = next if flag else list\npending = gen()\nadvance(pending)\ngetattr(mod, '_data')\n",
       "baseline_fails": false,
       "boundary_fails": true,
       "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
