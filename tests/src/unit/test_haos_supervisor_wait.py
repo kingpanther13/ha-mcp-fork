@@ -10,9 +10,12 @@ real Core with the Supervisor stand-in behind ``supervisor/api``
 
 from __future__ import annotations
 
+import json
+import threading
 from typing import Any
 
 import pytest
+from websockets.sync.client import ClientConnection
 
 from tests.haos_image_build.build_image import (
     HAWebSocket,
@@ -617,18 +620,38 @@ async def test_a_core_version_that_never_arrives_is_reported(haos: Haos) -> None
     [pytest.param(0.0, id="before-deadline"), pytest.param(1.0, id="at-deadline")],
 )
 async def test_the_right_core_version_is_accepted_only_before_the_deadline(
-    haos: Haos, elapsed: float
+    haos: Haos, elapsed: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    core_requested = threading.Event()
+    receive_started = threading.Event()
+    real_send = ClientConnection.send
+    real_recv = ClientConnection.recv
+
+    def send(self: ClientConnection, message: Any, *args: Any, **kwargs: Any) -> None:
+        if json.loads(message).get("endpoint") == "/core/info":
+            core_requested.set()
+        real_send(self, message, *args, **kwargs)
+
+    def recv(self: ClientConnection, *args: Any, **kwargs: Any) -> Any:
+        if core_requested.is_set():
+            receive_started.set()
+        return real_recv(self, *args, **kwargs)
+
+    async def answer_after_receive_starts() -> None:
+        assert await haos.hass.async_add_executor_job(receive_started.wait, 5.0)
+        haos.clock.advance(elapsed)
+
+    monkeypatch.setattr(ClientConnection, "send", send)
+    monkeypatch.setattr(ClientConnection, "recv", recv)
     haos.supervisor.answer("GET", "/supervisor/info", supervisor_info())
     haos.supervisor.answer("GET", "/core/info", CORE_NEW)
-    haos.supervisor.when("GET", "/core/info", lambda: haos.clock.advance(elapsed))
+    haos.supervisor.when("GET", "/core/info", answer_after_receive_starts)
     ws = await haos.connected()
 
     if elapsed:
-        # The server can advance the clock before the sending thread returns.
         with pytest.raises(
             TimeoutError,
-            match=r"supervisor/api get /core/info (?:send|receive) exceeded its deadline",
+            match="supervisor/api get /core/info receive exceeded its deadline",
         ):
             await haos.run(wait_core_version, ws, "2026.8.3", timeout=1.0)
     else:
