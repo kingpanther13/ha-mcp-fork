@@ -17,7 +17,7 @@ FINALLY_NAME = "test_nested_finally_reports_each_source_access_once"
 BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
 PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
 GUARD_TEST = "tests/src/unit/test_private_test_access.py"
-GUARD_TESTS = (GUARD_TEST, "tests/src/unit/test_private_test_access_flow.py")
+GUARD_TESTS = (GUARD_TEST,)
 ERROR_NAME = "test_oversized_targets_still_fail_after_lazy_binding"
 SPY_NAME = "test_formatter_spy_delegates_ordinary_target_formatting"
 REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
@@ -25,8 +25,8 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 185,
-    ALLOW_NAME: 165,
+    REJECT_NAME: 186,
+    ALLOW_NAME: 166,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -40,8 +40,8 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 12, ALLOW_NAME: 17}
-NEW_CASE_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 27, ERROR_NAME: 3}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 13, ALLOW_NAME: 18}
+NEW_CASE_COUNTS = {REJECT_NAME: 19, ALLOW_NAME: 28, ERROR_NAME: 3}
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
 EXCEPTION_PLUGIN = '''import json
@@ -81,6 +81,29 @@ def parameter_cases(text: str, name: str) -> dict[str, str]:
     ]
     cases = {}
     for item in node.decorator_list[0].args[1].elts:
+        if isinstance(item, ast.Starred):
+            # Accept only the literal source-map generator used by these tables.
+            generator = item.value
+            assert isinstance(generator, ast.GeneratorExp)
+            [clause] = generator.generators
+            assert not clause.ifs and not clause.is_async
+            assert isinstance(clause.target, ast.Tuple)
+            assert [part.id for part in clause.target.elts] == ["case_id", "source"]
+            assert ast.dump(generator.elt) == ast.dump(
+                ast.parse("pytest.param(source, id=case_id)", mode="eval").body
+            )
+            iteration = clause.iter
+            assert isinstance(iteration, ast.Call) and not iteration.args and not iteration.keywords
+            assert isinstance(iteration.func, ast.Attribute) and iteration.func.attr == "items"
+            mapping = iteration.func.value
+            assert isinstance(mapping, ast.Dict)
+            additions = ast.literal_eval(mapping)
+            assert len(additions) == len(mapping.keys), "duplicate literal case ID"
+            assert all(isinstance(key, str) and isinstance(value, str)
+                       for key, value in additions.items())
+            assert not cases.keys() & additions.keys(), "duplicate case ID"
+            cases.update(additions)
+            continue
         if isinstance(item, ast.Call):
             assert isinstance(item.func, ast.Attribute) and item.func.attr == "param"
             value = ast.literal_eval(item.args[0])
@@ -131,7 +154,7 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
             group + "[" + case["id"] + "]"
             for case in CASE_MANIFEST[section] if case["baseline_fails"]
         )
-    assert len(names) == 29
+    assert len(names) == 31
     return names
 
 
@@ -178,11 +201,11 @@ def run_variant(root: Path, label: str) -> dict:
 def validate(results: dict, expected: set[str], baseline_only: bool, candidate_regressions: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
-        assert data["tests"] == 421, (label, data["tests"])
+        assert data["tests"] == 423, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 421
+        assert len(set(data["case_names"])) == 423
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -260,7 +283,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 421 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 423 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

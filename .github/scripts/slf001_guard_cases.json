@@ -7,12 +7,12 @@
     },
     {
       "id": "iterator-next-header-error-keeps-carried-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        for item in items:\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "source": "class Example:\n    NAME = 'public'\n    try:\n        for NAME in items:\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
       "baseline_fails": true
     },
     {
       "id": "while-next-header-error-keeps-carried-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        while condition():\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "source": "class Example:\n    NAME = 'public'\n    try:\n        while condition():\n            try:\n                NAME = '_helper'\n            finally:\n                continue\n    except ValueError:\n        getattr(mod, NAME)\n",
       "baseline_fails": true
     },
     {
@@ -89,6 +89,11 @@
       "id": "finally-private-access-runs-after-return",
       "source": "def test_it():\n    try:\n        return\n    finally:\n        getattr(mod, '_helper')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "wrapper-walk-preserves-reflective-call-suffix",
+      "source": "class Example:\n    fn = callback\n    while hasattr(fn, '__wrapped__'):\n        fn = fn.__wrapped__\n    fn.getattr(mod, '_helper')\n",
+      "baseline_fails": true
     }
   ],
   "allow": [
@@ -225,6 +230,11 @@
     {
       "id": "return-stops-unreachable-private-access",
       "source": "def test_it():\n    return\n    getattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "wrapper-walk-converges-without-reflection",
+      "source": "class Example:\n    fn = callback\n    while hasattr(fn, '__wrapped__'):\n        fn = fn.__wrapped__\n    result = fn\n",
       "baseline_fails": true
     }
   ],
