@@ -416,6 +416,7 @@ runpy.run_path(script, run_name="__main__")
                 "discarded-conditional-generator-loop-retains-private-policy": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, '_helper')\n",
                 "recursive-yield-from-loop-retains-private-policy": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, '_helper')\n",
                 "lazy-lambda-annotation-private-body-is-checked": "def f(value: (lambda: getattr(mod, '_helper'))):\n    pass\n",
+                "conditional-generator-resume-preserves-following-private-body": "NAME = 'public'\ndef gen():\n    yield None\n    getattr(mod, NAME)\nif flag:\n    pending = gen()\n    next(pending)\nNAME = '_data'\nnext(pending, None)\nNAME = 'public'\n",
             }.items()
         ),
     ],
@@ -710,6 +711,7 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "discarded-conditional-generator-loop-converges": "def items():\n    yield None\nwhile flag:\n    if choose:\n        items()\ngetattr(mod, 'public')\n",
                 "recursive-yield-from-loop-converges": "def paths(routes):\n    for route in routes:\n        if route:\n            yield from paths(route)\n        yield route\ngetattr(mod, 'public')\n",
                 "lazy-lambda-annotation-public-body-is-allowed": "def f(value: (lambda: getattr(mod, 'public'))):\n    pass\n",
+                "conditional-generator-resume-does-not-restart-consumed-body": "NAME = 'public'\ndef gen():\n    getattr(mod, NAME)\n    yield None\nif flag:\n    pending = gen()\n    next(pending)\nNAME = '_data'\nnext(pending, None)\nNAME = 'public'\n",
             }.items()
         ),
     ],
