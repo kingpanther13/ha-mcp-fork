@@ -145,7 +145,7 @@ def installed_version_calls(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         calls.append(preferred_dist)
         return "8.7.0"
 
-    monkeypatch.setattr(eserver, "_installed_ha_mcp_version", _version)
+    monkeypatch.setattr(eserver, "installed_ha_mcp_version", _version)
     return calls
 
 
@@ -157,7 +157,7 @@ def paired_spec(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
     async def _paired(hass: HomeAssistant) -> str | None:
         return pin[0]
 
-    monkeypatch.setattr(eserver, "_async_paired_server_requirement", _paired)
+    monkeypatch.setattr(eserver, "async_paired_server_requirement", _paired)
     return pin
 
 

@@ -445,8 +445,7 @@ async def test_rejected_registration_clears_stale_http_hint(
     monkeypatch.delenv("HA_MCP_EMBEDDED", raising=False)
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     _no_sidecar(monkeypatch)
-    monkeypatch.setattr(settings_ui, "_http_settings_prefix", None)
-    monkeypatch.setattr(settings_ui, "_http_settings_mounted", False)
+    settings_ui.reset_http_settings_state()
     server = MagicMock()
 
     settings_ui.register_settings_routes(FastMCP("old"), server, secret_path="/old")

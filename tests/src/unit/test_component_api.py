@@ -71,7 +71,7 @@ UPGRADED = "added_by_the_upgrade"
 def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """The capability cache's monotonic clock; a test advances ``clock[0]``."""
     now = [1000.0]
-    monkeypatch.setattr(component_api, "_monotonic", lambda: now[0])
+    monkeypatch.setattr(component_api, "monotonic", lambda: now[0])
     return now
 
 
