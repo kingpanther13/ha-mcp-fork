@@ -137,6 +137,10 @@ runpy.run_path(script, run_name="__main__")
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "deferred-lambda-uses-final-private-global": "NAME = 'public'\nrun = lambda: getattr(mod, NAME)\nNAME = '_helper'\n",
+                "deferred-async-uses-final-private-global": "NAME = 'public'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
+                "deferred-returned-function-uses-final-private-closure": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    return inner\n",
+                "deferred-method-keeps-enclosing-function-cell": "NAME = 'public'\ndef outer():\n    NAME = '_helper'\n    class TestExample:\n        NAME = 'public'\n        def test_it(self):\n            getattr(mod, NAME)\n    return TestExample\n",
                 "literal-star-tuple-private-attribute": "getattr(*(obj, '_helper'))\n",
                 "literal-star-list-private-attribute": "getattr(*[obj, '_helper'])\n",
                 "nested-literal-star-private-attribute": "getattr(*(*[obj], *('_helper',)))\n",
@@ -338,6 +342,10 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "deferred-lambda-uses-final-public-global": "NAME = '_data'\nrun = lambda: getattr(mod, NAME)\nNAME = 'public'\n",
+                "deferred-async-uses-final-public-global": "NAME = '_data'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
+                "deferred-returned-function-uses-final-public-closure": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    return inner\n",
+                "deferred-returned-method-uses-final-enclosing-cell": "NAME = 'public'\ndef outer():\n    NAME = '_data'\n    class TestExample:\n        NAME = '_data'\n        def test_it(self):\n            getattr(mod, NAME)\n    NAME = 'public'\n    return TestExample\n",
                 "literal-star-default-is-not-attribute": "getattr(*(obj, 'public'), '_default')\n",
                 "literal-star-own-object-private-attribute": "def test_it(self):\n    getattr(*(self, '_helper'))\n",
                 "unknown-star-does-not-fix-later-positions": "getattr(*arguments, '_data')\n",
