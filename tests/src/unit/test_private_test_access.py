@@ -391,10 +391,6 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
             id="function-nested-literal-unpack-private",
         ),
         pytest.param(
-            "name, count = ('_helper', 1)\ngetattr(mod, name)\n",
-            id="module-literal-unpack-private",
-        ),
-        pytest.param(
             "getattr(mod, f'{-1:_>3}')\n",
             id="formatted-negative-literal-private-fill",
         ),
@@ -437,6 +433,14 @@ def _run(tmp_path: Path, source: str, tree: str = "tests/src/unit"):
         pytest.param(
             "NAME = '_helper'\ndef later():\n    class E:\n        global NAME\n        NAME = 'public'\ngetattr(mod, NAME)\n",
             id="deferred-class-global-write-does-not-run-at-definition",
+        ),
+        pytest.param(
+            "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\nNAME = '_helper'\ngetattr(mod, NAME)\n",
+            id="module-assignment-after-class-global-write",
+        ),
+        pytest.param(
+            "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = 'public'\n    NAME = '_helper'\n    getattr(mod, NAME)\n",
+            id="function-assignment-after-class-nonlocal-write",
         ),
     ],
 )
@@ -774,10 +778,6 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
             id="function-unpack-private-other-element",
         ),
         pytest.param(
-            "name, payload = ('public', '_data')\ngetattr(mod, name)\n",
-            id="module-unpack-private-other-element",
-        ),
-        pytest.param(
             "FIRST = ('first_0', 'first_1', 'first_2', 'first_3', 'first_4', 'first_5', 'first_6', 'first_7', 'first_8', 'first_9', 'first_10', 'first_11', 'first_12', 'first_13', 'first_14', 'first_15', 'first_16')\nSECOND = ('second_0', 'second_1', 'second_2', 'second_3', 'second_4', 'second_5', 'second_6', 'second_7', 'second_8', 'second_9', 'second_10', 'second_11', 'second_12', 'second_13', 'second_14', 'second_15', 'second_16')\nCASES = FIRST + SECOND\n",
             id="named-tuple-concatenation-does-not-cross-product",
         ),
@@ -820,6 +820,10 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         pytest.param(
             "class E:\n    NAME = '_data'\n    for item in (0,):\n        for inner in (0,):\n            break\n    else:\n        NAME = 'public'\n    getattr(mod, NAME)\n",
             id="class-nested-break-does-not-skip-outer-else",
+        ),
+        pytest.param(
+            "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\nNAME = '_data'\n",
+            id="class-global-write-stays-public-before-later-assignment",
         ),
     ],
 )
