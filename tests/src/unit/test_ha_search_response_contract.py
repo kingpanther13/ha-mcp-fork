@@ -77,7 +77,9 @@ async def test_no_surface_answering_is_a_structured_error(
             core_client,
             "get_states",
             AsyncMock(
-                side_effect=HomeAssistantConnectionError("Request timeout: states response")
+                side_effect=HomeAssistantConnectionError(
+                    "Request timeout: states response"
+                )
             ),
         ),
         pytest.raises(ToolError) as excinfo,

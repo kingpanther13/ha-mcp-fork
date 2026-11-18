@@ -20,37 +20,130 @@ _SERVER_ANSWERS = "no-typed-in-server-answers"
     [
         pytest.param(source, refused, id=case_id)
         for case_id, (source, refused) in {
-            "patch-return-value": ("patch(\"ha_mcp.tools.x.get_component_caps\", return_value={\"caps\": []})\n", True),
-            "patch-object-mock": ("patch.object(update_check, \"get_update_info\", AsyncMock(return_value=None))\n", True),
-            "setattr-lambda": ("monkeypatch.setattr(helper_flows, \"fetch_helper_flow_types\", lambda *_: [])\n", True),
-            "patch-target-keyword": ("patch(target=\"ha_mcp.update_check.get_update_info\", return_value=None)\n", True),
-            "patch-object-attribute-keyword": ("patch.object(update_check, attribute=\"get_update_info\", return_value=None)\n", True),
-            "setattr-name-keyword": ("monkeypatch.setattr(update_check, name=\"get_update_info\", value=lambda: None)\n", True),
-            "bare-patch-target-keyword": ("with patch(target=\"ha_mcp.update_check.get_update_info\") as info:\n    info.return_value = None\n", True),
-            "bare-patch-object-keywords": ("patch.object(target=update_check, attribute=\"get_update_info\")\n", True),
-            "another-function-by-target-keyword": ("patch(target=\"ha_mcp.paths.get_data_dir\", return_value=\"get_update_info\")\n", False),
-            "patch-object-name-keyword-names-the-mock": ("patch.object(renderer, \"label\", name=\"get_update_info\", return_value=None)\n", False),
-            "patch-multiple-keyword": ("patch.multiple(update_check, get_update_info=AsyncMock(return_value=None))\n", True),
-            "patch-multiple-default-mock": ("patch.multiple(update_check, get_update_info=DEFAULT)\n", True),
-            "patch-multiple-answer-on-another-keyword": ("patch.multiple(\n    mod, get_update_info=mod.get_update_info, helper=Mock(return_value=None)\n)\n", False),
-            "bare-patch-answered-through-its-alias": ("with patch(\"ha_mcp.tools.component_api.get_component_caps\") as caps:\n    caps.return_value = {\"available\": True}\n", True),
-            "bare-patch-object": ("with patch.object(update_check, \"get_update_info\") as info:\n    info.return_value = None\n", True),
-            "spy": ("patch.object(tools_addons, \"get_addon_info\", wraps=tools_addons.get_addon_info)\n", False),
-            "failure": ("patch.object(update_check, \"fetch_latest\", side_effect=TimeoutError)\n", False),
-            "another-function": ("patch.object(paths, \"get_data_dir\", return_value=tmp_path)\n", False),
-            "another-function-returning-a-listed-name": ("patch.object(renderer, \"label\", return_value=\"get_update_info\")\n", False),
-            "another-function-with-a-listed-keyword-inside": ("patch.object(renderer, \"label\", new=Mock(get_update_info=lambda: 1))\n", False),
-            "patch-imported-under-another-name": ("from unittest.mock import patch as replace\n", True),
-            "other-import-aliases": ("from unittest.mock import AsyncMock as Fake, patch\nimport unittest.mock as mock\n", False),
-            "reading-a-listed-name": ("getattr(update_check, \"get_update_info\")\ngetattr(update_check, \"get_update_info\", lambda: None)\nimport_module(\"ha_mcp.tools.fetch_helper\")\n", False),
-            "reading-a-listed-name-inside-a-with": ("with nullcontext(resolve_name(\"ha_mcp.update_check.get_update_info\")):\n    pass\n", False),
-            "setattr-dotted-target": ("monkeypatch.setattr(\"ha_mcp.update_check.get_update_info\", lambda: None)\n", True),
-            "spy-on-the-real-function-by-name": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=real_get_update_info)\n", False),
-            "spy-lambda-that-calls-through": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: real_get_update_info())\n", True),
-            "spy-lambda-calling-something-else": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: dict(latest=\"1\"))\n", True),
-            "spy-lambda-calling-a-helper-with-a-listed-name": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: fetch_fake())\n", True),
-            "spy-lambda-with-a-typed-in-answer": ("patch(\"ha_mcp.update_check.get_update_info\", wraps=lambda: {\"latest\": \"1\"})\n", True),
-            "side-effect-lambda": ("patch(\"ha_mcp.update_check.get_update_info\", side_effect=lambda: {\"latest\": \"1\"})\n", True),
+            "patch-return-value": (
+                'patch("ha_mcp.tools.x.get_component_caps", return_value={"caps": []})\n',
+                True,
+            ),
+            "patch-object-mock": (
+                'patch.object(update_check, "get_update_info", AsyncMock(return_value=None))\n',
+                True,
+            ),
+            "setattr-lambda": (
+                'monkeypatch.setattr(helper_flows, "fetch_helper_flow_types", lambda *_: [])\n',
+                True,
+            ),
+            "patch-target-keyword": (
+                'patch(target="ha_mcp.update_check.get_update_info", return_value=None)\n',
+                True,
+            ),
+            "patch-object-attribute-keyword": (
+                'patch.object(update_check, attribute="get_update_info", return_value=None)\n',
+                True,
+            ),
+            "setattr-name-keyword": (
+                'monkeypatch.setattr(update_check, name="get_update_info", value=lambda: None)\n',
+                True,
+            ),
+            "bare-patch-target-keyword": (
+                'with patch(target="ha_mcp.update_check.get_update_info") as info:\n    info.return_value = None\n',
+                True,
+            ),
+            "bare-patch-object-keywords": (
+                'patch.object(target=update_check, attribute="get_update_info")\n',
+                True,
+            ),
+            "another-function-by-target-keyword": (
+                'patch(target="ha_mcp.paths.get_data_dir", return_value="get_update_info")\n',
+                False,
+            ),
+            "patch-object-name-keyword-names-the-mock": (
+                'patch.object(renderer, "label", name="get_update_info", return_value=None)\n',
+                False,
+            ),
+            "patch-multiple-keyword": (
+                "patch.multiple(update_check, get_update_info=AsyncMock(return_value=None))\n",
+                True,
+            ),
+            "patch-multiple-default-mock": (
+                "patch.multiple(update_check, get_update_info=DEFAULT)\n",
+                True,
+            ),
+            "patch-multiple-answer-on-another-keyword": (
+                "patch.multiple(\n    mod, get_update_info=mod.get_update_info, helper=Mock(return_value=None)\n)\n",
+                False,
+            ),
+            "bare-patch-answered-through-its-alias": (
+                'with patch("ha_mcp.tools.component_api.get_component_caps") as caps:\n    caps.return_value = {"available": True}\n',
+                True,
+            ),
+            "bare-patch-object": (
+                'with patch.object(update_check, "get_update_info") as info:\n    info.return_value = None\n',
+                True,
+            ),
+            "spy": (
+                'patch.object(tools_addons, "get_addon_info", wraps=tools_addons.get_addon_info)\n',
+                False,
+            ),
+            "failure": (
+                'patch.object(update_check, "fetch_latest", side_effect=TimeoutError)\n',
+                False,
+            ),
+            "another-function": (
+                'patch.object(paths, "get_data_dir", return_value=tmp_path)\n',
+                False,
+            ),
+            "another-function-returning-a-listed-name": (
+                'patch.object(renderer, "label", return_value="get_update_info")\n',
+                False,
+            ),
+            "another-function-with-a-listed-keyword-inside": (
+                'patch.object(renderer, "label", new=Mock(get_update_info=lambda: 1))\n',
+                False,
+            ),
+            "patch-imported-under-another-name": (
+                "from unittest.mock import patch as replace\n",
+                True,
+            ),
+            "other-import-aliases": (
+                "from unittest.mock import AsyncMock as Fake, patch\nimport unittest.mock as mock\n",
+                False,
+            ),
+            "reading-a-listed-name": (
+                'getattr(update_check, "get_update_info")\ngetattr(update_check, "get_update_info", lambda: None)\nimport_module("ha_mcp.tools.fetch_helper")\n',
+                False,
+            ),
+            "reading-a-listed-name-inside-a-with": (
+                'with nullcontext(resolve_name("ha_mcp.update_check.get_update_info")):\n    pass\n',
+                False,
+            ),
+            "setattr-dotted-target": (
+                'monkeypatch.setattr("ha_mcp.update_check.get_update_info", lambda: None)\n',
+                True,
+            ),
+            "spy-on-the-real-function-by-name": (
+                'patch("ha_mcp.update_check.get_update_info", wraps=real_get_update_info)\n',
+                False,
+            ),
+            "spy-lambda-that-calls-through": (
+                'patch("ha_mcp.update_check.get_update_info", wraps=lambda: real_get_update_info())\n',
+                True,
+            ),
+            "spy-lambda-calling-something-else": (
+                'patch("ha_mcp.update_check.get_update_info", wraps=lambda: dict(latest="1"))\n',
+                True,
+            ),
+            "spy-lambda-calling-a-helper-with-a-listed-name": (
+                'patch("ha_mcp.update_check.get_update_info", wraps=lambda: fetch_fake())\n',
+                True,
+            ),
+            "spy-lambda-with-a-typed-in-answer": (
+                'patch("ha_mcp.update_check.get_update_info", wraps=lambda: {"latest": "1"})\n',
+                True,
+            ),
+            "side-effect-lambda": (
+                'patch("ha_mcp.update_check.get_update_info", side_effect=lambda: {"latest": "1"})\n',
+                True,
+            ),
         }.items()
     ],
 )

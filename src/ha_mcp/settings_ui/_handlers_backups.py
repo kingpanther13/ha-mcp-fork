@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .. import backup_manager
 from .._vendor.fastmcp.exceptions import ToolError
 from .._version import is_running_in_addon
 from ..backup_manager import (
@@ -43,7 +44,7 @@ from ..config import (
 )
 from ..config_registry import SETTING_BOUNDS
 from ..errors import ErrorCode, create_error_response
-from . import _persistence, _supervisor, backups
+from . import _persistence, _supervisor
 
 if TYPE_CHECKING:
     from ..server import HomeAssistantSmartMCPServer
@@ -72,7 +73,7 @@ def _not_found(name: str) -> JSONResponse:
 async def _list_backups(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     params = request.query_params
@@ -105,7 +106,7 @@ async def _list_backups(
 async def _view_backup(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     name = request.path_params.get("name", "")
@@ -125,7 +126,7 @@ async def _diff_backup(
 
     import yaml  # type: ignore[import-untyped]
 
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     name = request.path_params.get("name", "")
@@ -191,7 +192,7 @@ async def _diff_backup(
 async def _restore_backup(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     name = request.path_params.get("name", "")
@@ -278,7 +279,7 @@ def _structured_tool_error(err: Exception) -> dict[str, Any] | None:
 async def _delete_backup(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     name = request.path_params.get("name", "")
@@ -306,7 +307,7 @@ async def _delete_backup(
 async def _delete_backups_bulk(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    mgr = backups.backup_manager_for_server(server)
+    mgr = backup_manager.backup_manager_for_server(server)
     if mgr is None:
         return _bad_request("Backup manager unavailable")
     params = request.query_params
