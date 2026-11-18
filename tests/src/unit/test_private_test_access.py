@@ -137,6 +137,8 @@ runpy.run_path(script, run_name="__main__")
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "awaited-body-uses-current-module-binding": "NAME = 'public'\nasync def helper():\n    getattr(mod, NAME)\nasync def test_it():\n    global NAME\n    NAME = '_helper'\n    await helper()\n    NAME = 'public'\n",
+                "immediate-lambda-keeps-private-call-time-binding": "NAME = '_helper'\n(lambda: getattr(mod, NAME))()\nNAME = 'public'\n",
                 "deferred-sibling-call-keeps-defining-private-cell": "def outer():\n    NAME = '_helper'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = 'public'\n        inner()\n    caller()\n    NAME = 'public'\n",
                 "parameter-callable-shadow-precedes-later-import": "def test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    from builtins import range\n",
                 "parameter-callable-shadow-precedes-later-assignment": "from builtins import range as builtin_range\ndef test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    range = builtin_range\n",
@@ -345,6 +347,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "async-creation-does-not-run-body-before-final-binding": "NAME = '_data'\nasync def helper():\n    getattr(mod, NAME)\npending = helper()\nNAME = 'public'\n",
+                "immediate-lambda-does-not-replay-after-later-private-store": "NAME = 'public'\n(lambda: getattr(mod, NAME))()\nNAME = '_data'\n",
                 "deferred-sibling-call-ignores-callers-private-local": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = '_data'\n        inner()\n    caller()\n",
                 "actual-import-replaces-parameter-callable-shadow": "def test_it(range):\n    from builtins import range\n    for item in range(0):\n        getattr(mod, '_data')\n",
                 "deferred-lambda-uses-final-public-global": "NAME = '_data'\nrun = lambda: getattr(mod, NAME)\nNAME = 'public'\n",
@@ -355,9 +359,9 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "literal-star-own-object-private-attribute": "def test_it(self):\n    getattr(*(self, '_helper'))\n",
                 "unknown-star-does-not-fix-later-positions": "getattr(*arguments, '_data')\n",
                 "literal-prefix-before-unknown-star-remains-known": "getattr(*(obj, 'public', *defaults))\n",
-                "positional-patch-dict-does-not-resolve-data-keys": 'patch.dict({}, **{f"{\'x\':>5000}": 1})\n',
-                "starred-positional-patch-dict-keeps-data-keys-lazy": 'patch.dict(*({},), **{f"{\'x\':>5000}": 1})\n',
-                "explicit-patch-dict-target-keeps-data-keys-lazy": 'patch.dict(in_dict={}, **{f"{\'x\':>5000}": 1})\n',
+                "positional-patch-dict-does-not-resolve-data-keys": "patch.dict({}, **{f\"{'x':>5000}\": 1})\n",
+                "starred-positional-patch-dict-keeps-data-keys-lazy": "patch.dict(*({},), **{f\"{'x':>5000}\": 1})\n",
+                "explicit-patch-dict-target-keeps-data-keys-lazy": "patch.dict(in_dict={}, **{f\"{'x':>5000}\": 1})\n",
                 "unshadowed-builtin-range-empty-body-unreachable": "for item in range(0):\n    getattr(obj, '_data')\n",
                 "aliased-builtin-range-empty-body-unreachable": "from builtins import range as steps\nfor item in steps(0):\n    getattr(obj, '_data')\n",
                 "shadowed-range-public-body": "def test_it(range):\n    for item in range(0):\n        getattr(obj, 'public')\n",
