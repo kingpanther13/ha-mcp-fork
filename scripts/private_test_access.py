@@ -302,6 +302,8 @@ def _scan_assignment_target(
             if isinstance(values, _ClassValues):
                 values[target.id] = assigned_value
                 _store_class_name(values, aliases, target.id)
+            else:
+                binding_rules.union_values(values, {target.id: assigned_value})
     elif isinstance(target, (ast.Tuple, ast.List)):
         for item in target.elts:
             # Unpacked elements are unknown, not inherited callable aliases.
@@ -380,12 +382,14 @@ def _add_outcome(outcomes: _Outcomes, kind: str, state: _State) -> None:
 def _store_class_name(
     values: _ClassValues, aliases: binding_rules.Aliases, name: str
 ) -> None:
-    values.bound |= {name}
     if name in values.class_globals:
         owner = binding_rules.module_bindings(*values.closure)
     elif name in values.class_nonlocals:
         owner = values.closure
     else:
+        values.bound |= {name}
+        values.local_values[name] = values.get(name, binding_rules.Value())
+        values.local_aliases[name] = aliases.get(name, frozenset({name}))
         return
     owner[0].pop(name, None)
     if name in values:
@@ -398,6 +402,8 @@ def _restore_class_fallback(
 ) -> None:
     values.pop(name, None)
     values.bound -= {name}
+    values.local_values.pop(name, None)
+    values.local_aliases.pop(name, None)
     if name in values.class_nonlocals | values.class_globals:
         aliases[name] = frozenset({"" if name in values.class_nonlocals else name})
         _store_class_name(values, aliases, name)
