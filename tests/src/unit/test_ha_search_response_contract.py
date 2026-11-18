@@ -46,7 +46,7 @@ async def test_branch_exception_without_a_message_reports_its_type(
     _setup_visibility_disabled(tmp_path, monkeypatch)
     monkeypatch.setattr(
         search_legacy,
-        "_prefetch_shared_search_snapshots",
+        "prefetch_shared_search_snapshots",
         AsyncMock(return_value=(None, None)),
     )
 
@@ -94,7 +94,7 @@ async def test_no_surface_answering_keeps_the_first_branch_tool_error(
     branch_error = ToolError('{"success": false, "error": {"code": "X"}}')
     monkeypatch.setattr(
         search_legacy,
-        "_prefetch_shared_search_snapshots",
+        "prefetch_shared_search_snapshots",
         AsyncMock(return_value=(None, None)),
     )
 

@@ -25,7 +25,7 @@ _SERVER_ANSWERS = "no-typed-in-server-answers"
             id="patch-object-mock",
         ),
         pytest.param(
-            'monkeypatch.setattr(helper_flows, "_fetch_helper_flow_types", lambda *_: [])\n',
+            'monkeypatch.setattr(helper_flows, "fetch_helper_flow_types", lambda *_: [])\n',
             True,
             id="setattr-lambda",
         ),

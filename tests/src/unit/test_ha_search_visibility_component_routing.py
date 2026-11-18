@@ -247,10 +247,18 @@ async def test_a_failing_component_search_falls_back_and_keeps_the_filter(
     core_client: HomeAssistantClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(*args: Any, **kwargs: Any) -> Any:
-        raise HomeAssistantError("search failed")
+    state_machine = type(hass.states)
+    read_states = state_machine.async_all
+    failed = False
 
-    monkeypatch.setattr("custom_components.ha_mcp_tools.websocket_api._do_search", fail)
+    def fail_once(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal failed
+        if self is hass.states and not failed:
+            failed = True
+            raise HomeAssistantError("search failed")
+        return read_states(self, *args, **kwargs)
+
+    monkeypatch.setattr(state_machine, "async_all", fail_once)
     component_ws_api.async_register_commands(hass)
     _deny_kitchen_light(tmp_path)
 
@@ -258,7 +266,7 @@ async def test_a_failing_component_search_falls_back_and_keeps_the_filter(
 
     assert searched.legacy_reads == 1
     assert _legacy_warning(searched.response)
-    assert "light.kitchen" not in _entity_ids(searched.response)
+    assert _entity_ids(searched.response) == {"sensor.kitchen_temp"}
 
 
 async def test_a_component_without_the_search_falls_back_silently_and_invalidates(
@@ -302,7 +310,7 @@ async def test_an_unreachable_component_socket_falls_back_with_a_warning(
     assert searched.response["success"] is True
     assert searched.legacy_reads == 1
     assert _legacy_warning(searched.response)
-    assert "light.kitchen" not in _entity_ids(searched.response)
+    assert _entity_ids(searched.response) == {"sensor.kitchen_temp"}
     invalidate.assert_not_called()
 
 
