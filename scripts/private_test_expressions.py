@@ -98,6 +98,8 @@ class Expression:
     def children(
         self, node: ast.AST, env: flow_rules.Env, closure: flow_rules.Env
     ) -> Generator[tuple[int, str], None, ast.AST]:
+        # Evaluate every child before interning the rebuilt syntax. Repeated
+        # visits keep their effects and fresh values, but stable AST identities.
         prepared = copy.copy(node)
         if isinstance(node, ast.Dict):
             assert isinstance(prepared, ast.Dict)
@@ -113,7 +115,7 @@ class Expression:
                 keys.append(resolved_key)
                 values.append(resolved_value)
             prepared.keys, prepared.values = keys, values
-            return prepared
+            return self.context.prepared.setdefault(node, prepared)
         for field, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
                 setattr(
@@ -125,7 +127,7 @@ class Expression:
                     if isinstance(item, ast.AST):
                         items[index] = yield from self.evaluate(item, env, closure)
                 setattr(prepared, field, items)
-        return prepared
+        return self.context.prepared.setdefault(node, prepared)
 
     def call(
         self, node: ast.Call, env: flow_rules.Env, closure: flow_rules.Env

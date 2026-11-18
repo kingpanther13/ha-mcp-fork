@@ -459,6 +459,7 @@ class Deferred:
         self.suspended: dict[str, Invocation] = {}
         self.effects: list[Effects] = []
         self.operands: dict[tuple[ast.expr, str], ast.Name] = {}
+        self.prepared: dict[ast.AST, ast.AST] = {}
         self.generating: list[bool] = []
         self.continuations: dict[str, Continuation] = {}
 
