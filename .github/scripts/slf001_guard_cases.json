@@ -24,6 +24,26 @@
       "id": "known-constructor-new-runs-at-instantiation",
       "source": "NAME = '_helper'\nclass Example:\n    def __new__(cls):\n        getattr(mod, NAME)\n        return object.__new__(cls)\nExample()\nNAME = 'public'\n",
       "baseline_fails": true
+    },
+    {
+      "id": "known-class-reflection-member-is-a-target-helper",
+      "source": "class Example:\n    lookup = getattr\nExample.lookup(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "instance-member-store-keeps-class-method-intact",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\nExample.run()\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "instance-member-delete-restores-class-method",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ndel instance.run\ninstance.run()\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "uncertain-instance-member-store-keeps-unmodified-alternative",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\nfirst = Example()\nsecond = Example()\nselected = first if flag else second\nselected.run = callback\nfirst.run()\nsecond.run()\nNAME = 'public'\n",
+      "baseline_fails": true
     }
   ],
   "allow": [
@@ -45,6 +65,21 @@
     {
       "id": "known-instance-method-own-object-stays-exempt",
       "source": "class Example:\n    def run(self):\n        getattr(self, '_own')\ninstance = Example()\ninstance.run()\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "known-local-class-patch-is-not-unittest-patch",
+      "source": "class Example:\n    @staticmethod\n    def patch(data):\n        pass\nExample.patch('_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "class-member-store-replaces-deferred-method",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\nExample.run = callback\nExample.run()\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "instance-member-store-replaces-only-that-method",
+      "source": "NAME = 'public'\nclass Example:\n    @staticmethod\n    def run():\n        getattr(mod, NAME)\nNAME = '_helper'\ninstance = Example()\ninstance.run = callback\ninstance.run()\nNAME = 'public'\n",
       "baseline_fails": false
     }
   ],
