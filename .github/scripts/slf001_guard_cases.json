@@ -163,6 +163,27 @@
       "baseline_fails": false,
       "boundary_fails": false,
       "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
+    },
+    {
+      "id": "generator-yielded-current-binding-for-allow",
+      "source": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nfor name in items:\n    getattr(mod, name)\nNAME = 'public'\n",
+      "baseline_fails": false,
+      "boundary_fails": false,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
+    },
+    {
+      "id": "generator-yielded-current-binding-next-allow",
+      "source": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nname = next(items)\ngetattr(mod, name)\nNAME = 'public'\n",
+      "baseline_fails": false,
+      "boundary_fails": false,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
+    },
+    {
+      "id": "generator-yielded-current-binding-comprehension-allow",
+      "source": "NAME = '_data'\nitems = (NAME for _ in (0,))\nNAME = 'public'\nresults = [getattr(mod, name) for name in items]\nNAME = 'public'\n",
+      "baseline_fails": false,
+      "boundary_fails": false,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
     }
   ],
   "reject": [
@@ -329,6 +350,27 @@
       "baseline_fails": false,
       "boundary_fails": true,
       "boundary_revision": "29da51bdd456836e57ebf2c257353353cc886190"
+    },
+    {
+      "id": "generator-yielded-current-binding-for-reject",
+      "source": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nfor name in items:\n    getattr(mod, name)\nNAME = 'public'\n",
+      "baseline_fails": true,
+      "boundary_fails": true,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
+    },
+    {
+      "id": "generator-yielded-current-binding-next-reject",
+      "source": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nname = next(items)\ngetattr(mod, name)\nNAME = 'public'\n",
+      "baseline_fails": true,
+      "boundary_fails": true,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
+    },
+    {
+      "id": "generator-yielded-current-binding-comprehension-reject",
+      "source": "NAME = 'public'\nitems = (NAME for _ in (0,))\nNAME = '_helper'\nresults = [getattr(mod, name) for name in items]\nNAME = 'public'\n",
+      "baseline_fails": true,
+      "boundary_fails": true,
+      "boundary_revision": "8efec1a4aac79385fb4ee9196e64dcd5a62a2637"
     }
   ],
   "error": []
