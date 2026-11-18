@@ -467,7 +467,7 @@ runpy.run_path(script, run_name="__main__")
                 "conditional-unknown-raising-else-keeps-normal-body": "def stop():\n    raise ValueError()\nNone if flag else stop()\ngetattr(mod, '_helper')\n",
                 "loop-nested-conditional-mapping-keeps-stable-state-reject": "for item in items:\n    data = {'config': {'error': 'public'}} if flag else None\ngetattr(mod, '_helper')\n",
                 "loop-recursive-card-mapping-keeps-bounded-state-reject": "node = {'type': 'tile'}\nfor item in range(limit):\n    node = {'type': 'vertical-stack', 'cards': [node]}\ngetattr(mod, '_helper')\n",
-                "loop-compound-tuple-elements-keep-stable-state-reject": "ARGS = (mod, '_helper')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n",
+                "loop-compound-tuple-elements-keep-stable-state-reject": "ARGS = (mod, 'public')\nfor item in items:\n    ARGS = (mod, '_helper' + '')\ngetattr(*ARGS)\n",
                 "canonical-loop-expression-keeps-earlier-value-snapshot-reject": "NAME = '_helper'\ndef capture():\n    global ARGS\n    ARGS = (mod, NAME + '')\ncapture()\nSAVED = ARGS\nNAME = 'public'\ncapture()\ngetattr(*SAVED)\nNAME = 'public'\n",
                 "canonical-loop-expression-replays-child-effects-reject": "NAME = 'public'\ndef set_name(name):\n    global NAME\n    NAME = name\nfor marker in ('public', '_helper'):\n    ARGS = (mod, set_name(marker))\ngetattr(mod, NAME)\n",
                 "loop-tuple-capture-keeps-reject-state-stable": "NAME = '_helper'\nARGS = (mod, NAME)\nwhile flag:\n    ARGS = (mod, NAME)\ngetattr(*ARGS)\n",
@@ -482,6 +482,21 @@ runpy.run_path(script, run_name="__main__")
                 "stored-keyword-tuple-keeps-private-target-shape": "def lookup(args):\n    getattr(*args)\nargs = (mod, '_helper')\nopts = {'args': args}\nlookup(**opts)\n",
                 "stored-keyword-list-keeps-private-shape-after-rebind": "def lookup(args):\n    getattr(*args)\nargs = [mod, '_helper']\nopts = {'args': args}\nargs = [mod, 'public']\nlookup(**opts)\n",
                 "bounded-recursive-sequence-still-checks-following-target": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, '_helper')\n",
+                "stored-positional-mapping-keeps-private-patch-dict-target": "from unittest.mock import patch\ndef forward(options):\n    with patch.dict(**options):\n        pass\nopts = {'in_dict': 'pkg._cache'}\nargs = (opts,)\nforward(*args)\n",
+                "stored-positional-mapping-keeps-private-target-after-rebind": "from unittest.mock import patch\ndef forward(options):\n    with patch.dict(**options):\n        pass\nopts = {'in_dict': 'pkg._cache'}\nargs = (opts,)\nopts = {'in_dict': 'pkg.public'}\nforward(*args)\n",
+                "bounded-recursive-mapping-still-checks-following-target": "opts = {'in_dict': {}}\nfor index in range(100):\n    opts = {'in_dict': opts}\nargs = (opts,)\ngetattr(mod, '_helper')\n",
+                "generator-next-default-keeps-following-private-access": "def items():\n    yield None\npending = items()\nnext(pending)\nnext(pending, None)\ngetattr(mod, '_helper')\n",
+                "generator-repeated-default-after-exhaustion-stays-normal": "def items():\n    yield None\npending = items()\nnext(pending)\nnext(pending, None)\nnext(pending, None)\ngetattr(mod, '_helper')\n",
+                "generator-resume-refreshes-enclosing-cell": "def test_it():\n    name = 'public'\n    def items():\n        yield None\n        getattr(mod, name)\n    pending = items()\n    next(pending)\n    name = '_helper'\n    next(pending)\n    name = 'public'\n",
+                "generator-independent-instance-checks-before-first-yield": "NAME = 'public'\ndef items():\n    getattr(mod, NAME)\n    yield None\nfirst = items()\nsecond = items()\nnext(first)\nNAME = '_helper'\nnext(second)\nNAME = 'public'\n",
+                "generator-copied-alias-shares-cursor": "NAME = 'public'\ndef items():\n    yield None\n    getattr(mod, NAME)\nfirst = items()\nsecond = first\nnext(first)\nNAME = '_helper'\nnext(second)\nNAME = 'public'\n",
+                "later-comprehension-iterable-private-target-reject": "[(x, y) for x in (1,) for y in getattr(obj, '_helper')]\n",
+                "later-comprehension-filter-private-target-reject": "[(x, y) for x in (1,) for y in (2,) if getattr(obj, '_helper')]\n",
+                "later-comprehension-target-binding-reject": "[getattr(obj, name) for x in (1,) for name in ('_helper',)]\n",
+                "comprehension-filters-precede-element-reject": "NAME = 'public'\ndef change():\n    global NAME\n    NAME = '_helper'\n    return True\n[getattr(obj, NAME) for x in (1,) for y in (2,) if change()]\n",
+                "lazy-parameter-annotation-keeps-definition-continuation-reject": "from __future__ import annotations\ndef stop():\n    raise ValueError()\ndef f(value: stop()):\n    pass\ngetattr(obj, '_helper')\n",
+                "lazy-return-annotation-preserves-enclosing-bindings-reject": "NAME = '_helper'\ndef change():\n    global NAME\n    NAME = 'public'\ndef f() -> change():\n    pass\ngetattr(obj, NAME)\n",
+                "lazy-annotation-still-checks-private-policy-reject": "from __future__ import annotations\ndef f(value: getattr(obj, '_helper')):\n    pass\n",
             }.items()
         ),
     ],
@@ -753,6 +768,22 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
                 "stored-keyword-list-keeps-public-target-shape": "def lookup(args):\n    getattr(*args)\nargs = [mod, 'public']\nopts = {'args': args}\nlookup(**opts)\n",
                 "stored-keyword-tuple-keeps-public-shape-after-rebind": "def lookup(args):\n    getattr(*args)\nargs = (mod, 'public')\nopts = {'args': args}\nargs = (mod, '_data')\nlookup(**opts)\n",
                 "unused-recursive-sequence-snapshot-stays-bounded": "args = ('public',)\nfor index in range(100):\n    args = (args,)\nopts = {'args': args}\ngetattr(mod, 'public')\n",
+                "stored-positional-mapping-keeps-public-patch-dict-target": "from unittest.mock import patch\ndef forward(options):\n    with patch.dict(**options):\n        pass\nopts = {'in_dict': 'pkg.public'}\nargs = (opts,)\nforward(*args)\n",
+                "stored-positional-mapping-keeps-public-target-after-rebind": "from unittest.mock import patch\ndef forward(options):\n    with patch.dict(**options):\n        pass\nopts = {'in_dict': 'pkg.public'}\nargs = (opts,)\nopts = {'in_dict': 'pkg._data'}\nforward(*args)\n",
+                "unused-recursive-mapping-snapshot-stays-bounded": "opts = {'in_dict': {}}\nfor index in range(100):\n    opts = {'in_dict': opts}\nargs = (opts,)\ngetattr(mod, 'public')\n",
+                "generator-exhaustion-without-default-stops-continuation": "def items():\n    yield None\npending = items()\nnext(pending)\nnext(pending)\ngetattr(mod, '_data')\n",
+                "generator-default-does-not-swallow-real-exception": "def items():\n    yield None\n    raise ValueError()\npending = items()\nnext(pending)\nnext(pending, None)\ngetattr(mod, '_data')\n",
+                "generator-resume-replaces-captured-private-cell": "def test_it():\n    name = '_data'\n    def items():\n        yield None\n        getattr(mod, name)\n    pending = items()\n    next(pending)\n    name = 'public'\n    next(pending)\n",
+                "generator-resume-preserves-own-local-over-enclosing-cell": "def test_it():\n    name = 'public'\n    def items():\n        name = 'public'\n        yield None\n        getattr(mod, name)\n    pending = items()\n    next(pending)\n    name = '_data'\n    next(pending)\n    name = 'public'\n",
+                "generator-distinct-creations-start-before-first-yield": "NAME = 'public'\ndef items():\n    yield None\n    getattr(mod, NAME)\nfirst = items()\nsecond = items()\nnext(first)\nNAME = '_data'\nnext(second)\nNAME = 'public'\n",
+                "generator-repeated-creation-site-starts-fresh": "NAME = '_data'\ndef items():\n    yield None\n    getattr(mod, NAME)\nfor marker in (1, 2, 3, 4):\n    pending = items()\n    next(pending)\nNAME = 'public'\n",
+                "later-comprehension-iterable-private-target-allow": "[(x, y) for x in (1,) for y in getattr(obj, 'public')]\n",
+                "later-comprehension-filter-private-target-allow": "[(x, y) for x in (1,) for y in (2,) if getattr(obj, 'public')]\n",
+                "later-comprehension-target-binding-allow": "[getattr(obj, name) for x in (1,) for name in ('public',)]\n",
+                "comprehension-filters-precede-element-allow": "NAME = '_helper'\ndef change():\n    global NAME\n    NAME = 'public'\n    return True\n[getattr(obj, NAME) for x in (1,) for y in (2,) if change()]\n",
+                "lazy-parameter-annotation-keeps-definition-continuation-allow": "from __future__ import annotations\ndef stop():\n    raise ValueError()\ndef f(value: stop()):\n    pass\ngetattr(obj, 'public')\n",
+                "lazy-return-annotation-preserves-enclosing-bindings-allow": "NAME = 'public'\ndef change():\n    global NAME\n    NAME = '_helper'\ndef f() -> change():\n    pass\ngetattr(obj, NAME)\n",
+                "lazy-annotation-still-checks-private-policy-allow": "from __future__ import annotations\ndef f(value: getattr(obj, 'public')):\n    pass\n",
             }.items()
         ),
     ],
@@ -771,12 +802,7 @@ def test_public_targets_and_non_target_strings_are_allowed(tmp_path, source):
     ],
 )
 def test_local_definitions_shadow_an_imported_reflection_alias(tmp_path, definition):
-    source = (
-        "from builtins import getattr as read\n"
-        "def test_callback():\n"
-        f"    {definition}\n"
-        '    read(None, "_data")\n'
-    )
+    source = f'from builtins import getattr as read\ndef test_callback():\n    {definition}\n    read(None, "_data")\n'
     result = _run(tmp_path, source)
     assert result.returncode == 0, result.stdout + result.stderr
 
