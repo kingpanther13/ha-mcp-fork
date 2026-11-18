@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import replace
 from functools import partial
@@ -430,12 +431,12 @@ class _ClassFlow:
 
     def dispatch(self, node: ast.stmt, state: _State) -> _Outcomes:
         if (
-            isinstance(node, ast.Expr)
+            isinstance(node, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return))
             and isinstance(node.value, ast.Yield)
             and self.context.generating
             and self.context.generating[-1]
         ):
-            return self.yield_statement(node.value, state)
+            return self.yield_statement(node, state)
         if isinstance(node, ast.ClassDef):
             return self.definition(node, state)
         if isinstance(node, ast.If):
@@ -456,10 +457,21 @@ class _ClassFlow:
             return {"break" if isinstance(node, ast.Break) else "continue": state}
         return self.simple_statement(node, state)
 
-    def yield_statement(self, node: ast.Yield, state: _State) -> _Outcomes:
-        if node.value is not None:
-            self.expression(node.value, state)
-        return self.context.pause(state, self.findings)
+    def yield_statement(
+        self, node: ast.Expr | ast.Assign | ast.AnnAssign | ast.Return, state: _State
+    ) -> _Outcomes:
+        assert isinstance(node.value, ast.Yield)
+        if node.value.value is not None:
+            self.expression(node.value.value, state)
+        outcomes = self.context.pause(state, self.findings)
+        if not isinstance(node, ast.Expr):
+            resumed = copy.copy(node)
+            # next() resumes the suspended yield expression with None.
+            resumed.value = ast.copy_location(ast.Constant(value=None), node.value)
+            prepared = self.context.prepared.setdefault(node, resumed)
+            assert isinstance(prepared, ast.stmt)
+            self.context.chain(outcomes, partial(self.follow, body=[prepared]))
+        return outcomes
 
     def simple_statement(self, node: ast.stmt, state: _State) -> _Outcomes:
         before = state.copy()
@@ -568,29 +580,7 @@ class _ClassFlow:
     ) -> tuple[list[_Bindings] | None, _Bindings]:
         expression = node.test if isinstance(node, ast.While) else node.iter
         self.expression(expression, state)
-        literal = binding_rules.literal_iterations(expression, state.aliases)
-        iterations: list[_Bindings] | None = None
-        bindings: _Bindings = []
-        if not isinstance(node, ast.While):
-            bindings = binding_rules.prepared_assignment(
-                [node.target], ast.Constant(value=None), state.values, state.aliases
-            )
-            if isinstance(node.target, ast.Name):
-                bindings = [
-                    (
-                        node.target,
-                        frozenset({""}),
-                        binding_rules.iterated_value(expression, state.values),
-                    )
-                ]
-            if literal is not None:
-                iterations = [
-                    binding_rules.prepared_assignment(
-                        [node.target], item, state.values, state.aliases
-                    )
-                    for item in literal
-                ]
-        return iterations, bindings
+        return expression_rules.prepare_loop(node, state, self.context)
 
     def loop_step(
         self,
@@ -634,7 +624,8 @@ class _ClassFlow:
         outcomes: _Outcomes = {}
         exhaustion: _Outcomes = {}
         current: _State | None = state.copy()
-        if iterations is None and binding_rules.loop_may_skip(node):
+        names = state.aliases.get(f"@iteration:{id(node)}", frozenset())
+        if not names and iterations is None and binding_rules.loop_may_skip(node):
             _add_outcome(exhaustion, "normal", state)
         if (
             isinstance(node, ast.While)
@@ -645,6 +636,10 @@ class _ClassFlow:
         seen: set[tuple] = set()
         for index in range(start, len(iterations) if iterations is not None else 256):
             assert current is not None
+            if names and not expression_rules.advance_iteration(names, current, self.context, self.findings):
+                _add_outcome(exhaustion, "normal", current)
+                current = None
+                break
             current = self.loop_step(
                 node,
                 current,
@@ -661,14 +656,17 @@ class _ClassFlow:
             if current is None:
                 break
             if iterations is None:
-                if not (
+                if not names and not (
                     isinstance(node, ast.While)
                     and isinstance(node.test, ast.Constant)
                     and node.test.value
                 ):
                     _add_outcome(exhaustion, "normal", current)
-                signature = current.key()
+                signature = expression_rules.iteration_signature(names, current, self.context) if names else current.key()
                 if signature in seen:
+                    if names:
+                        expression_rules.finish_generators(names, (current.values, current.aliases), current.closure, self.context)
+                        _add_outcome(exhaustion, "normal", current)
                     break
                 seen.add(signature)
         else:
@@ -695,6 +693,7 @@ class _ClassFlow:
                     _add_outcome(outcomes, result_kind, result)
             else:
                 _add_outcome(outcomes, "normal" if kind == "break" else kind, state)
+        expression_rules.clear_iteration(node, outcomes, self.context)
         return outcomes
 
     def loop_exits(
@@ -711,6 +710,7 @@ class _ClassFlow:
         if "normal" in exhaustion:
             for kind, result in self.block(node.orelse, exhaustion["normal"]).items():
                 _add_outcome(outcomes, kind, result)
+        expression_rules.clear_iteration(node, outcomes, self.context)
         return outcomes
 
     def handlers(self, node: ast.Try | ast.TryStar, raised: _State) -> _Outcomes:
