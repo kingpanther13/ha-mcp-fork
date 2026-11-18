@@ -16,6 +16,10 @@ on:
         description: Prove baseline failures before implementation is ready
         type: boolean
         default: false
+      candidate_regressions:
+        description: Prove the four declared post-publication regressions before fixing them
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +33,7 @@ jobs:
       PROBE_ROOT: /tmp/slf001-review-proof
       PROBE_BASELINE: ${{ inputs.baseline }}
       PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
+      PROBE_CANDIDATE_REGRESSIONS: ${{ inputs.candidate_regressions }}
       PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
       - name: Check out the isolated proof driver

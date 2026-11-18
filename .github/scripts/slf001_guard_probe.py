@@ -22,8 +22,8 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 165,
-    ALLOW_NAME: 140,
+    REJECT_NAME: 167,
+    ALLOW_NAME: 138,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
@@ -35,10 +35,16 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 31, ALLOW_NAME: 12, BOUND_NAME: 2, PERFORMANCE_NAME: 1}
-NEW_CASE_COUNTS = {REJECT_NAME: 36, ALLOW_NAME: 30}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 32, ALLOW_NAME: 11, BOUND_NAME: 2, PERFORMANCE_NAME: 1}
+NEW_CASE_COUNTS = {REJECT_NAME: 38, ALLOW_NAME: 28}
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", BOUND_NAME: "error"}
+CANDIDATE_REGRESSION_FAILURES = {
+    REJECT_NAME + "[module-assignment-after-class-global-write]",
+    REJECT_NAME + "[function-assignment-after-class-nonlocal-write]",
+    REJECT_NAME + "[mixed-local-binding-refreshes-unbound-module-path]",
+    ALLOW_NAME + "[mixed-local-binding-discards-replaced-private-fallback]",
+}
 EXCEPTION_PLUGIN = '''import json
 import os
 from pathlib import Path
@@ -155,7 +161,7 @@ def run_variant(root: Path, label: str) -> dict:
     }
 
 
-def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
+def validate(results: dict, expected: set[str], baseline_only: bool, candidate_regressions: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
         assert data["tests"] == 372, (label, data["tests"])
@@ -173,12 +179,15 @@ def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
     if not baseline_only:
         after = results["candidate"]
         assert set(before["case_names"]) == set(after["case_names"])
-        assert not after["failures"], after["failures"]
-        assert after["exit_code"] == 0, after["exit_code"]
+        expected_after = CANDIDATE_REGRESSION_FAILURES if candidate_regressions else set()
+        assert set(after["failures"]) == expected_after, set(after["failures"]) ^ expected_after
+        assert after["exit_code"] == int(candidate_regressions), after["exit_code"]
 
 
 def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
+    candidate_regressions = os.environ.get("PROBE_CANDIDATE_REGRESSIONS", "false") == "true"
+    assert not (baseline_only and candidate_regressions)
     baseline = os.environ["PROBE_BASELINE"]
     candidate = os.environ["PROBE_CANDIDATE"]
     assert re.fullmatch(r"[0-9a-f]{40}", baseline), baseline
@@ -194,6 +203,7 @@ def main() -> None:
     expected = expected_failures(baseline, candidate)
     evidence = {
         "baseline_only": baseline_only,
+        "candidate_regressions": candidate_regressions,
         "baseline": baseline,
         "candidate": candidate,
         "driver": git("-C", "../proof", "rev-parse", "HEAD"),
@@ -225,7 +235,7 @@ def main() -> None:
     if not baseline_only:
         results["candidate"] = run_variant(root, "candidate")
     (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-    validate(results, expected, baseline_only)
+    validate(results, expected, baseline_only, candidate_regressions)
     summary = {
         label: {"tests": data["tests"], "failures": len(data["failures"]),
                 "passed": data["tests"] - len(data["failures"]),

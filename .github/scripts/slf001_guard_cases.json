@@ -179,24 +179,19 @@
       "id": "function-assignment-after-class-nonlocal-write",
       "source": "def outer():\n    NAME = 'public'\n    class E:\n        nonlocal NAME\n        NAME = 'public'\n    NAME = '_helper'\n    getattr(mod, NAME)\n",
       "baseline_fails": false
+    },
+    {
+      "id": "mixed-local-binding-refreshes-unbound-module-path",
+      "source": "NAME = 'public'\nclass Example:\n    if flag:\n        NAME = 'public'\n    class Nested:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-local-binding-preserves-private-local-path",
+      "source": "NAME = 'public'\nclass Example:\n    if flag:\n        NAME = '_helper'\n    class Nested:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
-    {
-      "id": "dispatch-dict-is-not-patch",
-      "source": "dispatch.dict(\"_data\")\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "dispatch-object-is-not-patch",
-      "source": "dispatch.object(obj, \"_data\")\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "dispatch-multiple-is-not-patch",
-      "source": "dispatch.multiple(obj, _data=value)\n",
-      "baseline_fails": true
-    },
     {
       "id": "unpacked-patch-dict-replacement-data",
       "source": "patch.dict(**{\"in_dict\": \"ha_mcp.module.cache\", \"values\": {\"_data\": \"_value\"}})\n",
@@ -278,16 +273,6 @@
       "baseline_fails": true
     },
     {
-      "id": "formatted-negative-literal-public-fill",
-      "source": "getattr(mod, f'{-1:x>3}')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "formatted-positive-unary-literal-public-fill",
-      "source": "getattr(mod, f'{+1:x>2}')\n",
-      "baseline_fails": false
-    },
-    {
       "id": "class-definite-break-skips-loop-else",
       "source": "class E:\n    NAME = 'public'\n    for item in (0,):\n        break\n    else:\n        NAME = '_data'\n    getattr(mod, NAME)\n",
       "baseline_fails": true
@@ -330,6 +315,21 @@
     {
       "id": "class-global-write-stays-public-before-later-assignment",
       "source": "NAME = 'public'\nclass E:\n    global NAME\n    NAME = 'public'\ngetattr(mod, NAME)\nNAME = '_data'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "dispatch-methods-are-not-patch",
+      "source": "dispatch.dict(\"_data\")\ndispatch.object(obj, \"_data\")\ndispatch.multiple(obj, _data=value)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "formatted-signed-literal-public-fill",
+      "source": "getattr(mod, f'{-1:x>3}')\ngetattr(mod, f'{+1:x>2}')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "mixed-local-binding-discards-replaced-private-fallback",
+      "source": "NAME = '_data'\nclass Example:\n    if flag:\n        NAME = 'public'\n    class Nested:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
       "baseline_fails": true
     }
   ],
