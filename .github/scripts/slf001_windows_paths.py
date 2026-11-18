@@ -62,7 +62,7 @@ def main():
         fixed = True  # Both this baseline and candidate already normalize paths.
         assert result["posix_prefix"] is fixed, (label, result)
         assert result["windows_prefix"] is not fixed, (label, result)
-    print("Both diagnostic forms reproduced native Windows separator failures and satisfied the expected revision contract.")
+    print("Both diagnostic forms satisfied the required POSIX paths on each tested revision.")
 
 
 if __name__ == "__main__":
