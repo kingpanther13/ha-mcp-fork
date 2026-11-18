@@ -103,11 +103,15 @@ def union_values(target: dict[str, Value], source: dict[str, Value]) -> None:
 
 
 def _merged_value(left: Value, right: Value) -> Value:
+    empty_positions: tuple[Positions, ...] = ()
+    empty_mappings: tuple[Mapping, ...] = ()
     positions, position_errors = _deferred(
-        lambda: _bounded_positions(iter(left.positions + right.positions)), ()
+        lambda: _bounded_positions(iter(left.positions + right.positions)),
+        empty_positions,
     )
     targets, target_errors = _deferred(
-        lambda: _bounded_mappings(iter(left.target_mappings + right.target_mappings)), ()
+        lambda: _bounded_mappings(iter(left.target_mappings + right.target_mappings)),
+        empty_mappings,
     )
     return Value(
         left.strings | right.strings,
@@ -137,10 +141,12 @@ def dotted(node: ast.expr, aliases: Aliases) -> frozenset[str]:
     if isinstance(node, ast.Name):
         return aliases.get(node.id, frozenset({node.id}))
     if isinstance(node, ast.Attribute):
-        return frozenset().union(*(
-            _member_aliases(name, node.attr, aliases)
-            for name in dotted(node.value, aliases)
-        ))
+        return frozenset().union(
+            *(
+                _member_aliases(name, node.attr, aliases)
+                for name in dotted(node.value, aliases)
+            )
+        )
     if isinstance(node, ast.Call):
         if (result := aliases.get(f"@call:{id(node)}")) is not None:
             return result
@@ -454,12 +460,18 @@ def _target_key(node: ast.expr, values: dict[str, Value], target: str) -> set[bo
 
 def _key_strings(node: ast.expr, values: dict[str, Value]) -> set[str]:
     if isinstance(node, ast.JoinedStr):
-        return joined([
-            _key_field(part, values) if isinstance(part, ast.FormattedValue)
-            else _key_strings(part, values) for part in node.values
-        ])
+        return joined(
+            [
+                _key_field(part, values)
+                if isinstance(part, ast.FormattedValue)
+                else _key_strings(part, values)
+                for part in node.values
+            ]
+        )
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return joined([_key_strings(node.left, values), _key_strings(node.right, values)])
+        return joined(
+            [_key_strings(node.left, values), _key_strings(node.right, values)]
+        )
     if isinstance(node, ast.IfExp):
         return set().union(*(_key_strings(arm, values) for arm in _arms(node)))
     return strings(node, values)
@@ -471,8 +483,7 @@ def _key_field(node: ast.FormattedValue, values: dict[str, Value]) -> set[str]:
     if len(known) * len(specs) > 256:
         raise ValueError("too many static alternatives in an attribute target")
     return {
-        _key_format(value, node.conversion, spec)
-        for value in known for spec in specs
+        _key_format(value, node.conversion, spec) for value in known for spec in specs
     } or {"?"}
 
 
@@ -484,7 +495,7 @@ def _key_format(value: object, conversion: int, spec: str) -> str:
         if match:
             digits = match[1].lstrip("0") or "0"
             precision = len(value) if len(digits) > 4 else min(int(digits), len(value))
-            spec = spec[:match.start()] + f".{precision}" + spec[match.end():]
+            spec = spec[: match.start()] + f".{precision}" + spec[match.end() :]
     try:
         return _format_literal(value, conversion, spec)
     except ValueError as error:
@@ -547,12 +558,17 @@ def value_of(node: ast.expr | None, values: dict[str, Value]) -> Value:
         empty_mappings,
     )
     kinds, _ = _deferred(lambda: _object_kinds(node, values), frozenset[str]())
+    empty_positions: tuple[Positions, ...] = ()
     positions, position_errors = _deferred(
-        lambda: _sequence_positions(node, values), ()
+        lambda: _sequence_positions(node, values), empty_positions
     )
     targets, target_errors = _deferred(
-        lambda: _mapping_alternatives(node, values, target="in_dict")
-        if node is not None else (), empty_mappings,
+        lambda: (
+            _mapping_alternatives(node, values, target="in_dict")
+            if node is not None
+            else ()
+        ),
+        empty_mappings,
     )
     target_keys, _ = _deferred(
         lambda: _target_key(node, values, "in_dict") if node is not None else set(),
@@ -590,7 +606,7 @@ Positions = tuple[Argument | None, ...]
 def _bounded_positions(options: Iterator[Positions]) -> tuple[Positions, ...]:
     unique: dict[Positions, None] = {}
     for option in options:
-        if len(option) > 256 or len(unique) >= 256 and option not in unique:
+        if len(option) > 256 or (len(unique) >= 256 and option not in unique):
             raise ValueError("too many static alternatives in positional arguments")
         unique[option] = None
     return tuple(unique)
@@ -625,7 +641,8 @@ def _expanded_positions(
         )
         options = _bounded_positions(
             before if None in before else before + after
-            for before in options for after in additions
+            for before in options
+            for after in additions
         )
     return options
 
@@ -637,7 +654,9 @@ def call_arguments(
         option
         for positions in _expanded_positions(call.args, values)
         for option in _keyword_arguments(
-            call, values, tuple(item for item in positions if item is not None),
+            call,
+            values,
+            tuple(item for item in positions if item is not None),
             keyword_target,
         )
     )
@@ -650,7 +669,9 @@ def call_arguments(
 
 
 def _keyword_arguments(
-    call: ast.Call, values: dict[str, Value], positional: tuple[Argument, ...],
+    call: ast.Call,
+    values: dict[str, Value],
+    positional: tuple[Argument, ...],
     keyword_target: str | None,
 ) -> list[Arguments]:
     if keyword_target is not None:

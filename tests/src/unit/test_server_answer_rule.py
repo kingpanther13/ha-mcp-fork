@@ -849,7 +849,10 @@ def test_the_guard_covers_every_python_file_in_both_trees(tmp_path, tree):
 def test_multiline_private_access_reports_its_call_line(tmp_path):
     result = _run(tmp_path, "name = '_helper'\n\ngetattr(mod, name)\n")
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "tests/src/unit/test_sample.py:3: private string target '_helper'" in result.stdout
+    assert (
+        "tests/src/unit/test_sample.py:3: private string target '_helper'"
+        in result.stdout
+    )
 
 
 def test_invalid_source_fails_instead_of_silently_skipping_a_file(tmp_path):

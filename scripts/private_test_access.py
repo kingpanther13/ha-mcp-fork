@@ -289,7 +289,16 @@ def _scan_assignment(
             yield from _scan_expression(header, values, aliases, closure, context)
     elif value is not None:
         yield from _scan_expression(value, values, aliases, closure, context)
-    token = context.register(value, closure, (values, aliases), method=isinstance(values, _ClassValues) and values.scope_kind == "class") if isinstance(value, ast.Lambda) else None
+    token = (
+        context.register(
+            value,
+            closure,
+            (values, aliases),
+            method=isinstance(values, _ClassValues) and values.scope_kind == "class",
+        )
+        if isinstance(value, ast.Lambda)
+        else None
+    )
     # Resolve a chained assignment's RHS once, then evaluate and bind targets
     # left to right: a later target expression can see an earlier new binding.
     targets: list[ast.expr] = (
@@ -327,7 +336,12 @@ def _scan_nested_scope(
     for header in _headers(node):
         yield from _scan_expression(header, values, aliases, closure, context)
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        token = context.register(node, closure, (values, aliases), method=isinstance(values, _ClassValues) and values.scope_kind == "class")
+        token = context.register(
+            node,
+            closure,
+            (values, aliases),
+            method=isinstance(values, _ClassValues) and values.scope_kind == "class",
+        )
         if not isinstance(node, ast.Lambda):
             _bind_definition(node.name, values, aliases, frozenset({token}))
         return
@@ -839,10 +853,7 @@ def _scan_node(
     elif isinstance(node, _SCOPES):
         yield from _scan_nested_scope(node, values, aliases, closure, context)
     elif isinstance(node, ast.Await):
-        if isinstance(node.value, ast.Call):
-            yield from context.call(node.value, (values, aliases), closure, awaited=True)
-        else:
-            yield from context.resume(node.value, (values, aliases), closure)
+        yield from context.await_expression(node, (values, aliases), closure)
     elif isinstance(node, ast.Call):
         yield from context.call(node, (values, aliases), closure)
         for target in sorted(_targets(node, aliases, values)):
@@ -909,6 +920,16 @@ def _scan_scope(
                 for token in pending:
                     yield from context.scan(token, outcomes[kind].closure)
         return
+    yield from _scan_expression_body(scope, closure, context, on_outcomes)
+
+
+def _scan_expression_body(
+    scope: ast.AST,
+    closure: _Env,
+    context: _Deferred,
+    on_outcomes: Callable[[_Outcomes], None] | None,
+) -> Iterator[tuple[int, str]]:
+    values, aliases = closure
     effects = flow_rules.Effects([])
     context.effects.append(effects)
     state = _State(_ClassValues(values), aliases, closure).copy()
