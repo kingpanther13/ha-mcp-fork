@@ -4,12 +4,262 @@
       "id": "conditional-generator-resume-does-not-restart-consumed-body",
       "source": "NAME = 'public'\ndef gen():\n    getattr(mod, NAME)\n    yield None\nif flag:\n    pending = gen()\n    next(pending)\nNAME = '_data'\nnext(pending, None)\nNAME = 'public'\n",
       "baseline_fails": true
+    },
+    {
+      "id": "stored-general-mapping-public",
+      "source": "from unittest.mock import patch\ndef forward(options):\n    with patch.object(**options):\n        pass\nopts = {'target': mod, 'attribute': 'public'}\nargs = (opts,)\nforward(*args)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "stored-general-mapping-public-before-rebind",
+      "source": "from unittest.mock import patch\ndef forward(options):\n    with patch.object(**options):\n        pass\nopts = {'target': mod, 'attribute': 'public'}\nargs = (opts,)\nopts = {'target': mod, 'attribute': '_data'}\nforward(*args)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-argument-allow",
+      "source": "def lookup(name):\n    return getattr(mod, name, int)\ndef annotated(value: lookup('public')):\n    pass\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-global-write-isolated-allow",
+      "source": "NAME = 'public'\ndef annotation(name):\n    global NAME\n    NAME = name\n    return int\ndef annotated(value: annotation('_data')):\n    pass\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-nonlocal-write-isolated-allow",
+      "source": "def test_it():\n    name = 'public'\n    def annotation(value):\n        nonlocal name\n        name = value\n        return int\n    def annotated(value: annotation('_data')):\n        pass\n    getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-captured-frame-allow",
+      "source": "def test_it():\n    name = 'public'\n    def lookup():\n        return getattr(mod, name, int)\n    def annotated(value: lookup()):\n        pass\n    name = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "known-only-next-still-stops-at-exhaustion",
+      "source": "def items():\n    yield None\npending = items()\nnext(pending)\nadvance = next\nadvance(pending)\ngetattr(mod, '_data')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "mixed-next-unknown-fallback-public-control",
+      "source": "def items():\n    yield None\npending = items()\nnext(pending)\nadvance = next if flag else external\nadvance(pending)\ngetattr(mod, 'public')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "mixed-next-fallback-public-normal-write-control",
+      "source": "NAME = 'public'\ndef items():\n    yield None\ndef fallback(value):\n    global NAME\n    NAME = 'visible'\npending = items()\nnext(pending)\nadvance = next if flag else fallback\nadvance(pending)\ngetattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "mixed-next-fallback-public-raised-write-control",
+      "source": "NAME = 'public'\ndef items():\n    yield None\ndef fallback(value):\n    global NAME\n    NAME = 'visible'\n    raise ValueError()\npending = items()\nnext(pending)\nadvance = next if flag else fallback\ntry:\n    advance(pending)\nexcept Exception:\n    getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "next-argument-alternatives-do-not-share-default",
+      "source": "def finite():\n    yield None\ndef broken():\n    yield None\n    raise ValueError()\na = finite()\nb = broken()\nnext(a)\nnext(b)\nnext(*((a,) if flag else (b, None)))\ngetattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "assigned-yield-resumes-before-following-allow-lookup",
+      "source": "NAME = '_data'\ndef gen():\n    received = yield None\n    getattr(mod, NAME)\n    yield None\npending = gen()\nnext(pending)\nNAME = 'public'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "annotated-assigned-yield-resumes-before-following-allow-lookup",
+      "source": "NAME = '_data'\ndef gen():\n    received: object = yield None\n    getattr(mod, NAME)\n    yield None\npending = gen()\nnext(pending)\nNAME = 'public'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "returned-yield-keeps-first-next-continuation-allow",
+      "source": "def gen():\n    return (yield None)\npending = gen()\nnext(pending)\ngetattr(mod, 'public')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-resumes-current-binding-allow",
+      "source": "NAME='_helper'\nitems=(getattr(mod, NAME) for _ in (0,))\nNAME='public'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-defers-later-iterable-allow",
+      "source": "NAME='_helper'\nitems=(y for x in (0,) for y in getattr(mod, NAME))\nNAME='public'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-defers-later-filter-allow",
+      "source": "NAME='_helper'\nitems=(y for x in (0,) for y in (1,) if getattr(mod, NAME))\nNAME='public'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-captures-first-iterable-allow",
+      "source": "NAMES=('public',)\nitems=(getattr(mod,name) for name in NAMES)\nNAMES=('_helper',)\nnext(items)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-first-iterable-effect-once-allow",
+      "source": "NAME='public'\ndef first():\n    global NAME\n    NAME='_helper'\n    return (0,)\nitems=(None for _ in (first(),))\nNAME='public'\nnext(items)\ngetattr(mod,NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-first-iterable-is-immediate-allow",
+      "source": "items=(getattr(mod,'_helper') for _ in (0,))\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "for-loop-consumes-generator-expression-allow",
+      "source": "NAME='_helper'\nitems=(getattr(mod,NAME) for _ in (0,))\nNAME='public'\nfor _ in items:\n    pass\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "comprehension-consumes-generator-expression-allow",
+      "source": "NAME='_helper'\nitems=(getattr(mod,NAME) for _ in (0,))\nNAME='public'\nvalues=[None for _ in items]\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "list-comprehension-remains-eager-allow",
+      "source": "NAME='public'\nitems=[getattr(mod,NAME) for _ in (0,)]\nNAME='_helper'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "tuple-consumes-all-generator-expression-items-allow",
+      "source": "items=(getattr(mod,name) for name in ('visible','public'))\ntuple(items)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-for-break-stops-consumption-allow",
+      "source": "items=(getattr(mod,name) for name in ('public','_helper'))\nfor _ in items:\n    break\n",
+      "baseline_fails": true
     }
   ],
   "reject": [
     {
       "id": "conditional-generator-resume-preserves-following-private-body",
       "source": "NAME = 'public'\ndef gen():\n    yield None\n    getattr(mod, NAME)\nif flag:\n    pending = gen()\n    next(pending)\nNAME = '_data'\nnext(pending, None)\nNAME = 'public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "stored-general-mapping-private",
+      "source": "from unittest.mock import patch\ndef forward(options):\n    with patch.object(**options):\n        pass\nopts = {'target': mod, 'attribute': '_helper'}\nargs = (opts,)\nforward(*args)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "stored-general-mapping-private-before-rebind",
+      "source": "from unittest.mock import patch\ndef forward(options):\n    with patch.object(**options):\n        pass\nopts = {'target': mod, 'attribute': '_helper'}\nargs = (opts,)\nopts = {'target': mod, 'attribute': 'public'}\nforward(*args)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "annotation-known-helper-argument-reject",
+      "source": "def lookup(name):\n    return getattr(mod, name, int)\ndef annotated(value: lookup('_helper')):\n    pass\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "annotation-known-helper-global-write-isolated-reject",
+      "source": "NAME = '_helper'\ndef annotation(name):\n    global NAME\n    NAME = name\n    return int\ndef annotated(value: annotation('public')):\n    pass\ngetattr(mod, NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-nonlocal-write-isolated-reject",
+      "source": "def test_it():\n    name = '_helper'\n    def annotation(value):\n        nonlocal name\n        name = value\n        return int\n    def annotated(value: annotation('public')):\n        pass\n    getattr(mod, name)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "annotation-known-helper-captured-frame-reject",
+      "source": "def test_it():\n    name = '_helper'\n    def lookup():\n        return getattr(mod, name, int)\n    def annotated(value: lookup()):\n        pass\n    name = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-next-known-fallback-keeps-normal-continuation",
+      "source": "def items():\n    yield None\ndef fallback(value):\n    pass\npending = items()\nnext(pending)\nadvance = next if flag else fallback\nadvance(pending)\ngetattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-next-unknown-fallback-keeps-normal-continuation",
+      "source": "def items():\n    yield None\npending = items()\nnext(pending)\nadvance = next if flag else external\nadvance(pending)\ngetattr(mod, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-next-fallback-replays-normal-global-write",
+      "source": "NAME = 'public'\ndef items():\n    yield None\ndef fallback(value):\n    global NAME\n    NAME = '_data'\npending = items()\nnext(pending)\nadvance = next if flag else fallback\nadvance(pending)\ngetattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "mixed-next-fallback-replays-raised-global-write",
+      "source": "NAME = 'public'\ndef items():\n    yield None\ndef fallback(value):\n    global NAME\n    NAME = '_data'\n    raise ValueError()\npending = items()\nnext(pending)\nadvance = next if flag else fallback\ntry:\n    advance(pending)\nexcept Exception:\n    getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "next-argument-alternatives-keep-real-default-continuation",
+      "source": "def finite():\n    yield None\ndef broken():\n    yield None\n    raise ValueError()\na = finite()\nb = broken()\nnext(a)\nnext(b)\nnext(*((a, None) if flag else (b, None)))\ngetattr(mod, '_data')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "assigned-yield-resumes-before-following-reject-lookup",
+      "source": "NAME = 'public'\ndef gen():\n    received = yield None\n    getattr(mod, NAME)\n    yield None\npending = gen()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "annotated-assigned-yield-resumes-before-following-reject-lookup",
+      "source": "NAME = 'public'\ndef gen():\n    received: object = yield None\n    getattr(mod, NAME)\n    yield None\npending = gen()\nnext(pending)\nNAME = '_helper'\nnext(pending)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "returned-yield-keeps-first-next-continuation-reject",
+      "source": "def gen():\n    return (yield None)\npending = gen()\nnext(pending)\ngetattr(mod, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-resumes-current-binding-reject",
+      "source": "NAME='public'\nitems=(getattr(mod, NAME) for _ in (0,))\nNAME='_helper'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-defers-later-iterable-reject",
+      "source": "NAME='public'\nitems=(y for x in (0,) for y in getattr(mod, NAME))\nNAME='_helper'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-defers-later-filter-reject",
+      "source": "NAME='public'\nitems=(y for x in (0,) for y in (1,) if getattr(mod, NAME))\nNAME='_helper'\nnext(items)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "generator-expression-captures-first-iterable-reject",
+      "source": "NAMES=('_helper',)\nitems=(getattr(mod,name) for name in NAMES)\nNAMES=('public',)\nnext(items)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-first-iterable-effect-once-reject",
+      "source": "NAME='public'\ndef first():\n    global NAME\n    NAME='public'\n    return (0,)\nitems=(None for _ in (first(),))\nNAME='_helper'\nnext(items)\ngetattr(mod,NAME)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-first-iterable-is-immediate-reject",
+      "source": "items=(None for _ in getattr(mod,'_helper'))\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "for-loop-consumes-generator-expression-reject",
+      "source": "NAME='public'\nitems=(getattr(mod,NAME) for _ in (0,))\nNAME='_helper'\nfor _ in items:\n    pass\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "comprehension-consumes-generator-expression-reject",
+      "source": "NAME='public'\nitems=(getattr(mod,NAME) for _ in (0,))\nNAME='_helper'\nvalues=[None for _ in items]\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "list-comprehension-remains-eager-reject",
+      "source": "NAME='_helper'\nitems=[getattr(mod,NAME) for _ in (0,)]\nNAME='public'\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "tuple-consumes-all-generator-expression-items-reject",
+      "source": "items=(getattr(mod,name) for name in ('public','_helper'))\ntuple(items)\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "generator-expression-for-break-stops-consumption-reject",
+      "source": "items=(getattr(mod,name) for name in ('_helper','public'))\nfor _ in items:\n    break\n",
       "baseline_fails": false
     }
   ],
