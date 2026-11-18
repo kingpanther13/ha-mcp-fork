@@ -143,7 +143,10 @@ class Expression:
         prepared = copy.copy(call)
         prepared.args = [iterable]
         yield from self.context.invoke_targets(
-            frozenset({token}), call, env, closure,
+            frozenset({token}),
+            call,
+            env,
+            closure,
             captured=(prepared, self.snapshots),
         )
         return self.snapshot(call, env, origin=node)
@@ -342,13 +345,19 @@ class CallDispatch:
     ) -> Iterator[tuple[int, str]]:
         eager = {"tuple", "list", "set", "frozenset", "dict"}
         if names and all(name.removeprefix("builtins.") in eager for name in names):
-            targets = frozenset().union(*(
-                arguments.positional[0].aliases()
-                for arguments in self.context.capture_arguments(self.prepared, self.inputs)
-                if arguments.positional
-            ))
+            targets = frozenset().union(
+                *(
+                    arguments.positional[0].aliases()
+                    for arguments in self.context.capture_arguments(
+                        self.prepared, self.inputs
+                    )
+                    if arguments.positional
+                )
+            )
             yield from consume_generators(
-                targets, (dict(self.inputs[0]), dict(self.inputs[1])), closure,
+                targets,
+                (dict(self.inputs[0]), dict(self.inputs[1])),
+                closure,
                 self.context,
             )
             return
@@ -494,7 +503,9 @@ def scan_comprehension(
                 )
         yield from consume_generators(
             generator_names(generator.iter, (values, aliases), context),
-            (values, aliases), closure, context,
+            (values, aliases),
+            closure,
+            context,
         )
         for name in binding_rules.bound_names([generator.target]):
             aliases[name] = frozenset({""})
@@ -567,19 +578,60 @@ def generator_scope(
         for index in range(len(node.generators) - 1, -1, -1):
             clause = node.generators[index]
             for condition in reversed(clause.ifs):
-                body = [ast.copy_location(ast.If(test=condition, body=body, orelse=[]), condition)]
-            iterable = clause.iter if index else ast.Name(id=_GENEXPR_ITER, ctx=ast.Load())
-            body = [ast.copy_location(ast.For(target=clause.target, iter=iterable, body=body, orelse=[], type_comment=None), clause.iter)]
-        cached = ast.fix_missing_locations(ast.copy_location(ast.FunctionDef(
-            name="@generator-expression",
-            args=ast.arguments(posonlyargs=[ast.arg(arg=_GENEXPR_ITER)], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),
-            body=body, decorator_list=[], returns=None, type_comment=None, type_params=[],
-        ), node))
+                body = [
+                    ast.copy_location(
+                        ast.If(test=condition, body=body, orelse=[]), condition
+                    )
+                ]
+            iterable = (
+                clause.iter if index else ast.Name(id=_GENEXPR_ITER, ctx=ast.Load())
+            )
+            body = [
+                ast.copy_location(
+                    ast.For(
+                        target=clause.target,
+                        iter=iterable,
+                        body=body,
+                        orelse=[],
+                        type_comment=None,
+                    ),
+                    clause.iter,
+                )
+            ]
+        cached = ast.fix_missing_locations(
+            ast.copy_location(
+                ast.FunctionDef(
+                    name="@generator-expression",
+                    args=ast.arguments(
+                        posonlyargs=[ast.arg(arg=_GENEXPR_ITER)],
+                        args=[],
+                        vararg=None,
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        kwarg=None,
+                        defaults=[],
+                    ),
+                    body=body,
+                    decorator_list=[],
+                    returns=None,
+                    type_comment=None,
+                    type_params=[],
+                ),
+                node,
+            )
+        )
         context.prepared[node] = cached
     assert isinstance(cached, ast.FunctionDef)
     call = context.prepared.get(cached)
     if call is None:
-        call = ast.copy_location(ast.Call(func=ast.Name(id="@generator-expression", ctx=ast.Load()), args=[], keywords=[]), node)
+        call = ast.copy_location(
+            ast.Call(
+                func=ast.Name(id="@generator-expression", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            ),
+            node,
+        )
         context.prepared[cached] = call
     assert isinstance(call, ast.Call)
     return cached, call
@@ -591,17 +643,23 @@ def generator_names(
     if isinstance(expression, ast.GeneratorExp):
         _, expression = generator_scope(expression, context)
     return frozenset(
-        name for name in binding_rules.dotted(expression, env[1])
-        if name in context.suspended and context.scopes[context.suspended[name].token].kind == "generator"
+        name
+        for name in binding_rules.dotted(expression, env[1])
+        if name in context.suspended
+        and context.scopes[context.suspended[name].token].kind == "generator"
     )
 
 
 def generator_has_items(names: frozenset[str], env: flow_rules.Env) -> bool:
-    return any(env[1].get(f"@resume:{name}", frozenset({"start"})) - {"done"} for name in names)
+    return any(
+        env[1].get(f"@resume:{name}", frozenset({"start"})) - {"done"} for name in names
+    )
 
 
 def advance_generators(
-    names: frozenset[str], env: flow_rules.Env, closure: flow_rules.Env,
+    names: frozenset[str],
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
     context: flow_rules.Deferred,
 ) -> Iterator[tuple[int, str]]:
     yield from context.resume_targets(names, env, closure, defaults=frozenset({True}))
@@ -611,10 +669,17 @@ def advance_generators(
 
 
 def consume_generators(
-    names: frozenset[str], env: flow_rules.Env, closure: flow_rules.Env,
+    names: frozenset[str],
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
     context: flow_rules.Deferred,
 ) -> Iterator[tuple[int, str]]:
-    names = frozenset(name for name in names if name in context.suspended and context.scopes[context.suspended[name].token].kind == "generator")
+    names = frozenset(
+        name
+        for name in names
+        if name in context.suspended
+        and context.scopes[context.suspended[name].token].kind == "generator"
+    )
     if not names:
         return
     seen: set[tuple] = set()
@@ -622,7 +687,11 @@ def consume_generators(
         yield from advance_generators(names, env, closure, context)
         if not generator_has_items(names, env):
             return
-        signature = iteration_signature(names, flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure), context)
+        signature = iteration_signature(
+            names,
+            flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure),
+            context,
+        )
         if signature in seen:
             if finish_generators(names, env, closure, context):
                 return
@@ -633,19 +702,35 @@ def consume_generators(
     raise ValueError("too many static generator iterations")
 
 
-def finish_generators(names: frozenset[str], env: flow_rules.Env, closure: flow_rules.Env, context: flow_rules.Deferred) -> bool:
+def finish_generators(
+    names: frozenset[str],
+    env: flow_rules.Env,
+    closure: flow_rules.Env,
+    context: flow_rules.Deferred,
+) -> bool:
     cursors = flow_rules.module_bindings(*closure)[1]
-    if not any("done" in cursors.get(f"@resume:{name}", env[1].get(f"@resume:{name}", frozenset())) for name in names):
+    if not any(
+        "done" in cursors.get(
+            f"@resume:{name}", env[1].get(f"@resume:{name}", frozenset())
+        )
+        for name in names
+    ):
         return False
     for name in names:
         context.bind_alias(f"@resume:{name}", frozenset({"done"}), env, closure)
     return True
 
 
-def iteration_signature(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred) -> tuple:
+def iteration_signature(
+    names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred
+) -> tuple:
     def state_key(source: flow_rules.State) -> tuple:
         copied = source.copy()
-        for aliases in (copied.aliases, copied.closure[1], flow_rules.module_bindings(*copied.closure)[1]):
+        for aliases in (
+            copied.aliases,
+            copied.closure[1],
+            flow_rules.module_bindings(*copied.closure)[1],
+        ):
             for name in names:
                 aliases.pop(f"@resume:{name}", None)
         return copied.key()
@@ -674,19 +759,36 @@ def continuation_position(step: Callable[..., object]) -> tuple:
     if isinstance(step, partial):
         keywords = step.keywords
         start = keywords.get("start")
-        if getattr(step.func, "__name__", "") == "resume_loop" and keywords.get("iterations") is None:
+        if (
+            getattr(step.func, "__name__", "") == "resume_loop"
+            and keywords.get("iterations") is None
+        ):
             start = None
-        return (getattr(step.func, "__func__", step.func), syntax(step.args), syntax(keywords.get("body")), start)
+        return (
+            getattr(step.func, "__func__", step.func),
+            syntax(step.args),
+            syntax(keywords.get("body")),
+            start,
+        )
     cells = getattr(step, "__closure__", None) or ()
-    return (getattr(step, "__code__", type(step)), tuple(syntax(cell.cell_contents) for cell in cells))
+    return (
+        getattr(step, "__code__", type(step)),
+        tuple(syntax(cell.cell_contents) for cell in cells),
+    )
 
 
-def clear_iteration(node: ast.AST, outcomes: dict[str, flow_rules.State], context: flow_rules.Deferred) -> None:
+def clear_iteration(
+    node: ast.AST, outcomes: dict[str, flow_rules.State], context: flow_rules.Deferred
+) -> None:
     key = f"@iteration:{id(node)}"
     for kind, state in outcomes.items():
         if kind in context.continuations:
             continue
-        for aliases in (state.aliases, state.closure[1], flow_rules.module_bindings(*state.closure)[1]):
+        for aliases in (
+            state.aliases,
+            state.closure[1],
+            flow_rules.module_bindings(*state.closure)[1],
+        ):
             aliases.pop(key, None)
 
 
@@ -695,18 +797,30 @@ LoopBindings = list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]]
 
 def loop_bindings(
     node: ast.For | ast.AsyncFor | ast.While,
-    values: dict[str, binding_rules.Value], aliases: binding_rules.Aliases,
+    values: dict[str, binding_rules.Value],
+    aliases: binding_rules.Aliases,
 ) -> tuple[list[LoopBindings] | None, LoopBindings]:
     expression = node.test if isinstance(node, ast.While) else node.iter
     literal = binding_rules.literal_iterations(expression, aliases)
     iterations: list[LoopBindings] | None = None
     bindings: LoopBindings = []
     if not isinstance(node, ast.While):
-        bindings = binding_rules.prepared_assignment([node.target], ast.Constant(value=None), values, aliases)
+        bindings = binding_rules.prepared_assignment(
+            [node.target], ast.Constant(value=None), values, aliases
+        )
         if isinstance(node.target, ast.Name):
-            bindings = [(node.target, frozenset({""}), binding_rules.iterated_value(expression, values))]
+            bindings = [
+                (
+                    node.target,
+                    frozenset({""}),
+                    binding_rules.iterated_value(expression, values),
+                )
+            ]
         if literal is not None:
-            iterations = [binding_rules.prepared_assignment([node.target], item, values, aliases) for item in literal]
+            iterations = [
+                binding_rules.prepared_assignment([node.target], item, values, aliases)
+                for item in literal
+            ]
         if isinstance(expression, ast.Name) and expression.id == _GENEXPR_ITER:
             positions = values.get(expression.id, binding_rules.Value()).positions
             if len(positions) == 1 and all(item is not None for item in positions[0]):
@@ -714,25 +828,70 @@ def loop_bindings(
                 for item in positions[0]:
                     assert item is not None
                     if isinstance(node.target, ast.Name):
-                        iterations.append([(node.target, item.aliases() or frozenset({""}), item.value())])
+                        iterations.append(
+                            [
+                                (
+                                    node.target,
+                                    item.aliases() or frozenset({""}),
+                                    item.value(),
+                                )
+                            ]
+                        )
                     else:
                         inputs = dict(item.bindings)
-                        iterations.append(binding_rules.prepared_assignment([node.target], item.expression, inputs, {name: value.callables for name, value in inputs.items()}))
+                        iterations.append(
+                            binding_rules.prepared_assignment(
+                                [node.target],
+                                item.expression,
+                                inputs,
+                                {
+                                    name: value.callables
+                                    for name, value in inputs.items()
+                                },
+                            )
+                        )
     return iterations, bindings
 
 
-def prepare_loop(node: ast.For | ast.AsyncFor | ast.While, state: flow_rules.State, context: flow_rules.Deferred) -> tuple[list[LoopBindings] | None, LoopBindings]:
-    names = frozenset() if isinstance(node, ast.While) else generator_names(node.iter, (state.values, state.aliases), context)
+def prepare_loop(
+    node: ast.For | ast.AsyncFor | ast.While,
+    state: flow_rules.State,
+    context: flow_rules.Deferred,
+) -> tuple[list[LoopBindings] | None, LoopBindings]:
+    names = (
+        frozenset()
+        if isinstance(node, ast.While)
+        else generator_names(node.iter, (state.values, state.aliases), context)
+    )
     if names:
-        context.bind_alias(f"@iteration:{id(node)}", names, (state.values, state.aliases), state.closure)
+        context.bind_alias(
+            f"@iteration:{id(node)}",
+            names,
+            (state.values, state.aliases),
+            state.closure,
+        )
     return loop_bindings(node, state.values, state.aliases)
 
 
-def advance_iteration(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred, findings: set[tuple[int, str]]) -> bool:
-    findings.update(advance_generators(names, (state.values, state.aliases), state.closure, context))
+def advance_iteration(
+    names: frozenset[str],
+    state: flow_rules.State,
+    context: flow_rules.Deferred,
+    findings: set[tuple[int, str]],
+) -> bool:
+    findings.update(
+        advance_generators(names, (state.values, state.aliases), state.closure, context)
+    )
     return generator_has_items(names, (state.values, state.aliases))
 
 
-def converged_iteration(names: frozenset[str], state: flow_rules.State, context: flow_rules.Deferred, exhaustion: dict[str, flow_rules.State]) -> None:
-    if names and finish_generators(names, (state.values, state.aliases), state.closure, context):
+def converged_iteration(
+    names: frozenset[str],
+    state: flow_rules.State,
+    context: flow_rules.Deferred,
+    exhaustion: dict[str, flow_rules.State],
+) -> None:
+    if names and finish_generators(
+        names, (state.values, state.aliases), state.closure, context
+    ):
         flow_rules.add_outcome(exhaustion, "normal", state)

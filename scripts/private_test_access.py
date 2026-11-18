@@ -636,7 +636,9 @@ class _ClassFlow:
         seen: set[tuple] = set()
         for index in range(start, len(iterations) if iterations is not None else 256):
             assert current is not None
-            if names and not expression_rules.advance_iteration(names, current, self.context, self.findings):
+            if names and not expression_rules.advance_iteration(
+                names, current, self.context, self.findings
+            ):
                 _add_outcome(exhaustion, "normal", current)
                 current = None
                 break
@@ -662,9 +664,15 @@ class _ClassFlow:
                     and node.test.value
                 ):
                     _add_outcome(exhaustion, "normal", current)
-                signature = expression_rules.iteration_signature(names, current, self.context) if names else current.key()
+                signature = (
+                    expression_rules.iteration_signature(names, current, self.context)
+                    if names
+                    else current.key()
+                )
                 if signature in seen:
-                    expression_rules.converged_iteration(names, current, self.context, exhaustion)
+                    expression_rules.converged_iteration(
+                        names, current, self.context, exhaustion
+                    )
                     break
                 seen.add(signature)
         else:
