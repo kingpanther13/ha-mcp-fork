@@ -511,7 +511,7 @@ class Deferred:
             return
         runs: list[Invocation] = []
         suspended: set[str] = set()
-        for arguments in binding_rules.call_arguments(call, env[0]):
+        for arguments in self.capture_arguments(call, env):
             for name in known:
                 invocation = self.invocation(name, arguments, constructor=constructor)
                 if invocation is None:
@@ -526,6 +526,28 @@ class Deferred:
         yield from self.execute(
             runs, closure, unknown=known != names or bool(suspended)
         )
+
+    def capture_arguments(
+        self, call: ast.Call, env: Env
+    ) -> list[binding_rules.Arguments]:
+        roots = [*call.args, *(keyword.value for keyword in call.keywords)]
+        expressions = {node for root in roots for node in ast.walk(root)}
+
+        def capture(argument: binding_rules.Argument) -> binding_rules.Argument:
+            # Stored container elements retain their assignment-time snapshots.
+            if argument.expression not in expressions:
+                return argument
+            return replace(argument, resolved=self.capture(argument.expression, env))
+
+        return [
+            binding_rules.Arguments(
+                tuple(capture(argument) for argument in arguments.positional),
+                tuple(
+                    (name, capture(argument)) for name, argument in arguments.keywords
+                ),
+            )
+            for arguments in binding_rules.call_arguments(call, env[0])
+        ]
 
     def await_expression(
         self, node: ast.Await, env: Env, closure: Env
