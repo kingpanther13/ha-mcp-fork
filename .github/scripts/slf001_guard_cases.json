@@ -84,6 +84,26 @@
       "id": "partial-delete-restores-builtin-before-target-failure",
       "source": "getattr = callback\ntry:\n    del getattr, {}['missing']\nexcept KeyError:\n    getattr(mod, '_helper')\n",
       "baseline_fails": true
+    },
+    {
+      "id": "deferred-lambda-uses-final-private-global",
+      "source": "NAME = 'public'\nrun = lambda: getattr(mod, NAME)\nNAME = '_helper'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-async-uses-final-private-global",
+      "source": "NAME = 'public'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-returned-function-uses-final-private-closure",
+      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    return inner\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-method-keeps-enclosing-function-cell",
+      "source": "NAME = 'public'\ndef outer():\n    NAME = '_helper'\n    class TestExample:\n        NAME = 'public'\n        def test_it(self):\n            getattr(mod, NAME)\n    return TestExample\n",
+      "baseline_fails": false
     }
   ],
   "allow": [
@@ -186,6 +206,26 @@
       "id": "partial-delete-failure-before-builtin-restored",
       "source": "getattr = callback\ntry:\n    del {}['missing'], getattr\nexcept KeyError:\n    getattr(mod, '_data')\n",
       "baseline_fails": false
+    },
+    {
+      "id": "deferred-lambda-uses-final-public-global",
+      "source": "NAME = '_data'\nrun = lambda: getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-async-uses-final-public-global",
+      "source": "NAME = '_data'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-returned-function-uses-final-public-closure",
+      "source": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    return inner\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-returned-method-uses-final-enclosing-cell",
+      "source": "NAME = 'public'\ndef outer():\n    NAME = '_data'\n    class TestExample:\n        NAME = '_data'\n        def test_it(self):\n            getattr(mod, NAME)\n    NAME = 'public'\n    return TestExample\n",
+      "baseline_fails": true
     }
   ],
   "error": []
