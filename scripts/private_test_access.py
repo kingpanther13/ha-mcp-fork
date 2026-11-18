@@ -6,13 +6,21 @@ checks reflection and patch targets, including lexical constants, concatenation,
 f-strings and patch.multiple keys. It never imports the files it reads and has
 no exemption list. Unknown runtime values still require review; a known private
 segment in an otherwise dynamic f-string is checked too.
+
+Run ``uv run python scripts/private_test_access.py`` from the repository root.
+Fast Checks runs the same command over both complete test trees. It checks
+getattr/hasattr/setattr/delattr and patch/object/dict/multiple targets, resolving
+lexical constants, concatenation, f-strings and static keyword dictionaries.
+Real dunder names, the ha_mcp._vendor import-path segment, and the test's own
+self/cls are allowed, matching the attribute/import checks. A replacement's
+value is data, not a target. Runtime-computed names still need review.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -126,7 +134,7 @@ def _bindings(
     scope: ast.AST,
     parent_values: dict[str, binding_rules.Value],
     parent_aliases: binding_rules.Aliases,
-    initial_values: dict[str, set[str]] | None = None,
+    initial_values: dict[str, binding_rules.Value] | None = None,
 ) -> tuple[dict[str, binding_rules.Value], binding_rules.Aliases]:
     nodes = list(_nodes(scope))
     if isinstance(scope, ast.ClassDef):
@@ -135,6 +143,8 @@ def _bindings(
         )
         return _ClassValues(values), aliases
     local_names = binding_rules.bound_names(nodes)
+    global_names = {name for node in nodes if isinstance(node, ast.Global) for name in node.names}
+    local_names -= global_names
     values = binding_rules.ScopeValues(parent_values)
     aliases = dict(parent_aliases)
     imported: binding_rules.Aliases = {}
@@ -150,46 +160,18 @@ def _bindings(
         local_names.update(
             parameter.arg for parameter in parameters if parameter is not None
         )
+    values.scope_kind = "module" if isinstance(scope, ast.Module) else "function"
+    values.lexical_names = (
+        frozenset() if isinstance(scope, ast.Module)
+        else (values.lexical_names | local_names) - global_names
+    )
     for name in local_names:
         values.pop(name, None)
         aliases.pop(name, None)
     aliases.update(imported)
-    values.update(
-        (name, binding_rules.Value(frozenset(items)))
-        for name, items in (initial_values or {}).items()
-    )
+    values.update(initial_values or {})
     binding_rules.extend_values(list(binding_rules.assignments(nodes)), values, aliases)
     return values, aliases
-
-
-def _literal_keyword(mapping: ast.expr, name: str) -> ast.expr | None:
-    if not isinstance(mapping, ast.Dict):
-        return None
-    for key, value in reversed(list(zip(mapping.keys, mapping.values, strict=True))):
-        if key is None:
-            found = _literal_keyword(value, name)
-            if found is not None:
-                return found
-        elif isinstance(key, ast.Constant) and key.value == name:
-            return value
-    return None
-
-
-def _argument(call: ast.Call, index: int, name: str) -> ast.expr | None:
-    if len(call.args) > index:
-        return call.args[index]
-    for item in call.keywords:
-        if item.arg == name:
-            return item.value
-        if item.arg is None:
-            found = _literal_keyword(item.value, name)
-            if found is not None:
-                return found
-    return None
-
-
-def _own_object(node: ast.expr | None) -> bool:
-    return isinstance(node, ast.Name) and node.id in {"self", "cls"}
 
 
 def _targets(
@@ -205,49 +187,57 @@ def _targets(
     )
 
 
+def _call_kind(name: str) -> str | None:
+    operation = name.rsplit(".", 1)[-1]
+    method = ".".join(name.split(".")[-2:])
+    if method in {"patch.dict", "patch.object", "patch.multiple"}:
+        return method
+    if operation in {"setattr", "delattr"} and name not in {
+        operation, f"builtins.{operation}"
+    }:
+        return f"monkey.{operation}"
+    if operation in {"patch", "getattr", "hasattr", "setattr", "delattr"}:
+        return operation
+    return None
+
+
 def _named_targets(
     call: ast.Call, name: str, values: dict[str, binding_rules.Value]
 ) -> set[str]:
-    operation = name.rsplit(".", 1)[-1]
-    target = _argument(call, 0, "target")
-    target_strings = binding_rules.argument_strings(call, 0, "target", values)
-    patch_method = name.rsplit(".", 2)[-2:]
-    if operation == "patch":
-        return target_strings
-    if patch_method == ["patch", "dict"]:
-        return binding_rules.argument_strings(call, 0, "in_dict", values)
-    if patch_method == ["patch", "multiple"]:
-        keys = {item.arg for item in call.keywords if item.arg is not None}
-        keys.update(
-            set().union(
-                *(
-                    binding_rules.mapping_keys(item.value, values)
-                    for item in call.keywords
-                    if item.arg is None
-                )
-            )
-        )
-        return target_strings | (set() if _own_object(target) else keys)
-    if patch_method == ["patch", "object"]:
-        return target_strings | (
-            set()
-            if _own_object(target)
-            else binding_rules.argument_strings(call, 1, "attribute", values)
-        )
-    if operation in {"getattr", "hasattr", "setattr", "delattr"}:
-        if _own_object(target):
-            return set()
-        # pytest.MonkeyPatch also accepts a fully qualified string as its
-        # first argument; then its second argument is the replacement value.
-        if operation in {"setattr", "delattr"} and name not in {
-            operation,
-            f"builtins.{operation}",
-        }:
-            dotted = target_strings
-            if dotted:
-                return dotted
-        return binding_rules.argument_strings(call, 1, "name", values)
-    return set()
+    kind = _call_kind(name)
+    if kind is None:
+        return set()
+    return set().union(*(
+        _argument_targets(kind, arguments)
+        for arguments in binding_rules.call_arguments(call, values)
+    ))
+
+
+def _argument_strings(argument: binding_rules.Argument | None) -> set[str]:
+    return argument.strings() if argument is not None else set()
+
+
+def _argument_targets(kind: str, arguments: binding_rules.Arguments) -> set[str]:
+    if kind == "patch.dict":
+        return _argument_strings(arguments.argument(0, "in_dict"))
+    target = arguments.argument(0, "target")
+    if kind == "patch":
+        return _argument_strings(target)
+    if kind in {"patch.object", "patch.multiple"}:
+        targets = _argument_strings(target)
+        if target is not None and target.own_object():
+            return targets
+        if kind == "patch.multiple":
+            return targets | {name for name, _ in arguments.keywords}
+        return targets | _argument_strings(arguments.argument(1, "attribute"))
+    if target is not None and target.own_object():
+        return set()
+    if kind in {"monkey.setattr", "monkey.delattr"}:
+        signature = (2, "value") if kind == "monkey.setattr" else (1, "name")
+        if arguments.argument(*signature) is None:
+            return _argument_strings(target)
+        return _argument_strings(arguments.argument(1, "name"))
+    return _argument_strings(arguments.argument(1, "name"))
 
 
 def _private(target: str) -> bool:
@@ -265,11 +255,11 @@ def _private(target: str) -> bool:
 
 def _comprehension_values(
     scope: ast.AST, values: dict[str, binding_rules.Value]
-) -> dict[str, set[str]]:
+) -> dict[str, binding_rules.Value]:
     if isinstance(scope, _COMPREHENSIONS):
         first = scope.generators[0]
         if isinstance(first.target, ast.Name):
-            return {first.target.id: binding_rules.iterable_strings(first.iter, values)}
+            return {first.target.id: binding_rules.iterated_value(first.iter, values)}
     return {}
 
 
@@ -303,7 +293,7 @@ def _scan_assignment_target(
                 values[target.id] = assigned_value
                 _store_class_name(values, aliases, target.id)
             else:
-                binding_rules.union_values(values, {target.id: assigned_value})
+                values[target.id] = assigned_value
     elif isinstance(target, (ast.Tuple, ast.List)):
         for item in target.elts:
             # Unpacked elements are unknown, not inherited callable aliases.
@@ -323,6 +313,7 @@ def _scan_assignment(
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
     closure: tuple[dict[str, binding_rules.Value], binding_rules.Aliases],
+    on_error: Callable[[], None] | None = None,
 ) -> Iterator[tuple[int, str]]:
     value = node.value
     if isinstance(value, ast.Lambda):
@@ -338,6 +329,8 @@ def _scan_assignment(
     for target, resolved, assigned_value in binding_rules.prepared_assignment(
         targets, value, values, aliases
     ):
+        if on_error is not None and not isinstance(target, ast.Name):
+            on_error()
         yield from _scan_assignment_target(
             target, resolved, values, aliases, closure, assigned_value
         )
@@ -346,6 +339,8 @@ def _scan_assignment(
         # except in a class, whose namespace is not captured by the lambda.
         yield from _scan_scope(value, *closure)
     if isinstance(node, ast.AnnAssign):
+        if on_error is not None:
+            on_error()
         yield from _scan_expression(node.annotation, values, aliases, closure)
 
 
@@ -382,7 +377,13 @@ def _add_outcome(outcomes: _Outcomes, kind: str, state: _State) -> None:
 def _store_class_name(
     values: _ClassValues, aliases: binding_rules.Aliases, name: str
 ) -> None:
-    if name in values.class_globals:
+    if values.scope_kind != "class":
+        owner = (
+            values.closure
+            if values.scope_kind == "function" and name in values.lexical_names
+            else binding_rules.module_bindings(*values.closure)
+        )
+    elif name in values.class_globals:
         owner = binding_rules.module_bindings(*values.closure)
     elif name in values.class_nonlocals:
         owner = values.closure
@@ -404,6 +405,10 @@ def _restore_class_fallback(
     values.bound -= {name}
     values.local_values.pop(name, None)
     values.local_aliases.pop(name, None)
+    if values.scope_kind != "class":
+        aliases[name] = frozenset({"" if name in values.lexical_names else name})
+        _store_class_name(values, aliases, name)
+        return
     if name in values.class_nonlocals | values.class_globals:
         aliases[name] = frozenset({"" if name in values.class_nonlocals else name})
         _store_class_name(values, aliases, name)
@@ -415,7 +420,7 @@ def _restore_class_fallback(
 
 
 class _ClassFlow:
-    """Bounded abstract class execution with separate control-flow outcomes."""
+    """Bounded abstract statement execution with separate control-flow outcomes."""
 
     def __init__(self) -> None:
         self.cache: dict[tuple, _Outcomes] = {}
@@ -477,6 +482,14 @@ class _ClassFlow:
 
     def simple_statement(self, node: ast.stmt, state: _State) -> _Outcomes:
         before = state.copy()
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            outcomes = {"raise": before}
+            self.findings.update(_scan_assignment(
+                node, state.values, state.aliases, state.closure,
+                lambda: _add_outcome(outcomes, "raise", state),
+            ))
+            outcomes["normal"] = state
+            return outcomes
         if isinstance(node, ast.Delete):
             self.delete(node.targets, state)
         else:
@@ -490,6 +503,11 @@ class _ClassFlow:
             )
         if isinstance(node, ast.Raise):
             return {"raise": state}
+        if isinstance(node, ast.Return):
+            outcomes = {"return": state}
+            if node.value is not None and not isinstance(node.value, ast.Constant):
+                outcomes["raise"] = before
+            return outcomes
         # Retain a conservative interrupted path even for an assignment whose
         # RHS is literal; static analysis does not execute user expressions.
         return (
@@ -544,9 +562,7 @@ class _ClassFlow:
     ) -> tuple[list[_Bindings] | None, _Bindings]:
         expression = node.test if isinstance(node, ast.While) else node.iter
         self.expression(expression, state)
-        literal = isinstance(expression, (ast.List, ast.Tuple)) and not any(
-            isinstance(item, ast.Starred) for item in expression.elts
-        )
+        literal = binding_rules.literal_iterations(expression, state.aliases)
         iterations: list[_Bindings] | None = None
         bindings: _Bindings = []
         if not isinstance(node, ast.While):
@@ -558,19 +574,15 @@ class _ClassFlow:
                     (
                         node.target,
                         frozenset({""}),
-                        binding_rules.Value(
-                            frozenset(
-                                binding_rules.iterable_strings(expression, state.values)
-                            )
-                        ),
+                        binding_rules.iterated_value(expression, state.values),
                     )
                 ]
-            if literal and isinstance(expression, (ast.List, ast.Tuple)):
+            if literal is not None:
                 iterations = [
                     binding_rules.prepared_assignment(
                         [node.target], item, state.values, state.aliases
                     )
-                    for item in expression.elts
+                    for item in literal
                 ]
         return iterations, bindings
 
@@ -581,11 +593,12 @@ class _ClassFlow:
         bindings: _Bindings,
         outcomes: _Outcomes,
     ) -> _State | None:
+        _add_outcome(outcomes, "raise", current)
         if isinstance(node, ast.While):
             self.expression(node.test, current)
         self.bind(bindings, current)
         body = self.block(node.body, current)
-        for kind in ("raise", "break"):
+        for kind in ("raise", "break", "return"):
             if kind in body:
                 _add_outcome(
                     outcomes, "normal" if kind == "break" else kind, body[kind]
@@ -701,7 +714,7 @@ class _ClassFlow:
         outcomes: _Outcomes = {}
         if "normal" in body:
             outcomes.update(self.block(node.orelse, body["normal"]))
-        for kind in ("break", "continue"):
+        for kind in ("break", "continue", "return"):
             if kind in body:
                 _add_outcome(outcomes, kind, body[kind])
         if "raise" in body:
@@ -722,6 +735,9 @@ class _ClassFlow:
         subjects: _State,
         remaining: _State,
     ) -> tuple[_State, _State | None, bool]:
+        matched = binding_rules.pattern_matches(case.pattern, subject)
+        if matched is False:
+            return remaining, remaining, False
         branch = remaining.copy()
         captures = {
             name: (binding_rules.Value(), frozenset({""}))
@@ -741,9 +757,7 @@ class _ClassFlow:
         )
         if case.guard is not None:
             self.expression(case.guard, branch)
-        irrefutable = (
-            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
-        )
+        irrefutable = matched is True
         guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
         pending: _Outcomes = {}
         if not irrefutable:
@@ -789,9 +803,12 @@ class _ClassFlow:
                 state,
             )
         outcomes = self.with_items(remaining, body, state)
-        # A successfully entered manager may suppress an inner exception.
+        # A manager can suppress a body error, but not its own exit error.
+        exit_states = list(outcomes.values())
         if "raise" in outcomes:
             _add_outcome(outcomes, "normal", outcomes["raise"])
+        for result in exit_states:
+            _add_outcome(outcomes, "raise", result)
         _add_outcome(outcomes, "raise", entry)
         return outcomes
 
@@ -854,32 +871,29 @@ def _scan_scope(
     scope: ast.AST,
     values: dict[str, binding_rules.Value],
     aliases: binding_rules.Aliases,
-    initial_values: dict[str, set[str]] | None = None,
+    initial_values: dict[str, binding_rules.Value] | None = None,
 ) -> Iterator[tuple[int, str]]:
     closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
-    if isinstance(scope, ast.ClassDef):
-        assert isinstance(values, _ClassValues)
-        analyzer = _ClassFlow()
-        outcomes = analyzer.block(scope.body, _State(values, aliases, closure).copy())
-        yield from sorted(analyzer.findings)
-        if "normal" in outcomes:
-            binding_rules.publish_context(closure, outcomes["normal"].closure)
-        return
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         values, aliases = binding_rules.copy_context((values, aliases))
     if isinstance(scope, ast.Module) and isinstance(values, binding_rules.ScopeValues):
         values.module_bindings = (values, aliases)
+    if not isinstance(scope, ast.ClassDef):
+        closure = (values, aliases)
+    if isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        analyzer = _ClassFlow()
+        state = _State(_ClassValues(values), aliases, closure).copy()
+        outcomes = analyzer.block(scope.body, state)
+        yield from sorted(analyzer.findings)
+        if isinstance(scope, ast.ClassDef) and "normal" in outcomes:
+            binding_rules.publish_context(closure, outcomes["normal"].closure)
+        return
     assigned_names = {
         name for name, _, _ in binding_rules.assignments(list(_nodes(scope)))
     }
-    closure = (values, aliases)
     yield from _scan_nodes(
-        _nodes(scope, descend_assignments=False),
-        values,
-        aliases,
-        closure,
-        assigned_names,
+        _nodes(scope, descend_assignments=False), values, aliases, closure, assigned_names
     )
 
 
