@@ -928,7 +928,6 @@ def _scan_scope(
 ) -> Iterator[tuple[int, str]]:
     context = context or _Deferred()
     context.pending.append(set())
-    closure = (values, aliases)
     values, aliases = _bindings(scope, values, aliases, initial_values)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         values, aliases = binding_rules.copy_context((values, aliases))
