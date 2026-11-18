@@ -931,8 +931,9 @@ def _scan_scope(
         for kind in ("normal", "return"):
             if kind in outcomes:
                 context.remember(outcomes[kind].closure)
-                for token in pending:
-                    yield from context.scan(token, outcomes[kind].closure)
+                yield from expression_rules.scan_pending(
+                    pending, outcomes[kind].closure, context
+                )
         return
     yield from expression_rules.scan_body(
         scope, closure, context, on_outcomes, _scan_expression
