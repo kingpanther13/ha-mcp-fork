@@ -14,7 +14,7 @@ import argparse
 import ast
 from collections.abc import Iterator
 from dataclasses import dataclass
-from itertools import product
+from itertools import chain, product
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -50,7 +50,7 @@ def _comprehension_nodes(
     yield from remaining
 
 
-def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
+def _nodes(scope: ast.AST, *, descend_assignments: bool = True) -> Iterator[ast.AST]:
     """Nodes in one lexical scope, leaving nested bodies to their own scope."""
     children: Iterator[ast.AST]
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -63,8 +63,11 @@ def _nodes(scope: ast.AST) -> Iterator[ast.AST]:
         children = ast.iter_child_nodes(scope)
     for child in children:
         yield child
-        if not isinstance(child, _SCOPES):
-            yield from _nodes(child)
+        if isinstance(child, _SCOPES) or (
+            not descend_assignments and isinstance(child, (ast.Assign, ast.AnnAssign))
+        ):
+            continue
+        yield from _nodes(child, descend_assignments=descend_assignments)
 
 
 def _headers(scope: ast.AST) -> Iterator[ast.expr]:
@@ -258,17 +261,6 @@ def _assignments(nodes: list[ast.AST]) -> Iterator[tuple[str, ast.expr, bool]]:
             yield node.target.id, node.iter, True
 
 
-def _update_aliases(node: ast.AST, aliases: dict[str, str]) -> None:
-    """Keep the callable binding at each call site, including later shadowing."""
-    _import_aliases([node], aliases)
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        for target, expression, _iterated in _assignments([node]):
-            if isinstance(expression, (ast.Name, ast.Attribute)):
-                aliases[target] = _dotted(expression, aliases)
-            else:
-                aliases.pop(target, None)
-
-
 def _argument(call: ast.Call, index: int, name: str) -> ast.expr | None:
     if len(call.args) > index:
         return call.args[index]
@@ -362,6 +354,111 @@ def _bind_definition(
         values.pop(name, None)
 
 
+def _scan_assignment_target(
+    target: ast.expr,
+    resolved: str | None,
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    closure: tuple[dict[str, _Value], dict[str, str]],
+) -> Iterator[tuple[int, str]]:
+    if isinstance(target, ast.Name):
+        if resolved is not None:
+            aliases[target.id] = resolved
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for item in target.elts:
+            # Unpacked elements are unknown, not inherited callable aliases.
+            yield from _scan_assignment_target(item, "", values, aliases, closure)
+    elif isinstance(target, ast.Starred):
+        yield from _scan_assignment_target(target.value, "", values, aliases, closure)
+    else:
+        yield from _scan_expression(target, values, aliases, closure)
+
+
+def _scan_assignment(
+    node: ast.Assign | ast.AnnAssign,
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    closure: tuple[dict[str, _Value], dict[str, str]],
+) -> Iterator[tuple[int, str]]:
+    value = node.value
+    if isinstance(value, ast.Lambda):
+        for header in _headers(value):
+            yield from _scan_expression(header, values, aliases, closure)
+    elif value is not None:
+        yield from _scan_expression(value, values, aliases, closure)
+    # Resolve a chained assignment's RHS once, then evaluate and bind targets
+    # left to right: a later target expression can see an earlier new binding.
+    resolved = _dotted(value, aliases) if value is not None else None
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    for target in targets:
+        yield from _scan_assignment_target(
+            target, resolved, values, aliases, closure
+        )
+    if isinstance(value, ast.Lambda):
+        # Defaults ran before assignment. The deferred body sees the new binding,
+        # except in a class, whose namespace is not captured by the lambda.
+        yield from _scan_scope(value, *closure)
+    if isinstance(node, ast.AnnAssign):
+        yield from _scan_expression(node.annotation, values, aliases, closure)
+
+
+def _scan_nested_scope(
+    node: ast.AST,
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    closure: tuple[dict[str, _Value], dict[str, str]],
+    assigned_names: set[str],
+) -> Iterator[tuple[int, str]]:
+    for header in _headers(node):
+        yield from _scan_expression(header, values, aliases, closure)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        _bind_definition(node.name, values, aliases, assigned_names)
+    first_values = _comprehension_values(node, values)
+    # Methods and comprehension bodies do not capture a class namespace;
+    # their decorators/defaults/first iterable still execute in it.
+    yield from _scan_scope(node, *closure, first_values)
+    if isinstance(node, ast.ClassDef):
+        _bind_definition(node.name, values, aliases, assigned_names)
+
+
+def _scan_nodes(
+    nodes: Iterator[ast.AST],
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    closure: tuple[dict[str, _Value], dict[str, str]],
+    assigned_names: set[str],
+) -> Iterator[tuple[int, str]]:
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            yield from _scan_assignment(node, values, aliases, closure)
+        elif isinstance(node, _SCOPES):
+            yield from _scan_nested_scope(node, values, aliases, closure, assigned_names)
+        elif isinstance(node, ast.Call):
+            for target in sorted(_targets(node, aliases, values)):
+                if _private(target):
+                    yield node.lineno, target
+        else:
+            _import_aliases([node], aliases)
+
+
+def _scan_expression(
+    expression: ast.expr,
+    values: dict[str, _Value],
+    aliases: dict[str, str],
+    closure: tuple[dict[str, _Value], dict[str, str]],
+) -> Iterator[tuple[int, str]]:
+    # Expressions do not create lexical scopes. Only their nested functions or
+    # comprehensions do; preserve the surrounding class's closure distinction.
+    descendants = (
+        iter(())
+        if isinstance(expression, _SCOPES)
+        else _nodes(expression, descend_assignments=False)
+    )
+    yield from _scan_nodes(
+        chain([expression], descendants), values, aliases, closure, set()
+    )
+
+
 def _scan_scope(
     scope: ast.AST,
     values: dict[str, _Value],
@@ -373,27 +470,9 @@ def _scan_scope(
     assigned_names = {name for name, _, _ in _assignments(list(_nodes(scope)))}
     if not isinstance(scope, ast.ClassDef):
         closure = (values, aliases)
-    for node in _nodes(scope):
-        _update_aliases(node, aliases)
-        if isinstance(node, _SCOPES):
-            for header in _headers(node):
-                yield from _scan_scope(ast.Expression(body=header), values, aliases)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Defaults and decorators used the old binding; the body and
-                # subsequent calls see the newly defined callable. An empty
-                # alias also prevents a local `getattr` from naming the builtin.
-                _bind_definition(node.name, values, aliases, assigned_names)
-            first_values = _comprehension_values(node, values)
-            # Methods and comprehension bodies do not capture a class namespace;
-            # their decorators/defaults/first iterable still execute in it.
-            yield from _scan_scope(node, *closure, first_values)
-            if isinstance(node, ast.ClassDef):
-                # A class name is bound only after its body has executed.
-                _bind_definition(node.name, values, aliases, assigned_names)
-        elif isinstance(node, ast.Call):
-            for target in sorted(_targets(node, aliases, values)):
-                if _private(target):
-                    yield node.lineno, target
+    yield from _scan_nodes(
+        _nodes(scope, descend_assignments=False), values, aliases, closure, assigned_names
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
