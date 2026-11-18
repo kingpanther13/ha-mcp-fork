@@ -137,6 +137,9 @@ runpy.run_path(script, run_name="__main__")
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "deferred-sibling-call-keeps-defining-private-cell": "def outer():\n    NAME = '_helper'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = 'public'\n        inner()\n    caller()\n    NAME = 'public'\n",
+                "parameter-callable-shadow-precedes-later-import": "def test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    from builtins import range\n",
+                "parameter-callable-shadow-precedes-later-assignment": "from builtins import range as builtin_range\ndef test_it(range):\n    for item in range(0):\n        getattr(mod, '_helper')\n    range = builtin_range\n",
                 "deferred-lambda-uses-final-private-global": "NAME = 'public'\nrun = lambda: getattr(mod, NAME)\nNAME = '_helper'\n",
                 "deferred-async-uses-final-private-global": "NAME = 'public'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
                 "deferred-returned-function-uses-final-private-closure": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    return inner\n",
@@ -342,6 +345,8 @@ def test_reflective_private_access_fails_with_a_source_location(tmp_path, source
         *(
             pytest.param(source, id=case_id)
             for case_id, source in {
+                "deferred-sibling-call-ignores-callers-private-local": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    def caller():\n        NAME = '_data'\n        inner()\n    caller()\n",
+                "actual-import-replaces-parameter-callable-shadow": "def test_it(range):\n    from builtins import range\n    for item in range(0):\n        getattr(mod, '_data')\n",
                 "deferred-lambda-uses-final-public-global": "NAME = '_data'\nrun = lambda: getattr(mod, NAME)\nNAME = 'public'\n",
                 "deferred-async-uses-final-public-global": "NAME = '_data'\nasync def test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
                 "deferred-returned-function-uses-final-public-closure": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    return inner\n",
