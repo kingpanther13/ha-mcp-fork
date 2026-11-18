@@ -129,6 +129,16 @@
       "id": "generator-expression-for-break-stops-consumption-allow",
       "source": "items=(getattr(mod,name) for name in ('public','_helper'))\nfor _ in items:\n    break\n",
       "baseline_fails": true
+    },
+    {
+      "id": "unknown-generator-expression-list-converges-allow",
+      "source": "items=(item for item in values)\nlist(items)\ngetattr(mod, 'public')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "unknown-generator-expression-for-converges-allow",
+      "source": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, 'public')\n",
+      "baseline_fails": false
     }
   ],
   "reject": [
@@ -260,6 +270,16 @@
     {
       "id": "generator-expression-for-break-stops-consumption-reject",
       "source": "items=(getattr(mod,name) for name in ('_helper','public'))\nfor _ in items:\n    break\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "unknown-generator-expression-list-converges-reject",
+      "source": "items=(item for item in values)\nlist(items)\ngetattr(mod, '_helper')\n",
+      "baseline_fails": false
+    },
+    {
+      "id": "unknown-generator-expression-for-converges-reject",
+      "source": "items=(item for item in values)\nfor _ in items:\n    pass\ngetattr(mod, '_helper')\n",
       "baseline_fails": false
     }
   ],
