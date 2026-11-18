@@ -188,7 +188,8 @@ def dotted(node: ast.expr, aliases: Aliases) -> frozenset[str]:
 
 def class_aliases(node: ast.expr, aliases: Aliases) -> frozenset[str]:
     return frozenset(
-        name for name in dotted(node, aliases)
+        name
+        for name in dotted(node, aliases)
         if name.startswith("@class:") and "." not in name and "/" not in name
     )
 
@@ -780,7 +781,9 @@ def namespace_key(namespace: Env) -> tuple:
 def merge_namespace(target: Env, source: Env) -> None:
     union_values(target[0], source[0])
     for name in target[1].keys() | source[1].keys():
-        target[1][name] = alias_options(name, target[1]) | alias_options(name, source[1])
+        target[1][name] = alias_options(name, target[1]) | alias_options(
+            name, source[1]
+        )
 
 
 @dataclass
