@@ -68,10 +68,11 @@ class Expression:
         *,
         origin: ast.expr | None = None,
         kind: str = "value",
+        value: binding_rules.Value | None = None,
     ) -> ast.Name:
         source = node if origin is None else origin
         name = f"@operand:{id(source)}:{kind}"
-        value = self.context.capture(node, env)
+        value = self.context.capture(node, env) if value is None else value
         self.snapshots[0][name] = value
         self.snapshots[1][name] = value.callables
         # Argument/state equality includes AST identity; repeated loop visits
@@ -195,13 +196,12 @@ class Expression:
         ):
             if self.private(target):
                 yield node.lineno, target
-        yield from CallDispatch(self.context, node, prepared, self.snapshots).run(
-            env, closure
-        )
+        dispatch = CallDispatch(self.context, node, prepared, self.snapshots)
+        yield from dispatch.run(env, closure)
         self.refresh(env, closure)
         if self.context.effects and not self.context.effects[-1].normal:
             raise flow_rules.Interrupted
-        return self.snapshot(node, env)
+        return self.snapshot(node, env, value=dispatch.value)
 
     def boolean(
         self,
@@ -316,6 +316,7 @@ class CallDispatch:
     node: ast.Call
     prepared: ast.Call
     inputs: flow_rules.Env
+    value: binding_rules.Value | None = None
 
     def run(
         self, env: flow_rules.Env, closure: flow_rules.Env
@@ -331,13 +332,14 @@ class CallDispatch:
         if not next_names:
             yield from self.ordinary(names, env, closure)
             return
-        choices: list[tuple[frozenset[str], bool | None]] = [
-            (arguments.positional[0].aliases(), len(arguments.positional) > 1)
+        choices: list[tuple[frozenset[str], bool | None, binding_rules.Value]] = [
+            (arguments.positional[0].aliases(), len(arguments.positional) > 1,
+             arguments.positional[1].value() if len(arguments.positional) > 1 else binding_rules.Value())
             for arguments in self.context.capture_arguments(self.prepared, self.inputs)
             if arguments.positional
         ]
         if names - next_names:
-            choices.append((names - next_names, None))
+            choices.append((names - next_names, None, binding_rules.Value()))
         yield from self.alternatives(choices, env, closure)
 
     def ordinary(
@@ -386,7 +388,7 @@ class CallDispatch:
 
     def alternatives(
         self,
-        choices: list[tuple[frozenset[str], bool | None]],
+        choices: list[tuple[frozenset[str], bool | None, binding_rules.Value]],
         env: flow_rules.Env,
         closure: flow_rules.Env,
     ) -> Iterator[tuple[int, str]]:
@@ -397,7 +399,7 @@ class CallDispatch:
         ).copy()
         normal: list[flow_rules.State] = []
         raised: list[flow_rules.Env] = []
-        for names, default in choices:
+        for names, default, default_value in choices:
             branch = before.copy()
             effects = flow_rules.Effects([])
             self.context.effects.append(effects)
@@ -421,6 +423,15 @@ class CallDispatch:
             if effects.normal:
                 branch.refresh()
                 normal.append(branch)
+                value = (
+                    self.context.capture(self.node, (branch.values, branch.aliases))
+                    if default is None else self.context.yielded_value(
+                        names, branch.closure, default_value if default else None
+                    )
+                )
+                merged = {"result": self.value or binding_rules.Value()}
+                binding_rules.union_values(merged, {"result": value})
+                self.value = merged["result"]
         if self.context.effects:
             self.context.effects[-1].raised.extend(raised)
             self.context.effects[-1].normal &= bool(normal)
@@ -490,36 +501,43 @@ def scan_comprehension(
     scan_expression: Callable[
         ..., Generator[tuple[int, str], None, tuple[ast.expr, flow_rules.Env]]
     ],
+    index: int = 0,
 ) -> Iterator[tuple[int, str]]:
     values, aliases = env
-    for index, generator in enumerate(scope.generators):
-        if index:
-            iterable, inputs = yield from scan_expression(
-                generator.iter, values, aliases, closure, context
-            )
-            if isinstance(generator.target, ast.Name):
-                values[generator.target.id] = binding_rules.iterated_value(
-                    iterable, inputs[0]
-                )
-        yield from consume_generators(
-            generator_names(generator.iter, (values, aliases), context),
-            (values, aliases),
-            closure,
-            context,
+    if index == len(scope.generators):
+        expressions = [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
+        for expression in expressions:
+            yield from scan_expression(expression, values, aliases, closure, context)
+        return
+    generator = scope.generators[index]
+    if index:
+        iterable, inputs = yield from scan_expression(
+            generator.iter, values, aliases, closure, context
         )
+        if isinstance(generator.target, ast.Name):
+            values[generator.target.id] = binding_rules.iterated_value(iterable, inputs[0])
+
+    def visit(value: binding_rules.Value | None = None) -> Iterator[tuple[int, str]]:
+        if value is not None:
+            for target, resolved, assigned in yielded_bindings(generator.target, value, context):
+                if isinstance(target, ast.Name):
+                    values[target.id] = assigned
+                    aliases[target.id] = resolved or frozenset({""})
         for name in binding_rules.bound_names([generator.target]):
-            aliases[name] = frozenset({""})
-            closure[0][name] = values.get(name, binding_rules.Value())
-            closure[1][name] = aliases[name]
+            assigned = values.get(name, binding_rules.Value())
+            aliases[name] = assigned.callables or frozenset({""})
+            closure[0][name], closure[1][name] = assigned, aliases[name]
         for condition in generator.ifs:
             yield from scan_expression(condition, values, aliases, closure, context)
             if isinstance(condition, ast.Constant) and not condition.value:
                 return
-    expressions = (
-        [scope.key, scope.value] if isinstance(scope, ast.DictComp) else [scope.elt]
-    )
-    for expression in expressions:
-        yield from scan_expression(expression, values, aliases, closure, context)
+        yield from scan_comprehension(scope, env, closure, context, scan_expression, index + 1)
+
+    names = generator_names(generator.iter, env, context)
+    if names:
+        yield from consume_generators(names, env, closure, context, visit=visit)
+    else:
+        yield from visit()
 
 
 def scan_body(
@@ -673,6 +691,8 @@ def consume_generators(
     env: flow_rules.Env,
     closure: flow_rules.Env,
     context: flow_rules.Deferred,
+    *,
+    visit: Callable[[binding_rules.Value], Iterator[tuple[int, str]]] | None = None,
 ) -> Iterator[tuple[int, str]]:
     names = frozenset(
         name
@@ -687,6 +707,8 @@ def consume_generators(
         yield from advance_generators(names, env, closure, context)
         if not generator_has_items(names, env):
             return
+        if visit is not None:
+            yield from visit(context.yielded_value(names, closure))
         signature = iteration_signature(
             names,
             flow_rules.State(flow_rules.ClassValues(env[0]), env[1], closure),
@@ -792,6 +814,40 @@ def clear_iteration(
 
 
 LoopBindings = list[tuple[ast.expr, frozenset[str] | None, binding_rules.Value]]
+
+
+def yielded_bindings(
+    target: ast.expr, value: binding_rules.Value, context: flow_rules.Deferred
+) -> LoopBindings:
+    values: dict[str, binding_rules.Value] = {}
+    aliases: binding_rules.Aliases = {}
+
+    def expression(value: binding_rules.Value, key: str, shape: ast.expr) -> ast.expr:
+        proxy = context.operands.setdefault(
+            (target, key), ast.copy_location(ast.Name(id=key, ctx=ast.Load()), target)
+        )
+        values[key], aliases[key] = value, value.callables or frozenset({""})
+        if isinstance(shape, (ast.Tuple, ast.List)) and len(value.positions) == 1:
+            items = value.positions[0]
+            if len(items) == len(shape.elts) and all(item is not None for item in items):
+                elements = []
+                for index, (item, child) in enumerate(zip(items, shape.elts, strict=True)):
+                    assert item is not None
+                    elements.append(expression(item.value(), f"{key}:{index}", child))
+                return ast.Tuple(elts=elements, ctx=ast.Load())
+        return proxy
+
+    prepared = expression(value, f"@yielded:{id(target)}", target)
+    return binding_rules.prepared_assignment([target], prepared, values, aliases)
+
+
+def iteration_bindings(
+    node: ast.For | ast.AsyncFor | ast.While, names: frozenset[str],
+    state: flow_rules.State, bindings: LoopBindings, context: flow_rules.Deferred,
+) -> LoopBindings:
+    if names and isinstance(node, (ast.For, ast.AsyncFor)):
+        return yielded_bindings(node.target, context.yielded_value(names, state.closure), context)
+    return bindings
 
 
 def loop_bindings(

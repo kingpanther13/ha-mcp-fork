@@ -365,12 +365,16 @@ class _ClassFlow:
         self.cache: dict[tuple, _Outcomes] = {}
         self.findings: set[tuple[int, str]] = set()
 
-    def expression(self, node: ast.expr, state: _State) -> None:
-        self.findings.update(
-            _scan_expression(
-                node, state.values, state.aliases, state.closure, self.context
-            )
+    def expression(self, node: ast.expr, state: _State) -> tuple[ast.expr, _Env]:
+        scan = _scan_expression(
+            node, state.values, state.aliases, state.closure, self.context
         )
+        while True:
+            try:
+                self.findings.add(next(scan))
+            except StopIteration as finished:
+                expression, inputs = finished.value
+                return expression, inputs
 
     def block(
         self, body: list[ast.stmt], incoming: _State, start: int = 0
@@ -461,9 +465,11 @@ class _ClassFlow:
         self, node: ast.Expr | ast.Assign | ast.AnnAssign | ast.Return, state: _State
     ) -> _Outcomes:
         assert isinstance(node.value, ast.Yield)
+        yielded = binding_rules.Value()
         if node.value.value is not None:
-            self.expression(node.value.value, state)
-        outcomes = self.context.pause(state, self.findings)
+            expression, inputs = self.expression(node.value.value, state)
+            yielded = self.context.capture(expression, inputs)
+        outcomes = self.context.pause(state, self.findings, yielded)
         if not isinstance(node, ast.Expr):
             resumed = copy.copy(node)
             # next() resumes the suspended yield expression with None.
@@ -642,10 +648,14 @@ class _ClassFlow:
                 _add_outcome(exhaustion, "normal", current)
                 current = None
                 break
+            step_bindings = iterations[index] if iterations is not None else bindings
+            step_bindings = expression_rules.iteration_bindings(
+                node, names, current, step_bindings, self.context
+            )
             current = self.loop_step(
                 node,
                 current,
-                iterations[index] if iterations is not None else bindings,
+                step_bindings,
                 outcomes,
                 partial(
                     self.resume_loop,
