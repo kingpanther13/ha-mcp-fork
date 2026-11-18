@@ -17,34 +17,33 @@ FINALLY_NAME = "test_nested_finally_reports_each_source_access_once"
 BOUND_NAME = "test_formatted_targets_are_bounded_before_allocation"
 PERFORMANCE_NAME = "test_nested_finally_reuses_repeated_states"
 GUARD_TEST = "tests/src/unit/test_private_test_access.py"
+GUARD_TESTS = (GUARD_TEST, "tests/src/unit/test_private_test_access_flow.py")
+ERROR_NAME = "test_oversized_targets_still_fail_after_lazy_binding"
+SPY_NAME = "test_formatter_spy_delegates_ordinary_target_formatting"
 REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 167,
-    ALLOW_NAME: 138,
+    REJECT_NAME: 185,
+    ALLOW_NAME: 165,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
     "test_patch_dict_checks_only_its_import_target": 32,
     MAPPING_NAME: 12,
     FINALLY_NAME: 2,
     BOUND_NAME: 2,
+    ERROR_NAME: 3,
+    SPY_NAME: 1,
     PERFORMANCE_NAME: 1,
     "test_the_guard_covers_every_python_file_in_both_trees": 2,
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 32, ALLOW_NAME: 11, BOUND_NAME: 2, PERFORMANCE_NAME: 1}
-NEW_CASE_COUNTS = {REJECT_NAME: 38, ALLOW_NAME: 28}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 12, ALLOW_NAME: 17}
+NEW_CASE_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 27, ERROR_NAME: 3}
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
-CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", BOUND_NAME: "error"}
-CANDIDATE_REGRESSION_FAILURES = {
-    REJECT_NAME + "[module-assignment-after-class-global-write]",
-    REJECT_NAME + "[function-assignment-after-class-nonlocal-write]",
-    REJECT_NAME + "[mixed-local-binding-refreshes-unbound-module-path]",
-    ALLOW_NAME + "[mixed-local-binding-discards-replaced-private-fallback]",
-}
+CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
 EXCEPTION_PLUGIN = '''import json
 import os
 from pathlib import Path
@@ -96,28 +95,43 @@ def parameter_cases(text: str, name: str) -> dict[str, str]:
 
 def expected_failures(baseline: str, candidate: str) -> set[str]:
     old_source = source(baseline, GUARD_TEST)
-    new_source = source(candidate, GUARD_TEST)
+    new_sources = [source(candidate, path) for path in GUARD_TESTS]
+    old_nodes = {node.name: node for node in ast.parse(old_source).body
+                 if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")}
+    new_nodes = {}
+    for text in new_sources:
+        for node in ast.parse(text).body:
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+                new_nodes.setdefault(node.name, []).append(node)
+    assert set(new_nodes) == set(old_nodes) | {ERROR_NAME, SPY_NAME}
+    # Preserve every old test and all parametrization outside the split tables.
+    for name, node in old_nodes.items():
+        if name not in (REJECT_NAME, ALLOW_NAME):
+            [new_node] = new_nodes[name]
+            assert [ast.dump(item) for item in node.decorator_list] == [
+                ast.dump(item) for item in new_node.decorator_list
+            ], name
+
     names = set()
     for group, section in CASE_GROUPS.items():
-        old = parameter_cases(old_source, group) if group != BOUND_NAME else {}
-        new = parameter_cases(new_source, group)
+        old = parameter_cases(old_source, group) if group in old_nodes else {}
+        new = {}
+        for text in new_sources:
+            if any(isinstance(node, ast.FunctionDef) and node.name == group
+                   for node in ast.parse(text).body):
+                additions = parameter_cases(text, group)
+                assert not new.keys() & additions.keys(), (group, "duplicate IDs")
+                new.update(additions)
         assert old.items() <= new.items(), group
         expected_added = {case["id"]: case["source"] for case in CASE_MANIFEST[section]}
         added = {case_id: value for case_id, value in new.items() if case_id not in old}
         assert added == expected_added, (group, set(added) ^ set(expected_added))
-        assert len(added) == NEW_CASE_COUNTS.get(group, 2), (group, added)
+        assert len(added) == NEW_CASE_COUNTS[group], (group, added)
         names.update(
             group + "[" + case["id"] + "]"
             for case in CASE_MANIFEST[section] if case["baseline_fails"]
         )
-    assert BOUND_NAME not in old_source
-    assert PERFORMANCE_NAME not in old_source
-    [performance_test] = [node for node in ast.parse(new_source).body
-                         if isinstance(node, ast.FunctionDef) and node.name == PERFORMANCE_NAME]
-    assert not performance_test.decorator_list
-    assert CASE_MANIFEST["performance"] == [{"id": PERFORMANCE_NAME, "baseline_fails": True}]
-    names.add(PERFORMANCE_NAME)
-    assert len(names) == 46
+    assert len(names) == 29
     return names
 
 
@@ -126,7 +140,7 @@ def run_variant(root: Path, label: str) -> dict:
     types_file = root / f"{label}-exception-types.json"
     command = [
         sys.executable, "-m", "pytest", "--maxfail=0", "--tb=short", "-v",
-        "-p", "slf001_proof_types", f"--junitxml={junit}", GUARD_TEST,
+        "-p", "slf001_proof_types", f"--junitxml={junit}", *GUARD_TESTS,
     ]
     # Keep the complete project configuration and Core fixture/plugin stack.
     # This additional observer records real exception classes, not log guesses.
@@ -164,11 +178,11 @@ def run_variant(root: Path, label: str) -> dict:
 def validate(results: dict, expected: set[str], baseline_only: bool, candidate_regressions: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
-        assert data["tests"] == 372, (label, data["tests"])
+        assert data["tests"] == 421, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 372
+        assert len(set(data["case_names"])) == 421
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -179,7 +193,7 @@ def validate(results: dict, expected: set[str], baseline_only: bool, candidate_r
     if not baseline_only:
         after = results["candidate"]
         assert set(before["case_names"]) == set(after["case_names"])
-        expected_after = CANDIDATE_REGRESSION_FAILURES if candidate_regressions else set()
+        expected_after = set()
         assert set(after["failures"]) == expected_after, set(after["failures"]) ^ expected_after
         assert after["exit_code"] == int(candidate_regressions), after["exit_code"]
 
@@ -187,7 +201,7 @@ def validate(results: dict, expected: set[str], baseline_only: bool, candidate_r
 def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
     candidate_regressions = os.environ.get("PROBE_CANDIDATE_REGRESSIONS", "false") == "true"
-    assert not (baseline_only and candidate_regressions)
+    assert not candidate_regressions, "Obsolete prior-round mode is disabled"
     baseline = os.environ["PROBE_BASELINE"]
     candidate = os.environ["PROBE_CANDIDATE"]
     assert re.fullmatch(r"[0-9a-f]{40}", baseline), baseline
@@ -210,11 +224,11 @@ def main() -> None:
         "blobs": {
             revision: {
                 path: git("rev-parse", f"{revision}:{path}")
-                for path in (GUARD_PATH, GUARD_SUPPORT, GUARD_TEST)
+                for path in (*GUARD_PATHS, *GUARD_TESTS)
                 if git("ls-tree", "--name-only", revision, "--", path)
             } for revision in (baseline, candidate)
         },
-        "selected_module": GUARD_TEST,
+        "selected_modules": GUARD_TESTS,
         "expected_group_counts": GROUP_COUNTS,
         "expected_failure_group_counts": FAILURE_GROUP_COUNTS,
         "expected_baseline_failure_names": sorted(expected),
@@ -246,7 +260,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 372 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 421 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":
