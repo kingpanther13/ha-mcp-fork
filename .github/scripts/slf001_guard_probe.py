@@ -24,7 +24,8 @@ REJECT_NAME = "test_reflective_private_access_fails_with_a_source_location"
 ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
-GROUP_COUNTS = {
+BASELINE = "2381471b2f46f9df4e6c5abf4eaa3e8ddbaeaeda"
+BASELINE_GROUP_COUNTS = {
     REJECT_NAME: 186,
     ALLOW_NAME: 166,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
@@ -40,10 +41,23 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 13, ALLOW_NAME: 18}
-NEW_CASE_COUNTS = {REJECT_NAME: 19, ALLOW_NAME: 28, ERROR_NAME: 3}
 CASE_MANIFEST = json.loads(Path(__file__).with_name("slf001_guard_cases.json").read_text())
 CASE_GROUPS = {REJECT_NAME: "reject", ALLOW_NAME: "allow", ERROR_NAME: "error"}
+assert set(CASE_MANIFEST) == set(CASE_GROUPS.values())
+assert sum(BASELINE_GROUP_COUNTS.values()) == 423
+NEW_CASE_COUNTS = {group: len(CASE_MANIFEST[section]) for group, section in CASE_GROUPS.items()}
+GROUP_COUNTS = {
+    group: count + NEW_CASE_COUNTS.get(group, 0)
+    for group, count in BASELINE_GROUP_COUNTS.items()
+}
+FAILURE_GROUP_COUNTS = {
+    group: sum(case["baseline_fails"] for case in CASE_MANIFEST[section])
+    for group, section in CASE_GROUPS.items()
+    if any(case["baseline_fails"] for case in CASE_MANIFEST[section])
+}
+TOTAL_CASES = sum(GROUP_COUNTS.values())
+EXPECTED_FAILURE_COUNT = sum(FAILURE_GROUP_COUNTS.values())
+assert EXPECTED_FAILURE_COUNT > 0, "Awaiting the trusted predicted-failure manifest"
 EXCEPTION_PLUGIN = '''import json
 import os
 from pathlib import Path
@@ -126,11 +140,15 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
         for node in ast.parse(text).body:
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                 new_nodes.setdefault(node.name, []).append(node)
-    assert set(new_nodes) == set(old_nodes) | {ERROR_NAME, SPY_NAME}
+    assert set(new_nodes) == set(old_nodes)
     # Preserve every old test and all parametrization outside the split tables.
     for name, node in old_nodes.items():
-        if name not in (REJECT_NAME, ALLOW_NAME):
-            [new_node] = new_nodes[name]
+        [new_node] = new_nodes[name]
+        assert ast.dump(node.args) == ast.dump(new_node.args), (name, "changed signature")
+        assert [ast.dump(item) for item in node.body] == [
+            ast.dump(item) for item in new_node.body
+        ], (name, "changed prior test assertions")
+        if name not in CASE_GROUPS:
             assert [ast.dump(item) for item in node.decorator_list] == [
                 ast.dump(item) for item in new_node.decorator_list
             ], name
@@ -154,7 +172,7 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
             group + "[" + case["id"] + "]"
             for case in CASE_MANIFEST[section] if case["baseline_fails"]
         )
-    assert len(names) == 31
+    assert len(names) == EXPECTED_FAILURE_COUNT
     return names
 
 
@@ -198,14 +216,14 @@ def run_variant(root: Path, label: str) -> dict:
     }
 
 
-def validate(results: dict, expected: set[str], baseline_only: bool, candidate_regressions: bool) -> None:
+def validate(results: dict, expected: set[str], baseline_only: bool) -> None:
     assert set(results) == ({"baseline"} if baseline_only else {"baseline", "candidate"})
     for label, data in results.items():
-        assert data["tests"] == 423, (label, data["tests"])
+        assert data["tests"] == TOTAL_CASES, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 423
+        assert len(set(data["case_names"])) == TOTAL_CASES
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -218,14 +236,13 @@ def validate(results: dict, expected: set[str], baseline_only: bool, candidate_r
         assert set(before["case_names"]) == set(after["case_names"])
         expected_after = set()
         assert set(after["failures"]) == expected_after, set(after["failures"]) ^ expected_after
-        assert after["exit_code"] == int(candidate_regressions), after["exit_code"]
+        assert after["exit_code"] == 0, after["exit_code"]
 
 
 def main() -> None:
     baseline_only = os.environ.get("PROBE_BASELINE_ONLY", "false") == "true"
-    candidate_regressions = os.environ.get("PROBE_CANDIDATE_REGRESSIONS", "false") == "true"
-    assert not candidate_regressions, "Obsolete prior-round mode is disabled"
     baseline = os.environ["PROBE_BASELINE"]
+    assert baseline == BASELINE, (baseline, BASELINE)
     candidate = os.environ["PROBE_CANDIDATE"]
     assert re.fullmatch(r"[0-9a-f]{40}", baseline), baseline
     assert re.fullmatch(r"[0-9a-f]{40}", candidate), candidate
@@ -240,7 +257,6 @@ def main() -> None:
     expected = expected_failures(baseline, candidate)
     evidence = {
         "baseline_only": baseline_only,
-        "candidate_regressions": candidate_regressions,
         "baseline": baseline,
         "candidate": candidate,
         "driver": git("-C", "../proof", "rev-parse", "HEAD"),
@@ -257,6 +273,8 @@ def main() -> None:
         "expected_baseline_failure_names": sorted(expected),
     }
     (root / "sources.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    for revision_label, revision in (("baseline", baseline), ("candidate", candidate)):
+        (root / f"{revision_label}-tests.py").write_text(source(revision, GUARD_TEST), encoding="utf-8")
     results = {}
     try:
         for path in GUARD_PATHS:
@@ -272,7 +290,7 @@ def main() -> None:
     if not baseline_only:
         results["candidate"] = run_variant(root, "candidate")
     (root / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-    validate(results, expected, baseline_only, candidate_regressions)
+    validate(results, expected, baseline_only)
     summary = {
         label: {"tests": data["tests"], "failures": len(data["failures"]),
                 "passed": data["tests"] - len(data["failures"]),
@@ -283,7 +301,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 423 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write(f"Regression proof: all {TOTAL_CASES} guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":

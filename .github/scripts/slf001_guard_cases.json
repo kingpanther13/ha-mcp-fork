@@ -1,261 +1,192 @@
 {
   "reject": [
     {
-      "id": "chained-store-interruption-keeps-earlier-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        NAME = holder[0] = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "literal-star-tuple-private-attribute",
+      "source": "getattr(*(obj, '_helper'))\n",
       "baseline_fails": true
     },
     {
-      "id": "iterator-next-header-error-keeps-carried-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        for NAME in items:\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "literal-star-list-private-attribute",
+      "source": "getattr(*[obj, '_helper'])\n",
       "baseline_fails": true
     },
     {
-      "id": "while-next-header-error-keeps-carried-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        while condition():\n            try:\n                NAME = '_helper'\n            finally:\n                continue\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "nested-literal-star-private-attribute",
+      "source": "getattr(*(*[obj], *('_helper',)))\n",
       "baseline_fails": true
     },
     {
-      "id": "literal-range-preserves-private-result",
-      "source": "class Example:\n    NAME = 'public'\n    for index in range(1):\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "id": "literal-star-private-patch-target",
+      "source": "patch.dict(*('pkg._cache', {}), **{'_data': 1})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "shadowed-range-parameter-body-is-reachable",
+      "source": "def test_it(range):\n    for item in range(0):\n        getattr(obj, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "alias-of-shadowed-range-remains-unknown",
+      "source": "def test_it(range):\n    steps = range\n    for item in steps(0):\n        getattr(obj, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "shadowed-set-call-match-is-unknown",
+      "source": "set = lambda: ['public']\nmatch set():\n    case ['public']:\n        getattr(obj, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "nested-shadowed-set-call-match-is-unknown",
+      "source": "set = lambda: ['public']\nmatch (set(),):\n    case (['public'],):\n        getattr(obj, '_helper')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "or-pattern-first-match-private-capture",
+      "source": "match ('_helper', 'public'):\n    case (name, 'public') | ('_helper', name):\n        getattr(obj, name)\n",
       "baseline_fails": false
     },
     {
-      "id": "known-literal-pattern-match-keeps-capture",
-      "source": "class Example:\n    match '_helper':\n        case '_helper' as name:\n            getattr(mod, name)\n",
+      "id": "or-pattern-unknown-earlier-arm-retains-private-capture",
+      "source": "match ('_helper', 'public'):\n    case (name, constants.PUBLIC) | ('_helper', name):\n        getattr(obj, name)\n",
       "baseline_fails": false
     },
     {
-      "id": "with-exit-error-keeps-body-store",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        with manager():\n            NAME = '_helper'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "deferred-module-body-uses-final-private-global",
+      "source": "NAME = 'public'\ndef test_it():\n    getattr(mod, NAME)\nNAME = '_helper'\n",
       "baseline_fails": true
     },
     {
-      "id": "conditional-class-global-preserves-skipped-path",
-      "source": "NAME = '_helper'\nif flag:\n    class Example:\n        global NAME\n        NAME = 'public'\ngetattr(mod, NAME)\n",
+      "id": "deferred-nested-body-uses-reassigned-closure",
+      "source": "def outer():\n    NAME = 'public'\n    def inner():\n        getattr(mod, NAME)\n    NAME = '_helper'\n    inner()\n",
       "baseline_fails": true
     },
     {
-      "id": "function-inherited-global-refreshes-after-class",
-      "source": "NAME = 'public'\ndef test_it():\n    class Example:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "id": "deferred-method-uses-final-module-global",
+      "source": "NAME = 'public'\nclass TestExample:\n    def test_it(self):\n        getattr(mod, NAME)\nNAME = '_helper'\n",
       "baseline_fails": true
     },
     {
-      "id": "keyword-mapping-mixed-own-and-other-target",
-      "source": "def test_it(self):\n    opts = {'target': self if flag else obj, 'attribute': '_helper'}\n    patch.object(**opts)\n",
+      "id": "deferred-default-still-runs-at-definition",
+      "source": "NAME = '_helper'\ndef test_it(value=getattr(mod, NAME)):\n    pass\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "keyword-mapping-delattr-mixed-signatures",
-      "source": "monkeypatch.delattr(**({'target': 'pkg.public'} if flag else {'target': obj, 'name': '_helper'}))\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-mapping-setattr-mixed-signatures",
-      "source": "opts = {'target': 'pkg.public', 'name': '_data'} if flag else {'target': obj, 'name': '_helper', 'value': replacement}\nmonkeypatch.setattr(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-overlay-optional-key-retains-private-fallback",
-      "source": "patch.dict(**{'in_dict': 'pkg._cache', **({'in_dict': 'pkg.cache'} if flag else {})})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-overlay-alias-retains-private-fallback",
-      "source": "extra = {'in_dict': 'pkg.cache'} if flag else {}\nopts = {'in_dict': 'pkg._cache', **extra}\npatch.dict(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "function-true-local-survives-class-global-write",
-      "source": "NAME = 'public'\ndef test_it():\n    NAME = '_helper'\n    class Example:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
+      "id": "deferred-decorator-still-runs-at-definition",
+      "source": "NAME = '_helper'\n@getattr(mod, NAME)\ndef test_it():\n    pass\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "enclosing-local-survives-inner-class-global-write",
-      "source": "NAME = 'public'\ndef outer():\n    NAME = '_helper'\n    def test_it():\n        class Example:\n            global NAME\n            NAME = 'public'\n        getattr(mod, NAME)\n",
+      "id": "deferred-direct-call-keeps-call-time-private-global",
+      "source": "NAME = '_helper'\ndef helper():\n    getattr(mod, NAME)\nhelper()\nNAME = 'public'\n",
       "baseline_fails": false
     },
     {
-      "id": "monkeypatch-setattr-string-object-private-name",
-      "source": "monkeypatch.setattr('public', '_helper', replacement)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "monkeypatch-delattr-string-object-private-name",
-      "source": "monkeypatch.delattr('public', '_helper')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "finally-private-access-runs-after-return",
-      "source": "def test_it():\n    try:\n        return\n    finally:\n        getattr(mod, '_helper')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "wrapper-walk-preserves-reflective-call-suffix",
-      "source": "class Example:\n    fn = callback\n    while hasattr(fn, '__wrapped__'):\n        fn = fn.__wrapped__\n    fn.getattr(mod, '_helper')\n",
+      "id": "partial-delete-restores-builtin-before-target-failure",
+      "source": "getattr = callback\ntry:\n    del getattr, {}['missing']\nexcept KeyError:\n    getattr(mod, '_helper')\n",
       "baseline_fails": true
     }
   ],
   "allow": [
     {
-      "id": "definite-module-store-replaces-class-global",
-      "source": "NAME = 'public'\nclass Example:\n    global NAME\n    NAME = '_helper'\nNAME = 'public'\ngetattr(mod, NAME)\n",
+      "id": "literal-star-default-is-not-attribute",
+      "source": "getattr(*(obj, 'public'), '_default')\n",
       "baseline_fails": true
     },
     {
-      "id": "chained-store-interruption-before-name",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        holder[0] = NAME = '_data'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "literal-star-own-object-private-attribute",
+      "source": "def test_it(self):\n    getattr(*(self, '_helper'))\n",
       "baseline_fails": false
     },
     {
-      "id": "iterator-next-header-public-control",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        for item in items:\n            NAME = 'public'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "unknown-star-does-not-fix-later-positions",
+      "source": "getattr(*arguments, '_data')\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "literal-prefix-before-unknown-star-remains-known",
+      "source": "getattr(*(obj, 'public', *defaults))\n",
       "baseline_fails": false
     },
     {
-      "id": "while-next-header-public-control",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        while condition():\n            NAME = 'public'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "positional-patch-dict-does-not-resolve-data-keys",
+      "source": "patch.dict({}, **{f\"{'x':>5000}\": 1})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "starred-positional-patch-dict-keeps-data-keys-lazy",
+      "source": "patch.dict(*({},), **{f\"{'x':>5000}\": 1})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "explicit-patch-dict-target-keeps-data-keys-lazy",
+      "source": "patch.dict(in_dict={}, **{f\"{'x':>5000}\": 1})\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "unshadowed-builtin-range-empty-body-unreachable",
+      "source": "for item in range(0):\n    getattr(obj, '_data')\n",
       "baseline_fails": false
     },
     {
-      "id": "literal-range-stops-after-three-iterations",
-      "source": "class Example:\n    label = ''\n    for index in range(3):\n        label = label + 'x'\n    getattr(mod, 'public')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "literal-empty-range-skips-private-body",
-      "source": "class Example:\n    NAME = 'public'\n    for index in range(0):\n        NAME = '_data'\n    getattr(mod, NAME)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "known-literal-pattern-mismatch-skips-capture",
-      "source": "class Example:\n    match '_data':\n        case 'public' as name:\n            getattr(mod, name)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "with-exit-error-public-control",
-      "source": "class Example:\n    NAME = 'public'\n    try:\n        with manager():\n            NAME = 'public'\n    except ValueError:\n        getattr(mod, NAME)\n",
+      "id": "aliased-builtin-range-empty-body-unreachable",
+      "source": "from builtins import range as steps\nfor item in steps(0):\n    getattr(obj, '_data')\n",
       "baseline_fails": false
     },
     {
-      "id": "function-inherited-global-drops-old-private",
-      "source": "NAME = '_data'\ndef test_it():\n    class Example:\n        global NAME\n        NAME = 'public'\n    getattr(mod, NAME)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "function-local-stays-independent-of-class-global",
-      "source": "NAME = 'public'\ndef test_it():\n    NAME = 'public'\n    class Example:\n        global NAME\n        NAME = '_helper'\n    getattr(mod, NAME)\n",
+      "id": "shadowed-range-public-body",
+      "source": "def test_it(range):\n    for item in range(0):\n        getattr(obj, 'public')\n",
       "baseline_fails": false
     },
     {
-      "id": "unrelated-call-does-not-resolve-format-targets",
-      "source": "print(f\"{'x':>5000}\")\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "reflection-object-data-is-not-an-attribute-name",
-      "source": "getattr(f\"{'x':>5000}\", \"public\")\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-mapping-own-self-target",
-      "source": "def test_it(self):\n    opts = {'target': self, 'attribute': '_helper'}\n    patch.object(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-mapping-own-cls-target",
-      "source": "def test_it(cls):\n    opts = {'target': cls, 'attribute': '_helper'}\n    copy = opts\n    patch.object(**copy)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-mapping-all-own-target-alternatives",
-      "source": "def test_it(self, cls):\n    opts = {'target': self if flag else cls, 'attribute': '_helper'}\n    patch.object(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-mapping-setattr-dotted-replacement-data",
-      "source": "opts = {'target': 'pkg.public', 'name': '_data'} if flag else {'target': obj, 'name': 'public', 'value': '_data'}\nmonkeypatch.setattr(**opts)\n",
+      "id": "literal-match-definite-mismatch-stays-unreachable",
+      "source": "match ('different',):\n    case ['public']:\n        getattr(obj, '_data')\n",
       "baseline_fails": false
     },
     {
-      "id": "keyword-overlay-definite-public-key-replaces-private",
-      "source": "opts = {'in_dict': 'pkg._cache', **({'in_dict': 'pkg.cache'} if flag else {'in_dict': 'pkg.other'})}\npatch.dict(**opts)\n",
+      "id": "or-pattern-first-match-public-capture",
+      "source": "match ('_data', 'public'):\n    case ('_data', name) | (name, 'public'):\n        getattr(obj, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "or-pattern-skips-definite-mismatch-capture",
+      "source": "match ('_data', 'public'):\n    case (name, 'wrong') | ('_data', name):\n        getattr(obj, name)\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-module-body-drops-former-private-global",
+      "source": "NAME = '_data'\ndef test_it():\n    getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-nested-body-drops-former-private-closure",
+      "source": "def outer():\n    NAME = '_data'\n    def inner():\n        getattr(mod, NAME)\n    NAME = 'public'\n    inner()\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-method-drops-former-private-global",
+      "source": "NAME = '_data'\nclass TestExample:\n    def test_it(self):\n        getattr(mod, NAME)\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "deferred-default-keeps-public-definition-state",
+      "source": "NAME = 'public'\ndef test_it(value=getattr(mod, NAME)):\n    pass\nNAME = '_data'\n",
       "baseline_fails": false
     },
     {
-      "id": "dictionary-format-data-remains-lazy",
-      "source": "DATA = {'label': f\"{'x':>5000}\"}\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "patch-dictionary-format-data-remains-lazy",
-      "source": "DATA = {'label': f\"{'x':>5000}\"}\npatch.dict({}, DATA)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "keyword-replacement-format-data-remains-lazy",
-      "source": "opts = {'target': 'pkg.public', 'new': f\"{'x':>5000}\"}\npatch(**opts)\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "unused-oversized-scalar-remains-data",
-      "source": "LABEL = f\"{'x':>5000}\"\nCOPY = LABEL\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "unused-oversized-iteration-remains-data",
-      "source": "LABELS = (f\"{'x':>5000}\",)\nfor label in LABELS:\n    pass\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "replacement-conditionals-stay-lazy",
-      "source": "patch.multiple(mod, field_0=(1 if flag_0 else 2), field_1=(1 if flag_1 else 2), field_2=(1 if flag_2 else 2), field_3=(1 if flag_3 else 2), field_4=(1 if flag_4 else 2), field_5=(1 if flag_5 else 2), field_6=(1 if flag_6 else 2), field_7=(1 if flag_7 else 2), field_8=(1 if flag_8 else 2))\n",
+      "id": "deferred-decorator-keeps-public-definition-state",
+      "source": "NAME = 'public'\n@getattr(mod, NAME)\ndef test_it():\n    pass\nNAME = '_data'\n",
       "baseline_fails": false
     },
     {
-      "id": "monkeypatch-own-object-or-dotted-replacement-data",
-      "source": "def test_it(self):\n    monkeypatch.setattr(self if flag else 'pkg.public', '_data')\n",
+      "id": "deferred-unrelated-call-does-not-run-test-early",
+      "source": "NAME = '_data'\ndef test_it():\n    getattr(mod, NAME)\nother()\nNAME = 'public'\n",
+      "baseline_fails": true
+    },
+    {
+      "id": "partial-delete-failure-before-builtin-restored",
+      "source": "getattr = callback\ntry:\n    del {}['missing'], getattr\nexcept KeyError:\n    getattr(mod, '_data')\n",
       "baseline_fails": false
-    },
-    {
-      "id": "oversized-mapping-key-is-data-for-patch-dict",
-      "source": "DATA = {f\"{'x':>5000}\": 1}\npatch.dict(DATA, {})\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "monkeypatch-string-object-public-names",
-      "source": "monkeypatch.setattr('public', 'public', '_data')\nmonkeypatch.delattr('public', 'public')\n",
-      "baseline_fails": false
-    },
-    {
-      "id": "return-stops-unreachable-private-access",
-      "source": "def test_it():\n    return\n    getattr(mod, '_data')\n",
-      "baseline_fails": true
-    },
-    {
-      "id": "wrapper-walk-converges-without-reflection",
-      "source": "class Example:\n    fn = callback\n    while hasattr(fn, '__wrapped__'):\n        fn = fn.__wrapped__\n    result = fn\n",
-      "baseline_fails": true
     }
   ],
-  "error": [
-    {
-      "id": "keyword-format-target-still-bounded",
-      "source": "opts = {'target': f\"{'x':>5000}\"}\npatch(**opts)\n",
-      "contains": "formatted attribute target exceeds the size limit",
-      "baseline_fails": false
-    },
-    {
-      "id": "aliased-oversized-target-still-bounded",
-      "source": "LABEL = f\"{'x':>5000}\"\nCOPY = LABEL\ngetattr(mod, COPY)\n",
-      "contains": "formatted attribute target exceeds the size limit",
-      "baseline_fails": false
-    },
-    {
-      "id": "oversized-mapping-key-is-target-for-patch-multiple",
-      "source": "DATA = {f\"{'x':>5000}\": 1}\npatch.multiple(mod, **DATA)\n",
-      "contains": "formatted attribute target exceeds the size limit",
-      "baseline_fails": false
-    }
-  ]
+  "error": []
 }

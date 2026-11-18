@@ -11,13 +11,9 @@ on:
         description: Full pre-fix commit SHA
         required: true
         type: string
-        default: 1a221500e1436c003a3985631e052e7d48e9e31a
+        default: 2381471b2f46f9df4e6c5abf4eaa3e8ddbaeaeda
       baseline_only:
         description: Prove baseline failures before implementation is ready
-        type: boolean
-        default: false
-      candidate_regressions:
-        description: Prove the four declared post-publication regressions before fixing them
         type: boolean
         default: false
 
@@ -33,7 +29,6 @@ jobs:
       PROBE_ROOT: /tmp/slf001-review-proof
       PROBE_BASELINE: ${{ inputs.baseline }}
       PROBE_BASELINE_ONLY: ${{ inputs.baseline_only }}
-      PROBE_CANDIDATE_REGRESSIONS: ${{ inputs.candidate_regressions }}
       PROBE_CANDIDATE: ${{ inputs.revision }}
     steps:
       - name: Check out the isolated proof driver
