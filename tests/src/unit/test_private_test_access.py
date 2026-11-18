@@ -205,9 +205,7 @@ def test_patch_dict_checks_only_its_import_target(
     target = f"ha_mcp.module{separator}{attribute}"
     payload = '{"_private_key": "_private_value"}'
     arguments = (
-        f"in_dict={target!r}, values={payload}"
-        if keyword
-        else f"{target!r}, {payload}"
+        f"in_dict={target!r}, values={payload}" if keyword else f"{target!r}, {payload}"
     )
     result = _run(tmp_path, f"{setup}{call}({arguments})\n")
     assert result.returncode == int(private), result.stdout + result.stderr

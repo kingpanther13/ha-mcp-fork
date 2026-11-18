@@ -319,6 +319,16 @@ def _private(target: str) -> bool:
     return False
 
 
+def _comprehension_values(
+    scope: ast.AST, values: dict[str, set[str]]
+) -> dict[str, set[str]]:
+    if isinstance(scope, _COMPREHENSIONS):
+        first = scope.generators[0]
+        if isinstance(first.target, ast.Name):
+            return {first.target.id: _strings(first.iter, values)}
+    return {}
+
+
 def _scan_scope(
     scope: ast.AST,
     values: dict[str, set[str]],
@@ -339,13 +349,7 @@ def _scan_scope(
                 # subsequent calls see the newly defined callable. An empty
                 # alias also prevents a local `getattr` from naming the builtin.
                 aliases[node.name] = ""
-            first_values: dict[str, set[str]] = {}
-            if isinstance(node, _COMPREHENSIONS) and isinstance(
-                iterator_target := node.generators[0].target, ast.Name
-            ):
-                first_values[iterator_target.id] = _strings(
-                    node.generators[0].iter, values
-                )
+            first_values = _comprehension_values(node, values)
             # Methods and comprehension bodies do not capture a class namespace;
             # their decorators/defaults/first iterable still execute in it.
             yield from _scan_scope(node, *closure, first_values)
