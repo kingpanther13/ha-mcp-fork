@@ -17,7 +17,7 @@ ALLOW_NAME = "test_public_targets_and_non_target_strings_are_allowed"
 HEADER_NAME = "test_definition_headers_and_unshadowed_aliases_still_reject_private_access"
 MAPPING_NAME = "test_patch_dict_keeps_string_alternatives_separate_from_mapping_keys"
 GROUP_COUNTS = {
-    REJECT_NAME: 105,
+    REJECT_NAME: 107,
     ALLOW_NAME: 87,
     "test_local_definitions_shadow_an_imported_reflection_alias": 3,
     HEADER_NAME: 11,
@@ -27,8 +27,8 @@ GROUP_COUNTS = {
     "test_invalid_source_fails_instead_of_silently_skipping_a_file": 1,
     "test_a_suppression_comment_does_not_exempt_private_access": 1,
 }
-FAILURE_GROUP_COUNTS = {REJECT_NAME: 16, ALLOW_NAME: 8}
-NEW_CASE_COUNTS = {REJECT_NAME: 23, ALLOW_NAME: 24}
+FAILURE_GROUP_COUNTS = {REJECT_NAME: 18, ALLOW_NAME: 8}
+NEW_CASE_COUNTS = {REJECT_NAME: 25, ALLOW_NAME: 24}
 FAILING_CASE_IDS = {
     REJECT_NAME: {
         "class-inherited-rhs", "class-annotated-rhs", "class-read-before-rebind",
@@ -37,6 +37,7 @@ FAILING_CASE_IDS = {
         "class-handler-inherited-value", "class-match-no-case", "class-mapping-key-join",
         "class-annotation-only", "class-exception-name-fallback",
         "class-deleted-value-fallback", "class-deleted-alias-fallback",
+        "class-handler-before-builtin-rebinding", "class-handler-after-builtin-restored",
     },
     ALLOW_NAME: {
         "class-definite-public-overwrite", "class-independent-else", "class-match-capture",
@@ -106,7 +107,7 @@ def expected_failures(baseline: str, candidate: str) -> set[str]:
         assert len(added) == count, (group, added)
         assert FAILING_CASE_IDS[group] <= added
         names.update(group + "[" + case_id + "]" for case_id in FAILING_CASE_IDS[group])
-    assert len(names) == 24
+    assert len(names) == 26
     return names
 
 
@@ -152,11 +153,11 @@ def run_variant(root: Path, label: str) -> dict:
 
 def validate(results: dict, expected: set[str]) -> None:
     for label, data in results.items():
-        assert data["tests"] == 254, (label, data["tests"])
+        assert data["tests"] == 256, (label, data["tests"])
         assert data["groups"] == GROUP_COUNTS, (label, data["groups"])
         assert not data["errors"], (label, data["errors"])
         assert not data["skips"], (label, data["skips"])
-        assert len(set(data["case_names"])) == 254
+        assert len(set(data["case_names"])) == 256
         assert set(data["exception_types"]) == set(data["failures"])
         assert all(kind == "AssertionError" for kind in data["exception_types"].values())
     before = results["baseline"]
@@ -221,7 +222,7 @@ def main() -> None:
     rendered = json.dumps({"sources": evidence, "results": summary}, indent=2)
     print(rendered)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
-        handle.write("Regression proof: all 254 guard cases\n\n```json\n" + rendered + "\n```\n")
+        handle.write("Regression proof: all 256 guard cases\n\n```json\n" + rendered + "\n```\n")
 
 
 if __name__ == "__main__":
