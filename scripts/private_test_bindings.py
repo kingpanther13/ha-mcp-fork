@@ -173,13 +173,41 @@ def dotted(node: ast.expr, aliases: Aliases) -> frozenset[str]:
     if isinstance(node, ast.Name):
         return aliases.get(node.id, frozenset({node.id}))
     if isinstance(node, ast.Attribute):
-        return frozenset(
+        paths = (
             _bounded_alias(f"{name}.{node.attr}")
             for name in dotted(node.value, aliases)
         )
+        return frozenset().union(*(alias_value(path, aliases) for path in paths))
+    if isinstance(node, ast.Call):
+        classes = class_aliases(node.func, aliases)
+        return frozenset(f"{name}/{id(node)}" for name in classes) or frozenset({""})
     if isinstance(node, ast.IfExp):
         return frozenset().union(*(dotted(arm, aliases) for arm in _arms(node)))
     return frozenset({""})
+
+
+def class_aliases(node: ast.expr, aliases: Aliases) -> frozenset[str]:
+    return frozenset(
+        name for name in dotted(node, aliases)
+        if name.startswith("@class:") and "." not in name and "/" not in name
+    )
+
+
+def alias_value(name: str, aliases: Aliases) -> frozenset[str]:
+    values = alias_options(name, aliases)
+    if "@inherit" in values:
+        owner, _, member = name.partition(".")
+        fallback = f"{owner.split('/')[0]}.{member}"
+        return (values - {"@inherit"}) | aliases.get(fallback, frozenset({fallback}))
+    return values
+
+
+def alias_options(name: str, aliases: Aliases) -> frozenset[str]:
+    """Keep inheritance live through conditional stores and namespace joins."""
+    if name in aliases:
+        return aliases[name]
+    inherited = name.startswith("@class:") and "/" in name and "." in name
+    return frozenset({"@inherit" if inherited else name})
 
 
 def _bounded_alias(name: str) -> str:
@@ -634,11 +662,12 @@ def prepared_assignment(
         for item, value in _literal_targets(target, expression):
             resolved = None
             assigned = Value()
-            if isinstance(item, ast.Name) and expression is not None:
+            if isinstance(item, (ast.Name, ast.Attribute)) and expression is not None:
                 resolved = (
                     dotted(value, aliases) if value is not None else frozenset({""})
                 )
-                assigned = value_of(value, values)
+                if isinstance(item, ast.Name):
+                    assigned = value_of(value, values)
             bindings.append((item, resolved, assigned))
     return bindings
 
@@ -751,8 +780,7 @@ def namespace_key(namespace: Env) -> tuple:
 def merge_namespace(target: Env, source: Env) -> None:
     union_values(target[0], source[0])
     for name in target[1].keys() | source[1].keys():
-        fallback = frozenset({name})
-        target[1][name] = target[1].get(name, fallback) | source[1].get(name, fallback)
+        target[1][name] = alias_options(name, target[1]) | alias_options(name, source[1])
 
 
 @dataclass
@@ -940,19 +968,6 @@ def scope_headers(scope: ast.AST) -> Iterator[ast.expr]:
         and scope.returns is not None
     ):
         yield scope.returns
-
-
-def private_target(target: str) -> bool:
-    parts = target.replace(":", ".").split(".")
-    for index, part in enumerate(parts):
-        if not part.startswith("_") or (
-            len(part) > 4 and part.startswith("__") and part.endswith("__")
-        ):
-            continue
-        if index == 1 and parts[0] == "ha_mcp" and part == "_vendor":
-            continue
-        return True
-    return False
 
 
 def comprehension_nodes(
