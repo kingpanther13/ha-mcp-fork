@@ -394,5 +394,13 @@ def scan_body(
     if on_outcomes is not None:
         on_outcomes(outcomes)
     context.remember(closure)
-    for token in context.pending.pop():
-        yield from context.scan(token, closure)
+    yield from scan_pending(context.pending.pop(), closure, context)
+
+
+def scan_pending(
+    tokens: set[str], closure: flow_rules.Env, context: flow_rules.Deferred
+) -> Iterator[tuple[int, str]]:
+    for token in tokens:
+        invocation = context.invocation(token, None)
+        if invocation is not None:
+            yield from context.analyze(invocation, closure).findings

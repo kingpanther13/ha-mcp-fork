@@ -551,9 +551,11 @@ class Deferred:
         self.suspended_sites[name] = site
         return name
 
-    def live_suspensions(self, env: Env, closure: Env) -> set[str]:
+    def live_suspensions(
+        self, env: Env, closure: Env, inputs: Env | None = None
+    ) -> set[str]:
         sources = [env, closure, module_bindings(*closure)]
-        roots = list(sources)
+        roots = [*sources, inputs] if inputs is not None else list(sources)
         for values, aliases in self.frames.values():
             names = (
                 {
@@ -571,7 +573,12 @@ class Deferred:
                 )
             )
         live = set().union(
-            *(names for _, aliases in roots for names in aliases.values())
+            *(
+                names
+                for _, aliases in roots
+                for key, names in aliases.items()
+                if not key.startswith("@call:")
+            )
         )
         pending: list[Value | binding_rules.Argument] = [
             value for values, _ in roots for value in values.values()
@@ -709,7 +716,8 @@ class Deferred:
                     runs.append(invocation)
                 elif kind == "generator":
                     if live is None:
-                        live = self.live_suspensions(env, closure)
+                        inputs = captured[1] if captured is not None else env
+                        live = self.live_suspensions(env, closure, inputs)
                     suspended_name = self.suspend(invocation, call, live)
                     live.add(suspended_name)
                     self.bind_alias(
@@ -843,11 +851,6 @@ class Deferred:
         }
         replay_names(target[0], source[0], names)
         replay_names(target[1], source[1], names)
-
-    def scan(self, token: str, closure: Env) -> Iterator[tuple[int, str]]:
-        invocation = self.invocation(token, None)
-        if invocation is not None:
-            yield from self.analyze(invocation, closure).findings
 
     def analyze(
         self, invocation: Invocation, closure: Env, *, generator: bool = False
