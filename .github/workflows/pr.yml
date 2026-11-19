@@ -672,7 +672,7 @@ jobs:
         check_proxy || rc=$?
         test "$rc" = 1
         rc=0
-        .venv/bin/pytest -q --tb=short --junitxml="$RUNNER_TEMP/regressions.xml" "${nodes[@]}" || rc=$?
+        .venv/bin/pytest -q --maxfail=0 --log-level=ERROR --tb=short --junitxml="$RUNNER_TEMP/regressions.xml" "${nodes[@]}" || rc=$?
         test "$rc" = 1
         .venv/bin/python - <<'PY'
         import os
