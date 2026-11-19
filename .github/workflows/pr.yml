@@ -8,6 +8,11 @@ on:
       base:
         description: Exact comparison base
         required: true
+      mode:
+        description: Run all non-E2E checks or prepare a formatting patch
+        default: full
+        type: choice
+        options: [full, prepare]
 permissions:
   contents: read
 
@@ -26,6 +31,7 @@ env:
 
 jobs:
   component-version-gate:
+    if: inputs.mode != 'prepare'
     name: Component Version Gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -63,6 +69,7 @@ jobs:
           PY
 
   fast-checks:
+    if: inputs.mode != 'prepare'
     name: Fast Checks
     runs-on: ubuntu-latest
     # 15 covers the serial worst case: two Docker image pulls (~1 min), one
@@ -279,6 +286,7 @@ jobs:
         exit "$status"
 
   site-checks:
+    if: inputs.mode != 'prepare'
     name: Site (astro check + eslint a11y)
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -317,6 +325,7 @@ jobs:
       run: npm run audit:a11y
 
   unit-tests:
+    if: inputs.mode != 'prepare'
     name: Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -444,7 +453,7 @@ jobs:
     # the name branch protection requires and passes only when every runner did.
     name: Unit Tests
     needs: unit-tests
-    if: always()
+    if: always() && inputs.mode != 'prepare'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -456,6 +465,7 @@ jobs:
           [ "$RESULT" = "success" ]
 
   unit-tests-beta:
+    if: inputs.mode != 'prepare'
     name: Unit Tests (beta Core, ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -566,6 +576,7 @@ jobs:
         --ignore=tests/addon/test_addon_startup.py
 
   docker-validation:
+    if: inputs.mode != 'prepare'
     name: Docker & Add-on Validation
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -627,3 +638,78 @@ jobs:
 
     - name: Build and test standalone Docker image
       run: uv run pytest tests/test_docker/test_docker_build.py -v
+
+  review-regressions:
+    name: Verify review regressions against the previous PR head
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.candidate }}
+        fetch-depth: 0
+        submodules: true
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      with:
+        version: "0.13.9"
+    - run: uv sync --locked --all-extras --dev --python 3.14
+    - name: Verify corrected behavior and check that the regressions detect the old production paths
+      shell: bash
+      run: |
+        previous=35f7291bae51adb1783872ddcfc658ad9d39f41b
+        units=tests/src/unit
+        nodes=("$units/test_error_classification_on_core.py::test_blank_translated_service_refusal_survives_tool_error_conversion"
+               "$units/test_tools_addons_lifecycle.py::TestRepositories::test_adding_a_repository_already_in_the_store_succeeds"
+               "$units/test_tools_system_restart.py")
+        check_proxy() {
+          env NO_PROXY= no_proxy= HTTP_PROXY=http://127.0.0.1:1 http_proxy=http://127.0.0.1:1 \
+            .venv/bin/pytest -q --tb=short "$units/test_dashboard_screenshot_capture.py::TestCapture::test_builds_url_and_returns_png"
+        }
+        check_proxy
+        .venv/bin/pytest -q --tb=short "${nodes[@]}" "$units/test_get_operation_status_wait.py"
+        git restore --source="$previous" --worktree -- src "$units/_screenshot_engine.py"
+        rc=0
+        check_proxy || rc=$?
+        test "$rc" = 1
+        rc=0
+        .venv/bin/pytest -q --tb=short --junitxml="$RUNNER_TEMP/regressions.xml" "${nodes[@]}" || rc=$?
+        test "$rc" = 1
+        .venv/bin/python - <<'PY'
+        import os
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+        cases = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "regressions.xml")
+        assert not cases.findall(".//testcase/error"), "regression setup failed"
+        failed = [(c.get("classname", ""), c.get("name", "")) for c in cases.iter("testcase") if c.find("failure") is not None]
+        print("Caught regressions on previous production code:", failed)
+        for module in ("test_error_classification_on_core", "test_tools_addons_lifecycle", "test_tools_system_restart"):
+            assert any(module in cls for cls, name in failed), module
+        PY
+
+
+  prepare-format:
+    name: Prepare Ruff formatting for changed Python
+    if: inputs.mode == 'prepare'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.candidate }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      with:
+        version: "0.13.9"
+    - name: Generate suggested changes with the pinned Ruff
+      env:
+        BASE: ${{ inputs.base }}
+      run: |
+        mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- '*.py')
+        version=$(python -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("uv.lock","rb"))["package"] if p["name"]=="ruff"))')
+        uvx --from "ruff==$version" ruff check --fix "${files[@]}"
+        uvx --from "ruff==$version" ruff format "${files[@]}"
+        git diff --binary > "$RUNNER_TEMP/review-format.patch"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: review-format
+        path: ${{ runner.temp }}/review-format.patch
