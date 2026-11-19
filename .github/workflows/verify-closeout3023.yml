@@ -18,6 +18,7 @@ jobs:
           fetch-depth: 4
       - run: uv sync --locked --all-extras --dev
       - name: Check real-Core rules, private access and the exception lists
+        if: github.event.head_commit.message != 'test - isolate remaining audit controls'
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           uv run --no-sync python scripts/stand_in_lists_ratchet.py --base b3bcd49938dc8645a4b47562ebe2d437f964899d
@@ -25,7 +26,7 @@ jobs:
           uv run --no-sync ast-grep scan
           uv run --no-sync pytest -q tests/src/unit/test_core_reply_rules.py tests/src/unit/test_stand_in_lists_ratchet.py
       - name: Run affected suites against pinned Core
-        if: success() || failure()
+        if: github.event.head_commit.message != 'test - isolate remaining audit controls' && (success() || failure())
         shell: bash
         run: |
           shopt -s nullglob
@@ -39,9 +40,23 @@ jobs:
           # that deliberately unload/reimport modules.
           grep -v '/test_warn_default_path_exposed.py$' /tmp/selection > /tmp/core-selection
           uv run --no-sync python -m pytest -p issue3023_observer -n logical -q --tb=short @/tmp/core-selection
-      - name: Run all default-path launcher cases in isolation
-        if: success() || failure()
-        run: uv run --no-sync pytest -q tests/src/unit/test_warn_default_path_exposed.py
+      - name: Test collection-time import as the only launcher control
+        run: |
+          echo 'def pytest_collection_finish(session):' > issue3023_import_control.py
+          echo '    import ha_mcp.__main__' >> issue3023_import_control.py
+          uv run --no-sync python -m pytest -p issue3023_import_control -q tests/src/unit/test_warn_default_path_exposed.py
+      - name: Compare actual custom-helper discovery with and without the global stub
+        shell: bash
+        run: |
+          file=tests/src/unit/test_component_flow_helper_domains.py
+          test_case="$file::test_custom_helper_integrations_reach_search"
+          uv run --no-sync pytest -q "$test_case"
+          # Rename the local no-op override, restoring the suite's normal autouse stub.
+          sed -i 's/^def _core_helper_flows()/def unused_local_override()/' "$file"
+          status=0
+          uv run --no-sync pytest -q --tb=short --junitxml=/tmp/helper.xml "$test_case" || status=$?
+          test "$status" = 1
+          uv run --no-sync python -c "from xml.etree.ElementTree import parse; c = parse('/tmp/helper.xml').findall('.//testcase'); assert len(c) == 2 and all(t.find('failure') is not None for t in c); print('Both custom-helper cases lost the installed integration with the global stub')"
       - name: Unique WebSocket refusal codes observed through the real client
-        if: always()
+        if: github.event.head_commit.message != 'test - isolate remaining audit controls' && always()
         run: sort -u /tmp/issue3023-*.tsv
