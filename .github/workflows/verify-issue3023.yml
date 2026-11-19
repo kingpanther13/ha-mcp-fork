@@ -1,0 +1,33 @@
+name: Verify issue 3023
+on:
+  push:
+    branches: [verify/3023-nov18]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git jq g++ >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          persist-credentials: false
+      - run: uv sync --locked --all-extras --dev
+      - name: Compare real Core refusals with HA-MCP
+        run: uv run --no-sync pytest -q -s tests/src/unit/test_issue3023_observations.py
+      - name: Run existing blueprint, calendar and launcher tests on the stack
+        if: success() || failure()
+        run: >-
+          uv run --no-sync pytest -v --tb=short
+          tests/src/unit/test_ha_manage_blueprints_write.py
+          tests/src/unit/test_tools_calendar_delete.py
+          tests/src/unit/test_tools_calendar_update.py
+          tests/src/unit/test_oidc_startup.py
+          tests/src/unit/test_stdio_shutdown_abort.py
+          tests/src/unit/test_transport_security.py::test_create_server_disables_guard
+      - name: Controlled changes in disposable runner
+        if: success() || failure()
+        run: uv run --no-sync python scripts/verify_issue3023.py
