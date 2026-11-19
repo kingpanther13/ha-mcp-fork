@@ -1,0 +1,40 @@
+name: Audit issue 3023 on merged master
+on:
+  push:
+    branches: [verify/3023-closeout]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 23
+    container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git jq g++ >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          persist-credentials: false
+          fetch-depth: 2
+      - run: uv sync --locked --all-extras --dev
+      - name: Check real-Core rules, private access and the exception lists
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          uv run --no-sync python scripts/stand_in_lists_ratchet.py --base b3bcd49938dc8645a4b47562ebe2d437f964899d
+          uv run --no-sync python scripts/private_test_access.py
+          uv run --no-sync ast-grep scan
+          uv run --no-sync pytest -q tests/src/unit/test_core_reply_rules.py tests/src/unit/test_stand_in_lists_ratchet.py
+      - name: Run affected suites against pinned Core
+        if: success() || failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          cd tests/src/unit
+          files=(test_*{blueprint,calendar,automation_error,utility,supervisor,tools_addons,trace_lookup,hacs_auto_refresh,backup_dashboard,screenshot,deep_search,dashboard_edit,haos_runtime_wait,transport_security,template_render,visibility_warning,expos,component_ws_reads,script_error,scene,core_reload,registry,websocket,ws_client,diagnostic,search_fallback,storage_mode,component_caps,component_fallback}*.py)
+          cd ../../..
+          printf '%s\n' "${files[@]}" | sort -u | sed 's#^#tests/src/unit/#' > /tmp/selection
+          wc -l /tmp/selection
+          uv run --no-sync python -m pytest -p issue3023_observer -n logical -q --tb=short @/tmp/selection
+      - name: Unique WebSocket refusal codes observed through the real client
+        if: always()
+        run: sort -u /tmp/issue3023-*.tsv
