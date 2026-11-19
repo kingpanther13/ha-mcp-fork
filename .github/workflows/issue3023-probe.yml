@@ -1,0 +1,23 @@
+name: Issue 3023 branch probes
+on:
+  push:
+    branches: [ci/3023-final-probes]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git g++ >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          persist-credentials: false
+      - run: uv sync --locked --all-extras --dev
+      - name: Scan the unchanged production source
+        run: uv run --no-sync ast-grep scan --rule rules/no-error-text-classification.yml src custom_components
+      - name: Check the guard and the two native error contracts
+        if: success() || failure()
+        run: uv run --no-sync pytest -q --tb=short tests/src/unit/test_error_text_classification_rule.py tests/src/unit/test_error_classification_on_core.py
