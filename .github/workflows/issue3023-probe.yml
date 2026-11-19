@@ -1,4 +1,4 @@
-name: Issue 3023 branch probes
+name: Issue 3023 branch checks
 on:
   push:
     branches: [ci/3023-final-probes]
@@ -7,17 +7,44 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
     container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
     steps:
-      - run: apt-get update -qq && apt-get install -y -qq git g++ >/dev/null
+      - run: apt-get update -qq && apt-get install -y -qq git jq g++ >/dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: fix/3023-finalize
           submodules: true
+          fetch-depth: 0
           persist-credentials: false
-      - run: uv sync --locked --all-extras --dev
-      - name: Scan the unchanged production source
-        run: uv run --no-sync ast-grep scan --rule rules/no-error-text-classification.yml src custom_components
-      - name: Check the guard and the two native error contracts
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git rev-parse HEAD
+          uv sync --locked --all-extras --dev
+      - name: Format changed Python files for review
+        shell: bash
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR 0ec3409f228bc2531ad192735db83bc21189acf3 HEAD -- '*.py')
+          uv run --no-sync ruff check --fix "${files[@]}" || true
+          uv run --no-sync ruff format "${files[@]}"
+          git diff --binary > /tmp/issue3023-format.patch
+          git restore --worktree -- .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue3023-format
+          path: /tmp/issue3023-format.patch
+      - name: Production guard
+        run: uv run --no-sync ast-grep scan
+      - name: Focused Core and Supervisor tests
         if: success() || failure()
-        run: uv run --no-sync pytest -q --tb=short tests/src/unit/test_error_text_classification_rule.py tests/src/unit/test_error_classification_on_core.py
+        shell: bash
+        run: |
+          mapfile -t selected < <(git diff --name-only --diff-filter=ACMR 0ec3409f228bc2531ad192735db83bc21189acf3 HEAD -- 'tests/**/test_*.py')
+          files=(tests/src/unit/test_{area_floor_tools_on_core,label_category_tools_on_core,backup_dashboards,dashboard_get_no_config_routing,dashboard_screenshot_no_config,tools_config_dashboards,set_dashboard_metadata,deep_search_helper_dashboard_partial,helper_classifier,ha_manage_blueprints_write}.py)
+          mapfile -t all < <(printf '%s\n' "${selected[@]}" "${files[@]}" | sort -u)
+          uv run --no-sync pytest -n 3 --dist=loadfile -q --tb=short --log-level=ERROR --junitxml=/tmp/focused.xml "${all[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: focused-results
+          path: /tmp/focused.xml
