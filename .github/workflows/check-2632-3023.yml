@@ -1,0 +1,60 @@
+name: Production-error and exemption controls
+on:
+  push:
+    branches: [verify/2632-3023-ci]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git jq g++ >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+          fetch-depth: 2
+          persist-credentials: false
+      - run: uv sync --locked --all-extras --dev
+      - name: Baseline tests and new real-Core test are accepted
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cat > tests/src/unit/test_closeout_control.py <<'PY'
+          from homeassistant.core import HomeAssistant
+
+          async def test_read_back(hass: HomeAssistant) -> None:
+              hass.states.async_set("sensor.closeout_control", "on")
+              assert hass.states.get("sensor.closeout_control").state == "on"
+          PY
+          git add tests/src/unit/test_closeout_control.py
+          uv run --no-sync python scripts/stand_in_lists_ratchet.py --base 0ec3409f2
+          uv run --no-sync pytest -q tests/src/unit/test_closeout_control.py tests/src/unit/test_tools_resources_core_errors.py::TestCoreErrorCodes::test_not_found_wording_without_the_code_is_not_reclassified
+      - name: Test exemption is rejected
+        shell: bash
+        run: |
+          echo '"test_closeout_control.py" = ["SLF001"]' >> tests/src/unit/ruff.toml
+          status=0
+          uv run --no-sync python scripts/stand_in_lists_ratchet.py --base 0ec3409f2 > /tmp/exemption 2>&1 || status=$?
+          cat /tmp/exemption
+          test "$status" = 1
+          grep -F 'lists the new file' /tmp/exemption
+          git restore tests/src/unit/ruff.toml
+      - name: New production wording fallback under existing CI checks
+        run: |
+          sed -i 's/if code == "not_found" and resource_id:/if (code == "not_found" or "not found" in error_msg.lower()) and resource_id:/' src/ha_mcp/tools/tools_resources.py
+          git diff --exit-code --quiet -- src/ha_mcp/tools/tools_resources.py && exit 1
+          git diff -- src/ha_mcp/tools/tools_resources.py
+          uv run --no-sync ast-grep scan
+          uv run --no-sync python scripts/stand_in_lists_ratchet.py --base 0ec3409f2
+          uv run --no-sync python scripts/private_test_access.py
+          uv run --no-sync pytest -q tests/src/unit/test_core_reply_rules.py tests/src/unit/test_tools_resources_core_errors.py
+      - name: Wording covered by a tool-specific behavioral test
+        shell: bash
+        run: |
+          sed -i 's/or "not found" in error_msg.lower()/or "unable to find resource_id" in error_msg.lower()/' src/ha_mcp/tools/tools_resources.py
+          uv run --no-sync ast-grep scan
+          status=0
+          uv run --no-sync pytest -q --tb=short tests/src/unit/test_tools_resources_core_errors.py::TestCoreErrorCodes::test_not_found_wording_without_the_code_is_not_reclassified --junitxml=/tmp/regression.xml || status=$?
+          test "$status" = 1
+          uv run --no-sync python -c "from xml.etree.ElementTree import parse; t=parse('/tmp/regression.xml').find('.//testcase'); assert t is not None and t.find('failure') is not None; print(t.get('name'), 'caught the regression')"
