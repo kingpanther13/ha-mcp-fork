@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 8c20c13a9f5d1694c39307c6efa0b6e7f13246bc
+          ref: dcbe6a8f32c72faa155c49a59452ce343988a155
           submodules: true
           fetch-depth: 0
           persist-credentials: false
@@ -70,3 +70,16 @@ jobs:
         with:
           name: focused-results
           path: /tmp/focused.xml
+      - name: Verify the blueprint regression detects the old wording fallback
+        if: success() || failure()
+        shell: bash
+        run: |
+          file=src/ha_mcp/tools/blueprint_write.py
+          node=tests/src/unit/test_ha_manage_blueprints_write.py::test_missing_blueprint_input_named_already_exists_is_validation_failed
+          uv run --no-sync pytest -q "$node"
+          sed -i 's/if code == "already_exists":/if code == "already_exists" or "already exists" in message.lower():/' "$file"
+          git diff -- "$file"
+          status=0
+          uv run --no-sync pytest -q "$node" --junitxml=/tmp/mutation.xml || status=$?
+          test "$status" = 1
+          uv run --no-sync python -c 'import xml.etree.ElementTree as ET; failure = ET.parse("/tmp/mutation.xml").find(".//testcase/failure"); assert failure is not None and "RESOURCE_ALREADY_EXISTS" in failure.get("message", "")'
