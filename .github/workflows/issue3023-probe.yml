@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: dcbe6a8f32c72faa155c49a59452ce343988a155
+          ref: 35f7291bae51adb1783872ddcfc658ad9d39f41b
           submodules: true
           fetch-depth: 0
           persist-credentials: false
@@ -63,6 +63,7 @@ jobs:
           mapfile -t selected < <(git diff --name-only --diff-filter=ACMR 0ec3409f228bc2531ad192735db83bc21189acf3 HEAD -- 'tests/**/test_*.py')
           files=(tests/src/unit/test_{area_floor_tools_on_core,label_category_tools_on_core,backup_dashboards,dashboard_get_no_config_routing,dashboard_screenshot_no_config,tools_config_dashboards,set_dashboard_metadata,deep_search_helper_dashboard_partial,helper_classifier,ha_manage_blueprints_write,tools_addons_supervisor,backup_manager_file_handlers,tools_logs_fault_log,tools_utility_eval_template,backup_snapshot_waiting,core_reply_rules,hacs_own_repository,hacs_marketplace}.py)
           files+=(tests/src/unit/test_backup_snapshot*.py)
+          files+=(tests/src/unit/test_tools_camera.py)
           mapfile -t all < <(printf '%s\n' "${selected[@]}" "${files[@]}" | sort -u)
           uv run --no-sync pytest -n 3 --dist=loadfile --maxfail=0 -q --tb=short --log-level=ERROR --junitxml=/tmp/focused.xml "${all[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
