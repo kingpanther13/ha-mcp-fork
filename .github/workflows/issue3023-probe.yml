@@ -1,49 +1,70 @@
-name: Issue 3023 branch checks
+name: Issue 3023 candidate validation
 on:
   push:
     branches: [ci/3023-final-probes]
 permissions:
   contents: read
+env:
+  TESTCONTAINERS_RYUK_DISABLED: "true"
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
-    container: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    timeout-minutes: 55
     steps:
-      - run: apt-get update -qq && apt-get install -y -qq git jq g++ >/dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: fix/3023-finalize
+          ref: 074922eda0ead6d9053fdd017dc5edf1b40c0153
           submodules: true
           fetch-depth: 0
           persist-credentials: false
-      - run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git rev-parse HEAD
-          uv sync --locked --all-extras --dev
-      - name: Format changed Python files for review
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          version: "0.13.9"
+      - run: uv sync --locked --all-extras --dev --python 3.14
+      - name: Ruff and format
         shell: bash
         run: |
           mapfile -t files < <(git diff --name-only --diff-filter=ACMR 0ec3409f228bc2531ad192735db83bc21189acf3 HEAD -- '*.py')
+          result=0
+          uv run --no-sync ruff check . || result=1
+          uv run --no-sync ruff format --check "${files[@]}" || result=1
           uv run --no-sync ruff check --fix "${files[@]}" || true
           uv run --no-sync ruff format "${files[@]}"
-          git diff --binary > /tmp/issue3023-format.patch
+          git diff --binary >/tmp/issue3023-format.patch
           git restore --worktree -- .
-      - uses: actions/upload-artifact@v4
+          exit "$result"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
         with:
           name: issue3023-format
           path: /tmp/issue3023-format.patch
-      - name: Production guard
-        run: uv run --no-sync ast-grep scan
-      - name: Focused Core and Supervisor tests
+      - name: Production and test guards
+        if: success() || failure()
+        run: |
+          status=0
+          uv run --no-sync ast-grep scan || status=1
+          for script in module_size_ratchet duplicate_code_ratchet stand_in_lists_ratchet; do
+            uv run --no-sync python scripts/$script.py --base 0ec3409f228bc2531ad192735db83bc21189acf3 || status=1
+          done
+          uv run --no-sync python scripts/test_only_public_names.py || status=1
+          uv run --no-sync python scripts/private_test_access.py || status=1
+          exit "$status"
+      - name: Type checks
+        if: success() || failure()
+        run: |
+          status=0
+          uv run --no-sync mypy src/ custom_components/ homeassistant-addon/ scripts/ || status=1
+          uv run --no-sync python scripts/mypy_tests_exact.py || status=1
+          exit "$status"
+      - name: Real Core and Supervisor tests
         if: success() || failure()
         shell: bash
         run: |
           mapfile -t selected < <(git diff --name-only --diff-filter=ACMR 0ec3409f228bc2531ad192735db83bc21189acf3 HEAD -- 'tests/**/test_*.py')
-          files=(tests/src/unit/test_{area_floor_tools_on_core,label_category_tools_on_core,backup_dashboards,dashboard_get_no_config_routing,dashboard_screenshot_no_config,tools_config_dashboards,set_dashboard_metadata,deep_search_helper_dashboard_partial,helper_classifier,ha_manage_blueprints_write}.py)
+          files=(tests/src/unit/test_{area_floor_tools_on_core,label_category_tools_on_core,backup_dashboards,dashboard_get_no_config_routing,dashboard_screenshot_no_config,tools_config_dashboards,set_dashboard_metadata,deep_search_helper_dashboard_partial,helper_classifier,ha_manage_blueprints_write,tools_addons_supervisor,backup_manager_file_handlers,tools_logs_fault_log,tools_utility_eval_template}.py)
           mapfile -t all < <(printf '%s\n' "${selected[@]}" "${files[@]}" | sort -u)
-          uv run --no-sync pytest -n 3 --dist=loadfile -q --tb=short --log-level=ERROR --junitxml=/tmp/focused.xml "${all[@]}"
-      - uses: actions/upload-artifact@v4
+          uv run --no-sync pytest -n 3 --dist=loadfile --maxfail=0 -q --tb=short --log-level=ERROR --junitxml=/tmp/focused.xml "${all[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: focused-results
