@@ -15,7 +15,7 @@ jobs:
         with:
           submodules: true
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 4
       - run: uv sync --locked --all-extras --dev
       - name: Check real-Core rules, private access and the exception lists
         run: |
@@ -31,10 +31,17 @@ jobs:
           shopt -s nullglob
           cd tests/src/unit
           files=(test_*{blueprint,calendar,automation_error,utility,supervisor,tools_addons,trace_lookup,hacs_auto_refresh,backup_dashboard,screenshot,deep_search,dashboard_edit,haos_runtime_wait,transport_security,template_render,visibility_warning,expos,component_ws_reads,script_error,scene,core_reload,registry,websocket,ws_client,diagnostic,search_fallback,storage_mode,component_caps,component_fallback}*.py)
+          files+=(test_{core_contract,hacs_own_repository,hacs_marketplace,helper_classifier,label_category_tools_on_core,area_floor_tools_on_core,dashboard_get_no_config_routing,rest_client_admin_gate,rest_client_ws_transport_failure,app_discovery,yaml_find_handler,yaml_roundtrip,settings_ui_fs_custom_paths_auth,report_issue_environment,overview_system_info,tools_system_health_sections,e2e_component_services,helper_response_shape,redaction_app_option_keys,system_health_dialogs,ws_credential_guard,backup_snapshot,call_service_snapshot_guard,tools_integrations_remove,zone_tools_core_contract,remove_helpers_wait_warnings,get_operation_status_wait,component_info_report_contract,tools_dev_settings}.py)
           cd ../../..
           printf '%s\n' "${files[@]}" | sort -u | sed 's#^#tests/src/unit/#' > /tmp/selection
           wc -l /tmp/selection
-          uv run --no-sync python -m pytest -p issue3023_observer -n logical -q --tb=short @/tmp/selection
+          # Run the launcher module in a fresh interpreter apart from HA tests
+          # that deliberately unload/reimport modules.
+          grep -v '/test_warn_default_path_exposed.py$' /tmp/selection > /tmp/core-selection
+          uv run --no-sync python -m pytest -p issue3023_observer -n logical -q --tb=short @/tmp/core-selection
+      - name: Run all default-path launcher cases in isolation
+        if: success() || failure()
+        run: uv run --no-sync pytest -q tests/src/unit/test_warn_default_path_exposed.py
       - name: Unique WebSocket refusal codes observed through the real client
         if: always()
         run: sort -u /tmp/issue3023-*.tsv
