@@ -443,6 +443,29 @@ async def test_describe_without_the_component_says_why_it_cannot(
     sent.assert_not_called()
 
 
+async def test_describe_on_an_older_component_says_why_it_cannot(
+    recorder_mock: Recorder,
+    hass: HomeAssistant,
+    core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A component release whose contract bridge predates the recorder
+    commands refuses them; describe reports that instead of failing."""
+    from custom_components.ha_mcp_tools import core_contract, websocket_api
+
+    monkeypatch.setattr(
+        core_contract,
+        "COMMANDS",
+        ("energy/save_prefs", "history/history_during_period"),
+    )
+    websocket_api.async_register_commands(hass)
+
+    result = await _manage(core_client, "recorder/adjust_sum_statistics", describe=True)
+
+    assert result["result"]["status"] == "unavailable"
+    assert result["result"]["reason"] in result["warnings"]
+
+
 # --- Waiting for the recorder ------------------------------------------------
 
 

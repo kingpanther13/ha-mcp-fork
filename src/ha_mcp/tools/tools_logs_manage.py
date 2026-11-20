@@ -15,6 +15,7 @@ from .core_contract import command_payload, core_contract
 from .helpers import (
     core_error_message,
     exception_to_structured_error,
+    extract_tool_error_message,
     log_tool_usage,
     raise_tool_error,
     register_tool_methods,
@@ -108,7 +109,16 @@ class LogsManageTools:
 
     async def _describe(self, action: str, warnings: list[str]) -> dict[str, Any]:
         if "/" in action:
-            description = dict(await core_contract(self._client, action))
+            try:
+                description = dict(await core_contract(self._client, action))
+            except ToolError as err:
+                # An older component's bridge refuses commands added since.
+                description = {
+                    "status": "unavailable",
+                    "reason": f"The component could not describe {action}; "
+                    "update the HA-MCP component. Core still validates the "
+                    f"call itself. ({extract_tool_error_message(err)})",
+                }
             warnings.extend(description.pop("warnings", []))
             if description.get("status") == "unavailable":
                 warnings.append(description["reason"])
