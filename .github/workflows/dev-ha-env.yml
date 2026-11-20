@@ -202,6 +202,16 @@ jobs:
           echo "$CLOUDFLARED_SHA256  cloudflared" | sha256sum -c -
           chmod +x cloudflared
 
+      - name: Seed a recurring Local Calendar event with a synthetic provider UID
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          uid = "provider-" + "a"*300
+          s = "\r\n".join(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//fixture//EN", "BEGIN:VEVENT", "UID:"+uid,
+                "DTSTAMP:20261101T100000Z", "DTSTART:20261121T100000Z", "DTEND:20261121T101500Z",
+                "RRULE:FREQ=DAILY;COUNT=2", "SUMMARY:Before 3097", "END:VEVENT", "END:VCALENDAR", ""])
+          Path("src/tests/initial_test_state/.storage/local_calendar.local_e2e_test.ics").write_bytes(s.encode())
+          PY
       - name: Boot HA and open the tunnels
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -276,62 +286,53 @@ jobs:
           fi
           target() { python3 -c "import json,sys;print(json.load(open('targets.json'))[sys.argv[1]])" "$1"; }
           target mcp_path > mcp-path
-          # A tunnel that will not start leaves HA up: Keep running retries it.
-          start_tunnel ha "$(target ha)" || true
-          [ "$SERVER" = oauth ] || start_tunnel mcp "$(target mcp)" || true
-          publish_urls
-          rm targets.json
-          grep STATUS env.log | tail -3
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-      # A restarted tunnel has a new URL. Each Keep running step returns when
-      # the URLs change so the next step can upload them again; after three,
-      # new URLs are in the job log only.
-      - name: Keep running
-        id: keep-1
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-1.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-2
-        if: steps.keep-1.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-2.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-3
-        if: steps.keep-2.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-3.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-4
-        if: steps.keep-3.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running last
-      - name: Logs
-        if: always()
+
+      - name: Edit and remove distinct occurrences and read their rollback snapshots through MCP
+        working-directory: src
+        env:
+          IS_CONTROL: ${{ inputs.track_ref == 'tmp/3097-calendar-control-20261120' }}
         run: |
-          docker ps --format '{{.Image}} {{.Status}}' || true
-          tail -200 env.log || true
-          tail -100 server.log || true
+          uv run python - <<'PY'
+          import asyncio, json, os
+          from pathlib import Path
+          from ha_mcp._vendor.fastmcp import Client
+          async def probe():
+              targets = json.loads(Path("../targets.json").read_text())
+              async with Client(targets["mcp"] + targets["mcp_path"]) as client:
+                  async def call(name, **kwargs):
+                      reply = await client.call_tool_mcp(name, kwargs)
+                      data = reply.structuredContent or json.loads(reply.content[0].text)
+                      if reply.isError or data.get("success") is False:
+                          raise RuntimeError(f"{name} failed: {data}")
+                      return data
+                  cal = "calendar.local_e2e_test"
+                  async def events():
+                      return (await call("ha_config_get_calendar_events", entity_id=cal,
+                                 start="2026-11-21T00:00:00Z", end="2026-11-23T00:00:00Z"))["events"]
+                  rows = await events()
+                  assert len(rows) == 2 and all(len(row["uid"]) == 309 for row in rows), rows
+                  first, second = rows
+                  before = await call("ha_manage_backup", scope="edits", action="list", domain="calendar_event")
+                  assert before["data"]["enabled"] and before["data"]["count"] == 0, before
+                  await call("ha_config_set_calendar_event", entity_id=cal, uid=first["uid"],
+                      recurrence_id=first["recurrence_id"], start=first["start"]["dateTime"], end=first["end"]["dateTime"], summary="After 3097")
+                  await call("ha_config_remove_calendar_event", entity_id=cal, uid=second["uid"], recurrence_id=second["recurrence_id"])
+                  remaining = await events()
+                  assert len(remaining) == 1 and remaining[0]["summary"] == "After 3097", remaining
+                  names = set()
+                  for row in rows:
+                      identity = "::".join([cal,row["uid"],row["recurrence_id"]])
+                      found = (await call("ha_manage_backup", scope="edits", action="list", domain="calendar_event", entity_id=identity))["data"]["backups"]
+                      if os.environ["IS_CONTROL"] == "true":
+                          assert not found, found
+                          continue
+                      [record] = found
+                      name = record["name"]
+                      snap = (await call("ha_manage_backup", scope="edits", action="view", backup_name=name))["data"]
+                      assert snap["entity_id"] == identity and snap["config"]["uid"] == row["uid"]
+                      assert snap["config"]["recurrence_id"] == row["recurrence_id"] and snap["config"]["summary"] == "Before 3097"
+                      assert name not in names
+                      names.add(name)
+                  print(f"Verified the update and removal through MCP. UID length 309. Verified {len(names)} distinct pre-edit snapshots.")
+          asyncio.run(probe())
+          PY
