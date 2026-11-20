@@ -435,7 +435,7 @@ jobs:
         trap 'git restore --source=HEAD --worktree -- "${files[@]}"' EXIT
         git restore --source="$previous" --worktree -- "${files[@]}"
         code=0
-        uv run pytest "${cases[@]}" --tb=short --junitxml=/tmp/issue3099-before.xml || code=$?
+        uv run pytest "${cases[@]}" --maxfail=0 --tb=short --junitxml=/tmp/issue3099-before.xml || code=$?
         test "$code" = 1
         python - <<'PY'
         from xml.etree import ElementTree
