@@ -1,0 +1,59 @@
+schema_version: "1.1"
+name: area-target-over-entity-list
+description: >
+  The user states the maintenance requirement outright — they keep adding
+  sensors. An area or floor target follows membership; an enumerated entity list
+  does not.
+tags: [automations, triggers]
+
+execution:
+  prompt: >-
+    in Home Assistant, send a notification to notify.mobile_app_phone if any
+    motion sensor on the downstairs floor picks something up while we're away
+    (zone.home shows 0 people). I keep adding sensors down there so I don't want
+    to keep editing this
+  allowed_tools: [Read, Glob, Grep]
+  model: haiku
+  max_turns: 10
+  timeout_seconds: 300
+runs: 3
+
+graders:
+  - type: tool_used
+    name: skill-fired
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?home-assistant-best-practices"'
+    min: 1
+
+  # Free: the trigger's scope is a floor, area or label (a target key within
+  # eight lines of a `- trigger:` item, before the next item or top-level key,
+  # or a floor_areas()/area_entities()-style template), and no list item names
+  # a binary_sensor anywhere in the answer: an enumerated sensor list is the
+  # defect. Template versus purpose-specific trigger is the next grader's job.
+  # The lookbehind pins the lookahead to the start of the answer. The Sonnet
+  # judge failed answers with `floor_id: downstairs` under `target:`.
+  - type: regex
+    name: uses-area-or-floor-target
+    pattern: '(?<![\s\S])(?![\s\S]*^\s*-\s*binary_sensor\.)[\s\S]*(^\s*-\s*(?:trigger|platform):[^\n]*\n(?:(?![a-z_]+:|\s*-\s*(?:trigger|platform):)[^\n]*\n){0,8}?(?![a-z_]+:)[^\n]*\b(floor_id|area_id|label_id)"?\s*:\s*\S|\b(floor_areas|floor_entities|area_entities|label_entities)\s*\()'
+    flags: m
+    match: contains
+
+  # Free: the trigger type is one YAML line. The Sonnet judge failed answers
+  # whose config had exactly this line. HA still loads the pre-2024.10
+  # `platform:` key as `trigger:`. Only `detected` fires on motion.
+  - type: regex
+    name: uses-purpose-specific-trigger
+    pattern: '^\s*-\s*(?:trigger|platform):\s*(motion|occupancy)\.detected\b'
+    flags: m
+    match: contains
+
+  - type: llm
+    name: addresses-the-maintenance-ask
+    criteria: >-
+      The response explains that sensors added to the area later are picked up
+      without editing the automation — answering the user's stated reason for
+      asking.
+
+expected_outcome: >-
+  A purpose-specific motion trigger with an area/floor target, plus an explanation
+  that new sensors are picked up automatically.

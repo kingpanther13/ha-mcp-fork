@@ -1,0 +1,53 @@
+schema_version: "1.1"
+name: assist-shortcut-card
+description: >
+  The shortcut card (2026.5) exists for exactly this. Checks the agent does not
+  fall back to hand-wiring a button card with a tap_action.
+tags: [dashboards]
+
+execution:
+  # The version stands in for what an agent with access reads from the
+  # instance; the eval has none.
+  prompt: >-
+    add a card to my Home Assistant dashboard to quickly launch Assist. I'm on
+    2026.9.
+  allowed_tools: [Read, Glob, Grep]
+  model: haiku
+  max_turns: 10
+  timeout_seconds: 300
+runs: 3
+
+graders:
+  - type: tool_used
+    name: skill-fired
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?home-assistant-best-practices"'
+    min: 1
+
+  # A shortcut card whose tap_action is assist: `action` inside the braces
+  # of tap_action, or on a line indented under it. The scan stops at the next
+  # `type:` or code fence, so a later card or sample cannot satisfy it. A
+  # top-level or unindented `action: assist` leaves tap_action empty.
+  - type: regex
+    name: shortcut-card-taps-assist
+    pattern: '\btype"?\s*:\s*"?shortcut\b"?(?:(?!\btype"?\s*:|\x60\x60\x60)[\s\S]){0,300}?(?:\btap_action"?\s*:\s*\{[^{}]*?\baction"?\s*:\s*"?assist\b|^([ \t]*)(?:-[ \t]+)?tap_action:[ \t]*\n(?:\1[ \t]+[^\n]*\n)*?\1[ \t]+action:[ \t]*"?assist\b)'
+    flags: m
+    match: contains
+
+  - type: llm
+    name: recommends-shortcut-card
+    criteria: >-
+      The response recommends the `shortcut` card type for launching Assist from a
+      dashboard.
+
+  - type: llm
+    name: not-just-button-card
+    criteria: >-
+      The response does not exclusively recommend a button card with a `tap_action`.
+
+      PASS if only the shortcut card is given, or if a button card is offered as
+      an alternative alongside it. FAIL if the button card is the only option
+      given.
+
+expected_outcome: >-
+  Recommends the shortcut card type, not only a hand-wired button card.

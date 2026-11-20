@@ -1,0 +1,163 @@
+---
+name: home-assistant-best-practices
+description: >
+  Home Assistant (HA) best practices. Load first, before answering or exploring, on any HA request.
+
+  TRIGGER THIS SKILL WHEN:
+  - Creating or editing automations, scripts, scenes, dashboards, blueprints
+  - Choosing template sensors, helpers, or Jinja macros
+  - Restructuring triggers, conditions, or modes; button, remote, or event-entity automations
+  - Renaming entities or migrating device_id to entity_id
+  - Looking up card types or domain docs; writing AppDaemon apps
+  - Deleting or restoring a backup, or upgrading Core or the OS
+
+  SYMPTOMS:
+  - Jinja2 templates where native options exist
+  - device_id used instead of entity_id
+  - Entity IDs changed without checking consumers
+  - Wrong automation mode chosen
+  - Raw sensor or hard-coded value used where a helper belongs
+  - Direct .storage edits or automation lookups there; generated YAML
+  - User told to edit configuration.yaml for UI integrations
+  - Hardcoded Blueprint entities or skipped selectors
+  - Existing state changed with no recovery path
+  - Jinja copy-pasted between templates
+metadata:
+  version: "56"
+---
+
+# Home Assistant Best Practices
+
+**Core principle:** Use native Home Assistant constructs wherever possible. Templates bypass validation, fail silently at runtime, and make debugging opaque.
+
+**No tool reaches the HA API?** Do not stop to ask for access. If you can drive a browser on the HA web UI, make the change there, but first show the user the exact change and wait for their OK before you save: approving a click does not show them what it writes. Otherwise give the user the complete config to create in the UI (for an automation, the YAML for the editor's **Edit in YAML** mode; for a helper, its form fields), and name the entity IDs you assumed. Config that can only be written in YAML is edited with the File editor app (or in the config folder on a Container install): keep a copy of the file first, then check the configuration and run the matching reload in the **YAML** tab of **Tools** (named **Developer Tools** before 2026.8; restart if it isn't listed).
+
+**A feature marked with a release (2026.5+) depends on the instance's version.** Read it before choosing: `version` in `GET /api/config`, or **Settings → About** in the UI. On that release or later, use the feature and do not offer the older way as an equal choice. If you cannot read the version, assume a current release and name the older fallback with the version it needs.
+
+**Read the matching reference before you answer.** This page only summarizes the files in [Reference Files](#reference-files); the exact keys, fields and working examples are in them. Read every file whose row matches the task, and only those: do not load all reference files upfront.
+
+## Decision Workflow
+
+Follow this sequence when creating any automation:
+
+### 0. Gate: modifying existing config?
+
+If your change affects entity IDs, display names, or cross-component references — renaming entities or devices, replacing template sensors with helpers, converting device triggers, or restructuring automations — read [safe-refactoring](references/safe-refactoring.md) first. That reference covers impact analysis, device-sibling discovery, display-name overrides, and post-change verification. Complete its workflow before proceeding.
+
+Steps 1-5 below apply to new config or pattern evaluation.
+
+### 1. Check for a purpose-specific, then generic native, trigger/condition
+Since 2026.7 the default building blocks are purpose-specific triggers/conditions — `<domain>.<name>` keys (motion detected, battery low, door opened) with area/floor/label targets. Check for one that matches the intent first, then a generic native trigger/condition, and only then a template. Read [triggers-and-conditions #purpose-specific-triggers--conditions-default-since-20267](references/triggers-and-conditions.md#purpose-specific-triggers--conditions-default-since-20267) before writing the trigger.
+
+A purpose-specific trigger takes `entity_id` in its `target:` as well, so one known sensor is not a reason to fall back to `trigger: state`. Write the automation with the purpose-specific trigger; do not offer it only as an optional upgrade.
+
+**Common substitutions:**
+- `trigger: state` on a motion, occupancy or door `binary_sensor` → `motion.detected`/`motion.cleared`, `occupancy.detected`/`occupancy.cleared` or `door.opened`/`door.closed` with `target: {entity_id: ...}`, or `area_id` when the area is known
+- List of individual sensor entities in a trigger → one purpose-specific trigger with an area/floor/label `target:`
+- `delay` after `motion.detected` for "no motion anywhere for N minutes" → `motion.cleared` with `options: {behavior: all, for: ...}`, which fires once every targeted sensor has been clear that long (`unavailable` and `unknown` sensors are left out of the count)
+- `{{ states('x') | float > 25 }}` → `numeric_state` condition with `above: 25`
+- `{{ is_state('x', 'on') and is_state('y', 'on') }}` → `condition: and` with state conditions
+- `{{ now().hour >= 9 }}` → `condition: time` with `after: "09:00:00"`
+
+### 2. Check for built-in helper or Template Helper
+Read [helper-selection](references/helper-selection.md) before creating a template sensor.
+
+**Common substitutions:**
+- Sum/average multiple sensors → `min_max` integration
+- Binary any-on/all-on logic → `group` helper
+- Rate of change → `derivative` integration
+- Cross threshold detection → `threshold` integration
+- Consumption tracking → `utility_meter` helper
+
+**If no built-in helper fits, use a Template Helper — not YAML.**
+Create it via the HA config flow (programmatically or in the UI:
+Settings → Devices & Services → Helpers → Create Helper → Template). A flow-created helper
+is UI-editable; a `template:` YAML entry needs a `template.reload` and is not.
+
+Write `template:` YAML when the user asks for it, when neither path is available, or when
+the config needs a key the flow has no field for — trigger-based templates and `attributes:`
+are the common ones. Then use managed YAML editing ([yaml-only-integrations](references/yaml-only-integrations.md)), not a hand-edit.
+
+### 3. Select correct automation mode
+Default `single` mode is often wrong. See [automation-actions #automation-modes](references/automation-actions.md#automation-modes).
+
+| Scenario | Mode |
+|----------|------|
+| Motion light with timeout | `restart` |
+| Sequential processing (door locks) | `queued` |
+| Independent per-entity actions | `parallel` |
+| One-shot notifications | `single` |
+
+### 4. Use entity_id over device_id
+`device_id` breaks when devices are re-added. See [device-control](references/device-control.md).
+
+**Exception:** Zigbee2MQTT autodiscovered device triggers are acceptable.
+
+### 5. For buttons and remotes
+- **Any integration exposing an `event.*` entity:** Use `event.received` targeting that entity (see the anti-pattern row below)
+- **ZHA:** `event.received` if the device has an `event.*` entity (2026.10+; none do in 2026.10), otherwise an `event` trigger with `device_ieee` (persistent)
+- **Z2M:** Event entities are experimental and off by default — use a `device` trigger (autodiscovered) or `mqtt` trigger
+
+Read [device-control #buttonremote-patterns](references/device-control.md#buttonremote-patterns) before writing the trigger.
+
+---
+
+## Critical Anti-Patterns
+
+| Anti-pattern | Use instead | Why | Reference |
+|--------------|-------------|-----|-----------|
+| `condition: template` with `float > 25` | `condition: numeric_state` | Keys and threshold are checked at load; an `unavailable` or `unknown` state is false, where `float` with no default raises an error | [triggers-and-conditions #native-conditions](references/triggers-and-conditions.md#native-conditions) |
+| `wait_for_trigger` with a state trigger for a condition that may already hold | `wait_template` | A state trigger fires only on a transition, so the wait lasts until the entity leaves the state and re-enters it, or forever without a `timeout` (see [safe-refactoring #trigger-restructuring](references/safe-refactoring.md#trigger-restructuring)) | [automation-actions #wait-actions](references/automation-actions.md#wait-actions) |
+| `device_id` in triggers | `entity_id` (or `device_ieee` for ZHA) | device_id breaks on re-add | [device-control #entity-id-vs-device-id](references/device-control.md#entity-id-vs-device-id) |
+| `event` trigger on an integration's bus event (e.g. `hue_event`) for a button that has an `event.*` entity | `event.received` targeting that entity, with values read from its `event_types` attribute | The entity can be renamed and survives a re-add when the integration keeps a stable unique ID; bus event data differs per integration | [device-control #buttonremote-patterns](references/device-control.md#buttonremote-patterns) |
+| `numeric_state` trigger driving a costly action, unguarded | Condition rejecting `unavailable`/`unknown` in `trigger.from_state` | A restart or blip re-arms the trigger, so an unchanged value fires with no crossing (the guard also drops real crossings) | [triggers-and-conditions #unavailable-arms-a-numeric-state-trigger](references/triggers-and-conditions.md#unavailable-arms-a-numeric-state-trigger) |
+| `mode: single` for motion lights | `mode: restart` | Re-triggers must reset the timer | [automation-actions #automation-modes](references/automation-actions.md#automation-modes) |
+| `enabled: false` as a top-level key in `automations.yaml` | `automation.turn_off` (temporary) or entity registry disable (permanent) | Not a valid top-level key — rejected during schema validation; automation loads as `unavailable` | [automation-actions #disabling-automations](references/automation-actions.md#disabling-automations) |
+| Template sensor for sum/mean | `min_max` helper | Declarative, handles unavailable states | [helper-selection #numeric-aggregation](references/helper-selection.md#numeric-aggregation) |
+| Template binary sensor with threshold | `threshold` helper | Built-in hysteresis support | [helper-selection #threshold](references/helper-selection.md#threshold) |
+| Renaming entity IDs without impact analysis | Follow [safe-refactoring](references/safe-refactoring.md) workflow | Renames break dashboards, scripts, scenes, Config-Entry data, and storage dashboards silently | [safe-refactoring #entity-renames](references/safe-refactoring.md#entity-renames) |
+| Renaming members of Config-Entry-based groups (UI groups) without updating membership | Update group membership via Options Flow after the registry rename | The entity registry rename does not update `options.entities` in the Config Entry — group silently breaks | [safe-refactoring #config-entry-groups](references/safe-refactoring.md#config-entry-groups) |
+| Renaming entities used by Min/Max helpers or custom Config-Entry integrations (e.g. Better Thermostat) without checking their Config-Entry data | Scan the config entries' `data`+`options`; re-select the renamed entity in the Min/Max Options Flow. An integration that keeps it in `data` (Better Thermostat) has no API fix: tell the user, offer a full backup, and before the rename wait for their answer on the backup and their go-ahead for the rename | They store entity_ids in the Config Entry, and a registry rename does not update them; single-source helpers such as Threshold (since 2025.6) and Generic Thermostat update themselves | [safe-refactoring #config-entry-data--blind-spots-for-entity-registry-renames](references/safe-refactoring.md#config-entry-data--blind-spots-for-entity-registry-renames) |
+| `template:` sensor/binary sensor in YAML | Template Helper via the config flow | A flow helper reloads in place and stays UI-editable; a `template:` entry needs a config reload and does not. Exceptions are real — trigger-based templates and `attributes:` have no flow field | [helper-selection #template-helpers](references/helper-selection.md#template-helpers) |
+| Editing `.storage/` files or other HA internal state directly | Use the HA REST/WebSocket API to manage state and config entries | `.storage/` files are HA's internal state database; direct edits bypass validation, risk corruption, and can be silently overwritten by HA | — |
+| Looking for automation config in `.storage/` | Read and write automations through the HA config API. UI-created ones are saved to `automations.yaml` | No `.storage/` file holds automation config, in any config mode. `.storage/` holds only the automations' entity registry entries | — |
+| Writing raw YAML to `configuration.yaml` by hand for YAML-only integrations | Use managed YAML config editing with backup and validation | Unmanaged writes risk syntax errors, have no backup, and skip `check_config` — managed editing provides all three | [yaml-only-integrations](references/yaml-only-integrations.md) |
+| Generating YAML snippets for automations/scripts/scenes | Use the HA config API to create automations/scripts programmatically; with no API access, give the config for the UI editor instead | API calls validate config, avoid syntax errors, and don't require manual file edits or restarts | [triggers-and-conditions](references/triggers-and-conditions.md), [automation-actions](references/automation-actions.md), [examples.yaml](references/examples.yaml) |
+| Telling user to edit `configuration.yaml` for integrations | Direct user to Settings > Devices & Services in the HA UI | Most integrations are UI-configured; YAML integration config is rare and integration-specific | — |
+| Referring to HA "add-ons" | Use the term "Apps" | HA renamed add-ons to Apps in 2026.2 — "Apps are standalone applications that run alongside Home Assistant" | — |
+| `vacuum.send_command` with vendor room IDs | `vacuum.clean_area` with HA area IDs in `cleaning_area_id` (if segments are mapped) | Uses native HA areas, works across integrations — but requires segment-to-area mapping in entity settings first | [device-control #vacuum-control](references/device-control.md#vacuum-control) |
+| Using `color_temp` (mireds) in light actions | Use `color_temp_kelvin` with the value converted: Kelvin = 1,000,000 ÷ mireds (500 mireds = 2000 K) | The `color_temp` parameter was removed in 2026.3; only Kelvin is supported, and HA accepts any positive number there, so a mireds value copied across is read as Kelvin (500 mireds becomes 500 K) | [device-control #lights](references/device-control.md#lights) |
+| Saving states or attributes in `variables:`, or hard-coding values, to put devices back after a temporary change | `scene.create` with `snapshot_entities` before the change, then `scene.turn_on` on that scene | The snapshot keeps each entity's own state, including a light that was off, in one call; variables need a template per attribute and a restore step per entity | [scenes #snapshot--restore-scenecreate](references/scenes.md#snapshot--restore-scenecreate) |
+| Person/Device Tracker `entered_home`/`left_home` device triggers or `is_home`/`is_not_home` conditions | `state` trigger `to: home` / `to: not_home`, or `state` condition | These were removed in 2026.5 — state triggers and conditions are the correct replacements | [triggers-and-conditions #presence-and-person-triggers-and-conditions-removed-in-20265](references/triggers-and-conditions.md#presence-and-person-triggers-and-conditions-removed-in-20265) |
+| Entity list in a trigger where an area/floor/label target fits | Purpose-specific trigger with `target: {area_id: ...}` | Automation follows area membership as devices change — no stale entity lists | [triggers-and-conditions #purpose-specific-triggers--conditions-default-since-20267](references/triggers-and-conditions.md#purpose-specific-triggers--conditions-default-since-20267) |
+| Old purpose-specific keys (`battery.low`, `vacuum.docked`, `timer.time_remaining`, ...) or trigger `behavior: any`/`last` | Renamed 2026.7 keys (`battery.became_low`, ...) and `behavior: each`/`all` (renamed 2026.6) | Old keys no longer load; old behavior values raise a repair issue and face removal | [triggers-and-conditions #purpose-specific-triggers--conditions-default-since-20267](references/triggers-and-conditions.md#purpose-specific-triggers--conditions-default-since-20267) |
+| AppDaemon: callbacks in `__init__`, uncancelled `run_in` timers, state in instance variables, hardcoded entity IDs | Register in `initialize()`, cancel before rescheduling, persist via `input_*` helpers, pass IDs through `self.args` | Each fails silently, resets on reload, or blocks reuse | [appdaemon #appdaemon-specific-anti-patterns](references/appdaemon.md#appdaemon-specific-anti-patterns) |
+| Blueprints: hardcoded entities, free text where a selector belongs, `!input` inside a template, missing `source_url` | Typed `!input` selectors; bind an input to `variables:` before templating it; always set `source_url` | Hardcoding defeats reuse, text lets typos through, and `!input` is a YAML tag rather than a template value | [blueprint-guide #common-pitfalls](references/blueprint-guide.md#common-pitfalls) |
+| Backups: full restore to undo one object edit, no backup offered before an irreversible operation (registry deletion, integration removal, Core/OS upgrade), calling an action "reversible" without naming its inverse | Roll the single object back; offer the user a backup *before* and wait for their answer; name the exact inverse or treat it as irreversible | A full restore reverts every unrelated change since and restarts HA; a backup taken afterward captures the damage | [backups #when-a-full-backup-earns-its-cost](references/backups.md#when-a-full-backup-earns-its-cost) |
+| Restoring a backup, deleting a backup, or upgrading Core or the OS without explicit user confirmation | Ask, name the concrete effect, and wait for an answer — every time, backup or not | A full restore discards everything since the archive for all restored parts and restarts HA; a Supervisor partial restore overwrites only the selected archive parts; deletion destroys a recovery point; a Core/OS upgrade is high-impact and a pre-upgrade backup is a recovery path | [backups](references/backups.md) |
+| The same non-trivial Jinja expression repeated across templates | Once a native trigger/condition and a built-in helper are ruled out, define it once as a macro in `config/custom_templates/*.jinja` and import it | One definition to fix when the rule changes, instead of copies that drift apart | [template-guidelines #reusable-macros](references/template-guidelines.md#reusable-macros) |
+| `trigger`, `this`, `value_json`, or a `{% set %}` variable used inside an imported macro | Pass it to the macro as an argument | An import does not carry the caller's context — the variable is undefined inside the macro, so it renders empty and any attribute access on it errors (HA's own functions like `states` are globals and do work) | [template-guidelines #imports-do-not-carry-the-callers-context](references/template-guidelines.md#imports-do-not-carry-the-callers-context) |
+
+---
+
+## Reference Files
+
+Read each file whose row matches the task before you answer:
+
+| File | When to read |
+|------|--------------|
+| [safe-refactoring](references/safe-refactoring.md) | Renaming entities or their display names, replacing helpers, restructuring automations, or any modification to existing config |
+| [triggers-and-conditions](references/triggers-and-conditions.md) | Writing an automation's triggers or conditions: purpose-specific and native triggers/conditions, `for:` durations, trigger IDs |
+| [automation-actions](references/automation-actions.md) | Writing the actions of an automation or script, or choosing its mode: waits, variables, capturing action responses, `continue_on_error`, admin-only actions (`Unauthorized`) in scripts, stopping a sequence, repeat, if/then vs choose, parallel; documenting/annotating steps; disabling automations; [measuring elapsed time via `last_triggered`](references/automation-actions.md#measuring-elapsed-time-across-automations); [Mobile App `notify` action vs entity](references/automation-actions.md#notify-entity-vs-action-namespace) — `action not found` when an entity id is used as an action; [trace retention](references/automation-actions.md#trace-retention) — a frequent trigger pushes the run to debug out of the 5 stored traces |
+| [helper-selection](references/helper-selection.md) | Deciding whether to use a built-in helper vs template sensor — aggregation, rate of change, thresholds, time-in-state, counting/timing, scheduling, grouping, probabilistic inference, smoothing, climate, domain conversion, decision matrix |
+| [template-guidelines](references/template-guidelines.md) | Confirming templates ARE appropriate for a use case; sharing Jinja logic between templates with `custom_templates` macros |
+| [yaml-only-integrations](references/yaml-only-integrations.md) | Creating or editing YAML-only integrations that have no config flow (e.g. `command_line`, platform-based `mqtt`, `rest`) |
+| [device-control](references/device-control.md) | Writing actions, button/remote automations, or using target: |
+| [scenes](references/scenes.md) | Authoring or activating scenes; snapshot/restore patterns, including putting devices back the way they were after a temporary change; snapshot-vs-script distinction |
+| [dashboard-guide](references/dashboard-guide.md) | Designing or modifying Lovelace dashboards — layout, view types, strategies, sections, cards, badges, CSS styling, HACS / Marketplace |
+| [dashboard-cards](references/dashboard-cards.md) | Looking up built-in card types (core, energy, legacy) or where to read a card's fields; [entities-card attribute rows](references/dashboard-cards.md#entities-card-attribute-rows-need-type-attribute) — a row with `attribute:` but no `type: attribute` shows the entity state, not the attribute |
+| [domain-docs](references/domain-docs.md) | Looking up integration/domain documentation, or the dedicated doc page for a specific trigger, condition, or action |
+| [examples.yaml](references/examples.yaml) | Need compound examples combining multiple best practices |
+| [appdaemon](references/appdaemon.md) | AppDaemon apps: when to use vs. native HA, app structure, actions, scheduling, error handling, safe refactoring impact |
+| [blueprint-guide](references/blueprint-guide.md) | Authoring reusable blueprints: metadata & `source_url`, inputs & selectors, `target` vs `entity`, defaults, input sections, `!input` templating, versioning |
+| [backups](references/backups.md) | Deciding whether to offer a backup before an operation; choosing between a full restore, a partial restore, and rolling one object back; what an archive actually contains; encryption keys and the emergency kit; restore verification; what HA does and does not protect when deleting a backup; whether a git config repo replaces a full backup |

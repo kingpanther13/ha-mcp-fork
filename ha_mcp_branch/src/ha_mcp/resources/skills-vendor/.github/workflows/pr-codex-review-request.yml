@@ -1,0 +1,133 @@
+name: Admit Codex PR Review
+
+# Admission and delivery are separate on purpose: every run of the delivery
+# workflow represents exactly one Codex request, giving this workflow a durable,
+# repository-wide counter for the rolling hourly limit.
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+# Workflow level, where `queue` is documented: admission runs one at a time,
+# and up to 100 wait in order instead of replacing each other.
+concurrency:
+  group: codex-review-global-admission
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  request-codex-review:
+    name: Validate and dispatch review
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        (github.event_name == 'pull_request_target' &&
+          !contains(
+            fromJSON('["dependabot[bot]", "github-actions[bot]"]'),
+            github.event.pull_request.user.login
+          )) ||
+        (github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          !contains(
+            fromJSON('["dependabot[bot]", "github-actions[bot]"]'),
+            github.event.issue.user.login
+          ) &&
+          github.event.comment.body == '/review' &&
+          contains(
+            fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+            github.event.comment.author_association
+          ))
+      }}
+    steps:
+      - name: Validate and dispatch Codex review request
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issueNumber = context.eventName === 'pull_request_target'
+              ? context.payload.pull_request.number
+              : context.payload.issue.number;
+            const pullRequest = context.payload.pull_request ?? (await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            })).data;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              },
+            );
+            const headSha = pullRequest.head.sha;
+            const alreadyReviewed = comments.some(comment =>
+              comment.user?.login === 'chatgpt-codex-connector[bot]' &&
+              comment.body?.includes(headSha)
+            );
+
+            if (alreadyReviewed) {
+              core.info(`Codex already reviewed head commit ${headSha}; skipping duplicate request.`);
+              return;
+            }
+
+            // The delivery run's name carries the PR and head commit, so a request
+            // for the same commit is found even before Codex has answered it.
+            const deliveryWorkflow = 'pr-codex-review-delivery.yml';
+            const runTitle = `Send Codex PR review for #${issueNumber} at ${headSha}`;
+            const listRuns = async () => (await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: deliveryWorkflow,
+              per_page: 100,
+            })).data.workflow_runs;
+            const oneHourAgo = Date.now() - 60 * 60 * 1000;
+            const runsBefore = await listRuns();
+            const recentRuns = runsBefore.filter(
+              run => Date.parse(run.created_at) >= oneHourAgo
+            );
+
+            // A failed or cancelled run posted nothing, so it does not block a retry.
+            const requested = run => run.display_title === runTitle &&
+              (run.status !== 'completed' || run.conclusion === 'success');
+            if (recentRuns.some(requested)) {
+              core.info(`A Codex review of ${headSha} was already requested; skipping duplicate request.`);
+              return;
+            }
+
+            if (recentRuns.length >= 20) {
+              core.warning('Global Codex review limit of 20 requests per hour reached; skipping request.');
+              return;
+            }
+
+            const idsBefore = new Set(runsBefore.map(run => run.id));
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: deliveryWorkflow,
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                issue_number: String(issueNumber),
+                head_sha: headSha,
+              },
+            });
+
+            // Admission runs one at a time; wait until the new run is listed, so the
+            // next admission counts it. A run listed before the dispatch is not the new one.
+            for (let attempt = 0; attempt < 12; attempt++) {
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              if ((await listRuns()).some(run => !idsBefore.has(run.id) && run.display_title === runTitle)) {
+                return;
+              }
+            }
+            core.warning('The dispatched review run is not listed after 60 seconds; a repeated request may not be detected.');
