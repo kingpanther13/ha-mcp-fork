@@ -755,11 +755,12 @@ jobs:
       - name: Show that both digest selectors catch the historical listing regression
         run: |
           git restore --source=HEAD -- src/ha_mcp/backup_manager.py
-          node=tests/src/unit/test_backup_filename_identity.py::test_each_digest_lists_all_filename_generations
-          uv run pytest -q "$node"
+          module=tests/src/unit/test_backup_filename_identity.py
+          nodes=("$module::test_each_digest_lists_both_post_digest_filename_generations" "$module::test_bounded_digest_also_finds_the_original_filename_of_a_safe_id")
+          uv run pytest -q "${nodes[@]}"
           git restore --source=f976f261b44bae40e839e55882b248276b2dabf7 -- src/ha_mcp/backup_manager.py src/ha_mcp/backup_snapshot_identity.py
           status=0
-          uv run pytest -q "$node" > "$RUNNER_TEMP/digest-control.log" 2>&1 || status=$?
+          uv run pytest -q "${nodes[@]}" > "$RUNNER_TEMP/digest-control.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/digest-control.log"
           test "$status" = 1
           grep -F '2 failed' "$RUNNER_TEMP/digest-control.log"
