@@ -421,10 +421,12 @@ jobs:
         git fetch --no-tags --depth=1 origin "$previous"
         files=(
           custom_components/ha_mcp_tools/settings_transfer.py
+          src/ha_mcp/utils/config_write_lock.py
           src/ha_mcp/settings_transfer.py src/ha_mcp/settings_ui/_persistence.py
           src/ha_mcp/settings_ui/settings_js/11_settings_transfer.js src/ha_mcp/settings_ui/locales/en.json
         )
         cases=(
+          tests/src/unit/test_config_write_lock.py::TestConfigWriteGuard::test_warm_worker_reload_uses_the_new_event_loop
           tests/src/unit/test_settings_transfer_component.py::test_import_rejects_a_transitioning_tools_entry_before_writing
           tests/src/unit/test_settings_transfer_component.py::test_import_requires_enabled_tools_to_be_loaded
           tests/src/unit/test_settings_transfer_component.py::test_original_import_error_survives_undo_failure
@@ -440,7 +442,7 @@ jobs:
         python - <<'PY'
         from xml.etree import ElementTree
         cases = ElementTree.parse("/tmp/issue3099-before.xml").findall(".//testcase")
-        assert len(cases) == 12 and all(case.find("failure") is not None for case in cases)
+        assert len(cases) == 13 and all(case.find("failure") is not None for case in cases)
         PY
         git restore --source=HEAD --worktree -- "${files[@]}"
         uv run pytest "${cases[@]}" --tb=short
