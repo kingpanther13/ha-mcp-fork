@@ -416,23 +416,15 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        previous=3d597b2b2fb23df4e7edad854281608b75a5bcde
+        previous=2604f0653e01fe4f74fe326e317ecb03b4e25836
         git config --global --add safe.directory "$(pwd -P)"
         git fetch --no-tags --depth=1 origin "$previous"
         files=(
           custom_components/ha_mcp_tools/settings_transfer.py
-          src/ha_mcp/utils/config_write_lock.py
-          src/ha_mcp/settings_transfer.py src/ha_mcp/settings_ui/_persistence.py
-          src/ha_mcp/settings_ui/settings_js/11_settings_transfer.js src/ha_mcp/settings_ui/locales/en.json
+          src/ha_mcp/settings_transfer.py
         )
         cases=(
-          tests/src/unit/test_config_write_lock.py::TestConfigWriteGuard::test_warm_worker_reload_uses_the_new_event_loop
-          tests/src/unit/test_settings_transfer_component.py::test_import_rejects_a_transitioning_tools_entry_before_writing
-          tests/src/unit/test_settings_transfer_component.py::test_import_requires_enabled_tools_to_be_loaded
-          tests/src/unit/test_settings_transfer_component.py::test_original_import_error_survives_undo_failure
-          tests/src/unit/test_settings_transfer.py::test_serialization_failure_restores_previous_settings_and_removes_temp_file
-          tests/src/unit/test_settings_ui_transfer_js_behavior.py::test_storage_error_identifies_the_affected_setting
-          tests/src/unit/test_settings_ui_transfer_js_behavior.py::test_import_errors_explain_next_action
+          tests/src/unit/test_ui_panel.py::TestProxyForwarding::test_failed_server_document_undo_reports_incomplete_and_continues
         )
         trap 'git restore --source=HEAD --worktree -- "${files[@]}"' EXIT
         git restore --source="$previous" --worktree -- "${files[@]}"
@@ -442,7 +434,7 @@ jobs:
         python - <<'PY'
         from xml.etree import ElementTree
         cases = ElementTree.parse("/tmp/issue3099-before.xml").findall(".//testcase")
-        assert len(cases) == 13 and all(case.find("failure") is not None for case in cases)
+        assert len(cases) == 3 and all(case.find("failure") is not None for case in cases)
         PY
         git restore --source=HEAD --worktree -- "${files[@]}"
         uv run pytest "${cases[@]}" --tb=short
