@@ -417,6 +417,7 @@ jobs:
       run: |
         set -euo pipefail
         previous=3d597b2b2fb23df4e7edad854281608b75a5bcde
+        git config --global --add safe.directory "$(pwd -P)"
         git fetch --no-tags --depth=1 origin "$previous"
         files=(
           custom_components/ha_mcp_tools/settings_transfer.py
