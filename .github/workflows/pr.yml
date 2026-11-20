@@ -411,6 +411,39 @@ jobs:
       # download cache; node_modules is intentionally recreated by npm ci.
       run: cd tests/js && corepack npm ci
 
+    - name: Verify regression tests on the previous and corrected implementations
+      if: matrix.shard == '1/2'
+      shell: bash
+      run: |
+        set -euo pipefail
+        previous=3d597b2b2fb23df4e7edad854281608b75a5bcde
+        git fetch --no-tags --depth=1 origin "$previous"
+        files=(
+          custom_components/ha_mcp_tools/settings_transfer.py
+          src/ha_mcp/settings_transfer.py src/ha_mcp/settings_ui/_persistence.py
+          src/ha_mcp/settings_ui/settings_js/11_settings_transfer.js src/ha_mcp/settings_ui/locales/en.json
+        )
+        cases=(
+          tests/src/unit/test_settings_transfer_component.py::test_import_rejects_a_transitioning_tools_entry_before_writing
+          tests/src/unit/test_settings_transfer_component.py::test_import_requires_enabled_tools_to_be_loaded
+          tests/src/unit/test_settings_transfer_component.py::test_original_import_error_survives_undo_failure
+          tests/src/unit/test_settings_transfer.py::test_serialization_failure_restores_previous_settings_and_removes_temp_file
+          tests/src/unit/test_settings_ui_transfer_js_behavior.py::test_storage_error_identifies_the_affected_setting
+          tests/src/unit/test_settings_ui_transfer_js_behavior.py::test_import_errors_explain_next_action
+        )
+        trap 'git restore --source=HEAD --worktree -- "${files[@]}"' EXIT
+        git restore --source="$previous" --worktree -- "${files[@]}"
+        code=0
+        uv run pytest "${cases[@]}" --tb=short --junitxml=/tmp/issue3099-before.xml || code=$?
+        test "$code" = 1
+        python - <<'PY'
+        from xml.etree import ElementTree
+        cases = ElementTree.parse("/tmp/issue3099-before.xml").findall(".//testcase")
+        assert len(cases) == 12 and all(case.find("failure") is not None for case in cases)
+        PY
+        git restore --source=HEAD --worktree -- "${files[@]}"
+        uv run pytest "${cases[@]}" --tb=short
+
     - name: Run unit tests
       # xdist's `auto` counts physical cores (2 on the hosted runner);
       # `logical` uses all 4 CPUs.
