@@ -11,8 +11,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          ref: ac888b050cd966a67ae97f6180a2c6c7cc1513c8
           submodules: true
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
           version: '0.13.7'
+      - run: uv run --group dev ruff format --diff src/ha_mcp/tools/tools_camera.py tests/src/unit/test_tools_camera{,_image_entities}.py tests/src/e2e/tools/test_camera.py > "$RUNNER_TEMP/format.patch" || [ "$?" -eq 1 ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: format-patch
+          path: ${{ runner.temp }}/format.patch
       - run: uv run --group dev pytest tests/src/unit/test_tools_camera{,_image_entities}.py -q --tb=short
