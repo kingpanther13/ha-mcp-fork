@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 4adeeaaa681e132be9428d071644de239b924f54
+          ref: b71989707f29a17479ba300437d7992c5dd5cc7b
           persist-credentials: false
       - name: Component version and server pin match the server version
         run: |
@@ -66,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 4adeeaaa681e132be9428d071644de239b924f54
+          ref: b71989707f29a17479ba300437d7992c5dd5cc7b
           persist-credentials: false
       - name: Classify changed files
         id: filter
@@ -137,7 +137,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: 4adeeaaa681e132be9428d071644de239b924f54
+        ref: b71989707f29a17479ba300437d7992c5dd5cc7b
         persist-credentials: false
 
     - name: Docs Size Check
@@ -331,7 +331,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: 4adeeaaa681e132be9428d071644de239b924f54
+        ref: b71989707f29a17479ba300437d7992c5dd5cc7b
         persist-credentials: false
 
     - name: Setup Node
@@ -402,7 +402,7 @@ jobs:
 
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: 4adeeaaa681e132be9428d071644de239b924f54
+        ref: b71989707f29a17479ba300437d7992c5dd5cc7b
         persist-credentials: false
         submodules: true
 
@@ -536,7 +536,7 @@ jobs:
 
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: 4adeeaaa681e132be9428d071644de239b924f54
+        ref: b71989707f29a17479ba300437d7992c5dd5cc7b
         persist-credentials: false
         submodules: true
 
@@ -625,7 +625,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: 4adeeaaa681e132be9428d071644de239b924f54
+        ref: b71989707f29a17479ba300437d7992c5dd5cc7b
         persist-credentials: false
         submodules: true
 
