@@ -1,0 +1,141 @@
+name: Gate - PR unit job (fork only)
+permissions:
+  contents: read
+on:
+  push:
+    branches: ["gate/**"]
+
+env:
+  PYTHON_VERSION: "3.14"
+  UV_CACHE_DIR: /tmp/.uv-cache
+  # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
+  HA_IMAGE_GHCR: "ghcr.io/home-assistant/home-assistant:2026.11.2"
+  # Disable Testcontainers' Ryuk reaper: it has been reported to leave
+  # zombie containers on GHA runners (see #366, Ilya0527 2026-05-18).
+  # The E2E fixture in tests/src/e2e/conftest.py relies instead on the
+  # enclosing ``with container:`` context manager — Python guarantees
+  # its ``__exit__`` fires on both normal and exception flows, so the
+  # Ryuk safety net is not needed for deterministic cleanup. Refs #366.
+  TESTCONTAINERS_RYUK_DISABLED: "true"
+
+jobs:
+  unit-tests:
+    name: Unit Tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each runner takes its share of the unit suite, chosen by test id
+        # (tests/src/unit/_shards.py). The required check is the gate below.
+        shard: ["1/2", "2/2"]
+    container:
+      # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
+      image: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    # Bumped 5 → 8 for the issue #2027 regression tests, which spawn real
+    # subprocesses — including a full stdio server session — costing tens
+    # of seconds on a slow runner. 8 → 10 after #2360: pytest alone is ~3.6
+    # min and the `npm ci` step swung from 1s to 4 min during an npm registry
+    # incident, so 8 left no room for one slow install. 10 → 12 for #3081:
+    # the unit tests run more of Home Assistant Core's own integrations.
+    timeout-minutes: 12
+
+    steps:
+    - name: Restore apt download cache
+      # Cache apt downloads used by this containerized job.
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-gpp-v1
+
+    - name: Install git, jq and g++
+      run: |
+        # Keep cached .debs after install so the cache stays warm for
+        # future runs (default Debian behaviour deletes them).
+        rm -f /etc/apt/apt.conf.d/docker-clean
+        echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+          > /etc/apt/apt.conf.d/keep-downloaded
+        apt-get update -qq
+        # git and jq for the workflow contract tests; g++ builds the cloud
+        # integration's pymicro-vad and pyspeex-noise, which ship no 3.14 wheel.
+        apt-get install -y -qq git jq g++ >/dev/null
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+        submodules: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        # Corepack is bundled only through Node 24; `corepack npm ci` enforces packageManager.
+        node-version: "24"
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+
+    - name: Install Python dependencies
+      run: uv sync --all-extras --dev
+
+    - name: Install JS test dependencies (jsdom, esbuild)
+      # `npm ci` enforces package-lock.json — same reproducibility
+      # discipline as uv.lock on the Python side. setup-node caches npm's
+      # download cache; node_modules is intentionally recreated by npm ci.
+      run: cd tests/js && corepack npm ci
+
+    - name: Run unit tests
+      # xdist's `auto` counts physical cores (2 on the hosted runner);
+      # `logical` uses all 4 CPUs.
+      env:
+        UNIT_TEST_SHARD: ${{ matrix.shard }}
+      run: uv run pytest tests/src/unit/ -n logical --tb=short -v
+
+    - name: Run BAT runner tests
+      if: matrix.shard == '1/2'
+      # The tests of the UAT/BAT tooling need no Docker and no model.
+      # test_stories.py runs the stories themselves against a live Home
+      # Assistant and an AI agent, so it stays out.
+      run: >-
+        uv run pytest tests/uat/
+        --ignore=tests/uat/stories/test_stories.py
+        -n logical --tb=short -v
+
+    - name: Check unit tests left no local state
+      # The runner's home starts without ~/.ha-mcp. A unit test that writes
+      # there or leaves a settings sidecar running bypassed the isolation in
+      # tests/src/unit/conftest.py and would do the same on a developer machine.
+      # tests/testing_config is Core's shared config directory, which the
+      # conftest's hass_config_dir replaces with a temporary one.
+      run: |
+        if [ -e ~/.ha-mcp ]; then
+          find ~/.ha-mcp
+          echo "::error::Unit tests wrote to ~/.ha-mcp"
+          exit 1
+        fi
+        if [ -e tests/testing_config ]; then
+          find tests/testing_config
+          echo "::error::Unit tests wrote to Core's shared tests/testing_config"
+          exit 1
+        fi
+        # procps (pgrep) is not in the slim image; read /proc directly.
+        if grep -ls '[s]tdio_settings_sidecar' /proc/[0-9]*/cmdline; then
+          echo "::error::Unit tests left a settings sidecar running"
+          exit 1
+        fi
+
+    - name: Run add-on structure tests
+      if: matrix.shard == '1/2'
+      # tests/addon/ validates add-on packaging / config.yaml structure (e.g.
+      # the backup-filename-safe name guard, #1707) — previously these ran
+      # nowhere in CI. Excludes test_addon_startup.py, which spins up real
+      # Docker containers (testcontainers) this lint/unit runner doesn't have.
+      run: >-
+        uv run pytest tests/addon/ -n logical --tb=short -v
+        --ignore=tests/addon/test_addon_startup.py
+
+    - name: Check app tests left no local state
+      if: matrix.shard == '1/2'
+      run: |
+        if [ -e tests/testing_config ]; then
+          find tests/testing_config
+          echo "::error::App tests wrote to Core's shared tests/testing_config"
+          exit 1
+        fi
