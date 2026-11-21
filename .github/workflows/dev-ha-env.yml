@@ -287,6 +287,24 @@ jobs:
           publish_urls
           rm targets.json
           grep STATUS env.log | tail -3
+      - name: Prepare synthetic image sources on the disposable HA instance
+        run: |
+          container=$(docker ps -q --filter publish=8123)
+          test -n "$container"
+          docker exec -i "$container" python - <<'FIXTURES'
+          from pathlib import Path
+          from PIL import Image, ImageDraw, PngImagePlugin
+          root = Path("/config/www")
+          root.mkdir(exist_ok=True)
+          for state, color in [("on", "green"), ("off", "gray")]:
+              im = Image.new("RGB", (180, 60), color)
+              ImageDraw.Draw(im).text((10, 15), f"Fixture state: {state}", fill="white")
+              im.save(root / f"pr3055-{state}.png")
+          info = PngImagePlugin.PngInfo()
+          info.add(b"prBe", bytes(20 * 1024 * 1024))
+          im.save(root / "pr3055-large.png", pnginfo=info)
+          print("Oversize PNG length", (root / "pr3055-large.png").stat().st_size)
+          FIXTURES
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dev-ha-env-urls
