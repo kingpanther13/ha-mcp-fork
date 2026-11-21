@@ -100,6 +100,7 @@ jobs:
           path: devenv
           persist-credentials: false
           sparse-checkout: |
+            .github/dev-ha-env/pr3055_sizing.py
             .github/dev-ha-env/hold.py
             .github/dev-ha-env/tunnels.sh
           sparse-checkout-cone-mode: false
@@ -332,11 +333,15 @@ jobs:
               im = Image.new("RGB", (180, 60), color)
               ImageDraw.Draw(im).text((10, 15), f"Fixture state: {state}", fill="white")
               im.save(root / f"pr3055-{state}.png")
+          Image.new("RGB", (640, 480), "blue").save(root / "pr3055-sizing.jpg")
           info = PngImagePlugin.PngInfo()
           info.add(b"prBe", bytes(20 * 1024 * 1024))
           im.save(root / "pr3055-large.png", pnginfo=info)
           print("Oversize PNG length", (root / "pr3055-large.png").stat().st_size)
           FIXTURES
+      - name: Compare native and MCP image responses
+        working-directory: src
+        run: .venv/bin/python ../devenv/.github/dev-ha-env/pr3055_sizing.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dev-ha-env-urls
