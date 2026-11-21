@@ -1,0 +1,76 @@
+"""Smart search tools for Home Assistant MCP server.
+
+The implementation is split across sibling modules to keep each unit
+focused (see issue #925):
+
+- ``_config``: shared constants and pure helpers
+- ``_base``: attributes shared across mixins + registry-list helper
+- ``_deep``, ``_scenes``, ``_flow_helpers``, ``_scoring``: ``deep_search``
+  (config-definition search)
+- ``_overview``: ``get_system_overview``
+- ``_entities``: ``smart_entity_search`` + ``get_entities_by_area``
+- ``fetch``, ``graph``: config fetches and the related-entity graph
+"""
+
+import logging
+from collections.abc import Callable
+
+from ...client.rest_client import HomeAssistantClient
+from ...config import get_global_settings
+from ...utils.fuzzy_search import create_fuzzy_searcher
+
+# Re-export shared constants so existing ``smart_search.<CONST>`` references
+# keep resolving.
+from ._config import (
+    AUTOMATION_CONFIG_TIME_BUDGET,
+    DEFAULT_CONCURRENCY_LIMIT,
+    ENTITY_REGISTRY_TIMEOUT,
+    INDIVIDUAL_CONFIG_TIMEOUT,
+    INDIVIDUAL_FETCH_BATCH_SIZE,
+    SCENE_CONFIG_TIME_BUDGET,
+    SCRIPT_CONFIG_TIME_BUDGET,
+)
+from ._deep import DeepSearchMixin
+from ._entities import EntitySearchMixin
+from ._overview import SystemOverviewMixin
+from .fetch import record_first_failure, summarize_fetch_error
+
+logger = logging.getLogger(__name__)
+
+
+class SmartSearchTools(DeepSearchMixin, SystemOverviewMixin, EntitySearchMixin):
+    """Smart search tools with fuzzy matching and AI optimization."""
+
+    def __init__(
+        self,
+        client: HomeAssistantClient | None = None,
+        fuzzy_threshold: int = 60,
+        clock: Callable[[], float] | None = None,
+        config_timeout: float = INDIVIDUAL_CONFIG_TIMEOUT,
+    ):
+        """Initialize with Home Assistant client.
+
+        ``clock`` times the config-fetch budget; ``None`` reads
+        ``time.perf_counter``. ``config_timeout`` bounds each per-id config
+        fetch in seconds of real time.
+        """
+        self.clock = clock
+        self.config_timeout = config_timeout
+        # Always load settings for configuration access
+        self.settings = get_global_settings()
+
+        # Use provided client or create new one
+        if client is None:
+            self.client = HomeAssistantClient()
+            fuzzy_threshold = self.settings.fuzzy_threshold
+        else:
+            self.client = client
+
+        self.fuzzy_searcher = create_fuzzy_searcher(threshold=fuzzy_threshold)
+
+
+def create_smart_search_tools(
+    client: HomeAssistantClient | None = None,
+) -> SmartSearchTools:
+    """Create smart search tools instance."""
+    return SmartSearchTools(client)

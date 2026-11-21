@@ -1,0 +1,433 @@
+"""GitHub OAuth provider for FastMCP.
+
+This module provides a complete GitHub OAuth integration that's ready to use
+with just a client ID and client secret. It handles all the complexity of
+GitHub's OAuth flow, token validation, and user management.
+
+Example:
+    ```python
+    from fastmcp import FastMCP
+    from fastmcp.server.auth.providers.github import GitHubProvider
+
+    # Simple GitHub OAuth protection
+    auth = GitHubProvider(
+        client_id="your-github-client-id",
+        client_secret="your-github-client-secret"
+    )
+
+    mcp = FastMCP("My Protected Server", auth=auth)
+    ```
+"""
+
+from __future__ import annotations
+
+import contextlib
+from typing import Literal
+
+import httpx2
+from key_value.aio.protocols import AsyncKeyValue
+from pydantic import AnyHttpUrl
+
+from ha_mcp._vendor.fastmcp.server.auth import TokenVerificationError, TokenVerifier
+from ha_mcp._vendor.fastmcp.server.auth.auth import AccessToken
+from ha_mcp._vendor.fastmcp.server.auth.identity_assertion import IdentityAssertion
+from ha_mcp._vendor.fastmcp.server.auth.oauth_proxy import OAuthProxy
+from ha_mcp._vendor.fastmcp.utilities.auth import parse_scopes
+from ha_mcp._vendor.fastmcp.utilities.logging import get_logger
+from ha_mcp._vendor.fastmcp.utilities.token_cache import TokenCache
+
+logger = get_logger(__name__.removeprefix("ha_mcp._vendor."))
+
+
+def _is_transient(response: httpx2.Response) -> bool:
+    """Whether a GitHub API error response is temporary rather than a verdict on the token.
+
+    Server errors and rate limits are temporary. GitHub reports rate limits as
+    429, or as 403 with exhausted quota, a retry header, or a secondary
+    rate-limit message. Other 4xx responses reject the token.
+    """
+    status = response.status_code
+    if status >= 500 or status == 429:
+        return True
+    if status == 403:
+        headers = response.headers
+        if (
+            headers.get("x-ratelimit-remaining") == "0"
+            or headers.get("retry-after") is not None
+        ):
+            return True
+        try:
+            error = response.json()
+        except ValueError:
+            return False
+        return (
+            isinstance(error, dict)
+            and isinstance(error.get("message"), str)
+            and "secondary rate limit" in error["message"].casefold()
+        )
+    return False
+
+
+class GitHubTokenVerifier(TokenVerifier):
+    """Token verifier for GitHub OAuth tokens.
+
+    GitHub OAuth tokens are opaque (not JWTs), so we verify them
+    by calling GitHub's API to check if they're valid and get user info.
+
+    Warning:
+        GitHub tokens carry no audience claim, so this verifier cannot tell
+        which OAuth app (if any) a token was issued for — any valid GitHub
+        credential, including a personal access token, will verify. Used
+        inside `GitHubProvider` this is safe, because the proxy only ever
+        checks tokens it obtained through its own OAuth flow. As a standalone
+        verifier it authenticates "some GitHub user", not "a user of your
+        app" — only use it that way if that is genuinely your access model.
+
+    Caching is disabled by default.  Set ``cache_ttl_seconds`` to a positive
+    integer to cache successful verification results and avoid repeated
+    GitHub API calls for the same token.
+    """
+
+    def __init__(
+        self,
+        *,
+        required_scopes: list[str] | None = None,
+        timeout_seconds: int = 10,
+        cache_ttl_seconds: int | None = None,
+        max_cache_size: int | None = None,
+        http_client: httpx2.AsyncClient | None = None,
+    ):
+        """Initialize the GitHub token verifier.
+
+        Args:
+            required_scopes: Required OAuth scopes (e.g., ['user:email'])
+            timeout_seconds: HTTP request timeout
+            cache_ttl_seconds: How long to cache verification results in seconds.
+                Caching is disabled by default (None).  Set to a positive integer
+                to enable (e.g., 300 for 5 minutes).
+            max_cache_size: Maximum number of tokens to cache.  Default: 10 000.
+            http_client: Optional httpx2.AsyncClient for connection pooling. When provided,
+                the client is reused across calls and the caller is responsible for its
+                lifecycle. When None (default), a fresh client is created per call.
+        """
+        super().__init__(required_scopes=required_scopes)
+        self.timeout_seconds = timeout_seconds
+        self._http_client = http_client
+        self._cache = TokenCache(
+            ttl_seconds=cache_ttl_seconds,
+            max_size=max_cache_size,
+        )
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        """Verify GitHub OAuth token by calling GitHub API."""
+        is_cached, cached_result = self._cache.get(token)
+        if is_cached:
+            logger.debug("GitHub token cache hit")
+            return cached_result
+
+        try:
+            async with (
+                contextlib.nullcontext(self._http_client)
+                if self._http_client is not None
+                else httpx2.AsyncClient(timeout=self.timeout_seconds)
+            ) as client:
+                response = await client.get(
+                    "https://api.github.com/user",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/vnd.github.v3+json",
+                        "User-Agent": "FastMCP-GitHub-OAuth",
+                    },
+                )
+
+                if response.status_code != 200 and not _is_transient(response):
+                    logger.debug(
+                        "GitHub token verification failed: %d - %s",
+                        response.status_code,
+                        response.text[:200],
+                    )
+                    return None
+
+                if response.status_code != 200:
+                    logger.warning(
+                        "GitHub token verification unavailable: %d - %s",
+                        response.status_code,
+                        response.text[:200],
+                    )
+                    raise TokenVerificationError(
+                        "GitHub token verification unavailable: "
+                        f"HTTP {response.status_code}"
+                    )
+
+                try:
+                    user_data = response.json()
+                    user_id = user_data["id"]
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(
+                        "GitHub token verification returned invalid user data: %s", e
+                    )
+                    raise TokenVerificationError(
+                        "GitHub token verification returned an invalid user response"
+                    ) from e
+
+                # Identity is verified by /user, but that does not establish
+                # which OAuth scopes were granted. If scope discovery is
+                # temporarily unavailable, do not infer scopes; required scopes
+                # must wait for a successful check.
+                scope_discovery_unavailable = False
+                scope_discovery_error: str | None = None
+                try:
+                    scopes_response = await client.get(
+                        "https://api.github.com/user/repos",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Accept": "application/vnd.github.v3+json",
+                            "User-Agent": "FastMCP-GitHub-OAuth",
+                        },
+                    )
+                except httpx2.RequestError as e:
+                    logger.warning("GitHub scope verification unavailable: %s", e)
+                    scope_discovery_unavailable = True
+                    scope_discovery_error = "transport error"
+                    oauth_scopes_header = ""
+                else:
+                    if 500 <= scopes_response.status_code < 600:
+                        logger.warning(
+                            "GitHub scope verification unavailable: %d - %s",
+                            scopes_response.status_code,
+                            scopes_response.text[:200],
+                        )
+                        scope_discovery_unavailable = True
+                        scope_discovery_error = f"HTTP {scopes_response.status_code}"
+                        oauth_scopes_header = ""
+                    elif _is_transient(scopes_response):
+                        logger.warning(
+                            "GitHub scope verification unavailable: %d - %s",
+                            scopes_response.status_code,
+                            scopes_response.text[:200],
+                        )
+                        raise TokenVerificationError(
+                            "GitHub scope verification unavailable: "
+                            f"HTTP {scopes_response.status_code}"
+                        )
+                    elif scopes_response.status_code != 200:
+                        logger.debug(
+                            "GitHub scope verification rejected credentials: %d - %s",
+                            scopes_response.status_code,
+                            scopes_response.text[:200],
+                        )
+                        return None
+                    else:
+                        oauth_scopes_header = scopes_response.headers.get(
+                            "x-oauth-scopes", ""
+                        )
+                        # GitHub App user tokens carry no X-OAuth-Scopes header.
+                        # A successful /user call already proves the "user"
+                        # grant those tokens act with.
+                        if not oauth_scopes_header.strip():
+                            oauth_scopes_header = "user"
+
+                token_scopes = [
+                    scope.strip()
+                    for scope in oauth_scopes_header.split(",")
+                    if scope.strip()
+                ]
+                if self.required_scopes:
+                    token_scopes_set = set(token_scopes)
+                    required_scopes_set = set(self.required_scopes)
+                    if not required_scopes_set.issubset(token_scopes_set):
+                        if scope_discovery_unavailable:
+                            detail = (
+                                f" ({scope_discovery_error})"
+                                if scope_discovery_error is not None
+                                else ""
+                            )
+                            raise TokenVerificationError(
+                                "GitHub scope verification unavailable"
+                                f"{detail}; required scopes could not be verified"
+                            )
+                        logger.debug(
+                            "GitHub token missing required scopes. Has %d, needs %d",
+                            len(token_scopes_set),
+                            len(required_scopes_set),
+                        )
+                        return None
+
+                result = AccessToken(
+                    token=token,
+                    client_id=str(user_id),
+                    scopes=token_scopes,
+                    expires_at=None,
+                    subject=str(user_id),
+                    claims={
+                        "sub": str(user_id),
+                        "login": user_data.get("login"),
+                        "name": user_data.get("name"),
+                        "email": user_data.get("email"),
+                        "avatar_url": user_data.get("avatar_url"),
+                        "github_user_data": user_data,
+                    },
+                )
+                # A token verified while scope discovery was down carries no
+                # scopes; caching it would keep it scopeless after recovery.
+                if not scope_discovery_unavailable:
+                    self._cache.set(token, result)
+                return result
+
+        except TokenVerificationError:
+            raise
+        except httpx2.RequestError as e:
+            logger.warning("GitHub token verification unavailable: %s", e)
+            raise TokenVerificationError(
+                "GitHub token verification unavailable due to a transport error"
+            ) from e
+        except Exception as e:
+            logger.debug("GitHub token verification error: %s", e)
+            return None
+
+
+class GitHubProvider(OAuthProxy):
+    """Complete GitHub OAuth provider for FastMCP.
+
+    This provider makes it trivial to add GitHub OAuth protection to any
+    FastMCP server. Just provide your GitHub OAuth app credentials and
+    a base URL, and you're ready to go.
+
+    Features:
+    - Transparent OAuth proxy to GitHub
+    - Automatic token validation via GitHub API
+    - User information extraction
+    - Minimal configuration required
+
+    Example:
+        ```python
+        from fastmcp import FastMCP
+        from fastmcp.server.auth.providers.github import GitHubProvider
+
+        auth = GitHubProvider(
+            client_id="Ov23li...",
+            client_secret="abc123...",
+            base_url="https://my-server.com"
+        )
+
+        mcp = FastMCP("My App", auth=auth)
+        ```
+    """
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        base_url: AnyHttpUrl | str,
+        resource_base_url: AnyHttpUrl | str | None = None,
+        issuer_url: AnyHttpUrl | str | None = None,
+        redirect_path: str | None = None,
+        required_scopes: list[str] | None = None,
+        timeout_seconds: int = 10,
+        cache_ttl_seconds: int | None = None,
+        max_cache_size: int | None = None,
+        allowed_client_redirect_uris: list[str] | None = None,
+        client_storage: AsyncKeyValue | None = None,
+        jwt_signing_key: str | bytes | None = None,
+        require_authorization_consent: bool | Literal["remember", "external"] = True,
+        consent_csp_policy: str | None = None,
+        forward_resource: bool = True,
+        fallback_refresh_token_expiry_seconds: int | None = None,
+        fastmcp_access_token_expiry_seconds: int | None = None,
+        token_expiry_threshold_seconds: int = 0,
+        http_client: httpx2.AsyncClient | None = None,
+        enable_cimd: bool = True,
+        identity_assertion: IdentityAssertion | None = None,
+    ):
+        """Initialize GitHub OAuth provider.
+
+        Args:
+            client_id: GitHub OAuth app client ID (e.g., "Ov23li...")
+            client_secret: GitHub OAuth app client secret
+            base_url: Public URL where OAuth endpoints will be accessible (includes any mount path)
+            resource_base_url: Optional public base URL for the protected resource metadata
+                and token audience. Defaults to ``base_url``.
+            issuer_url: Issuer URL for OAuth metadata (defaults to base_url). Use root-level URL
+                to avoid 404s during discovery when mounting under a path.
+            redirect_path: Redirect path configured in GitHub OAuth app (defaults to "/auth/callback")
+            required_scopes: Required GitHub scopes (defaults to ["user"])
+            timeout_seconds: HTTP request timeout for GitHub API calls (defaults to 10)
+            cache_ttl_seconds: How long to cache token verification results in seconds.
+                Caching is disabled by default (None).  Set to a positive integer to
+                enable (e.g., 300 for 5 minutes).
+            max_cache_size: Maximum number of tokens to cache.  Default: 10 000.
+            allowed_client_redirect_uris: List of allowed redirect URI patterns for MCP clients.
+                If None (default), all URIs are allowed. If empty list, no URIs are allowed.
+            client_storage: Storage backend for OAuth state (client registrations, encrypted tokens).
+                If None, an encrypted file store will be created in the data directory
+                (derived from `platformdirs`).
+            jwt_signing_key: Secret for signing FastMCP JWT tokens (any string or bytes). If bytes are provided,
+                they will be used as is. If a string is provided, it will be derived into a 32-byte key. If not
+                provided, the upstream client secret will be used to derive a 32-byte key using PBKDF2.
+            require_authorization_consent: Whether to require user consent before authorizing clients (default True).
+                When True, users see a consent screen before being redirected to GitHub.
+                When False, authorization proceeds directly without user confirmation.
+                When "external", authorization follows the same direct path as False,
+                but the warning is suppressed as an operator acknowledgment that
+                equivalent protections are enforced externally.
+                SECURITY WARNING: Only set to False for local development or testing environments.
+            http_client: Optional httpx2.AsyncClient for connection pooling in token verification.
+                When provided, the client is reused across verify_token calls and the caller
+                is responsible for its lifecycle. When None (default), a fresh client is created per call.
+            enable_cimd: Enable CIMD (Client ID Metadata Document) support for URL-based
+                client IDs (default True). Set to False to disable.
+            fallback_refresh_token_expiry_seconds: Lifetime for the FastMCP-issued
+                refresh token when the upstream provider omits `refresh_expires_in`
+                (e.g. Cognito, GitHub, many OIDC IdPs). Defaults to 1 year. The upstream
+                refresh remains the source of truth. See `OAuthProxy` for details.
+            fastmcp_access_token_expiry_seconds: Lifetime for the FastMCP-issued access
+                token, decoupling it from the upstream provider's `expires_in`. Defaults
+                to None (mirror the upstream lifetime). Set this for bridges whose
+                upstream issues short-lived access tokens that some MCP clients can't
+                refresh gracefully (e.g. `mcp-remote`). See `OAuthProxy` for details.
+            token_expiry_threshold_seconds: Number of seconds before actual expiry to
+                treat a token as expired, refreshing early to avoid races. Defaults to 0.
+            identity_assertion: Optional SEP-990 ID-JAG configuration for
+                identity-bound token exchange. Disabled by default.
+        """
+        required_scopes_final = (
+            parse_scopes(required_scopes) if required_scopes is not None else ["user"]
+        )
+
+        token_verifier = GitHubTokenVerifier(
+            required_scopes=required_scopes_final,
+            timeout_seconds=timeout_seconds,
+            cache_ttl_seconds=cache_ttl_seconds,
+            max_cache_size=max_cache_size,
+            http_client=http_client,
+        )
+
+        super().__init__(
+            upstream_authorization_endpoint="https://github.com/login/oauth/authorize",
+            upstream_token_endpoint="https://github.com/login/oauth/access_token",
+            upstream_client_id=client_id,
+            upstream_client_secret=client_secret,
+            token_verifier=token_verifier,
+            base_url=base_url,
+            resource_base_url=resource_base_url,
+            redirect_path=redirect_path,
+            issuer_url=issuer_url or base_url,
+            allowed_client_redirect_uris=allowed_client_redirect_uris,
+            client_storage=client_storage,
+            jwt_signing_key=jwt_signing_key,
+            require_authorization_consent=require_authorization_consent,
+            consent_csp_policy=consent_csp_policy,
+            forward_resource=forward_resource,
+            fallback_refresh_token_expiry_seconds=fallback_refresh_token_expiry_seconds,
+            fastmcp_access_token_expiry_seconds=fastmcp_access_token_expiry_seconds,
+            token_expiry_threshold_seconds=token_expiry_threshold_seconds,
+            enable_cimd=enable_cimd,
+            identity_assertion=identity_assertion,
+        )
+
+        logger.debug(
+            "Initialized GitHub OAuth provider for client %s with scopes: %s",
+            client_id,
+            required_scopes_final,
+        )
