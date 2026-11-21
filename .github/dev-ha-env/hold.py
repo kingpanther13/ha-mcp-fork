@@ -199,7 +199,7 @@ class Instance:
         if not self.standalone:
             return
         env = os.environ | {
-            "HOMEASSISTANT_URL": self.base_url,
+            "HOMEASSISTANT_URL": "http://127.0.0.1:18123",
             "HOMEASSISTANT_TOKEN": self.env["token"],
             "MCP_HOST": "127.0.0.1",
             "ENABLE_STRICT_MANDATORY_BPS": str(STRICT_BPS).lower(),
