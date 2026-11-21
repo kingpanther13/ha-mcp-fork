@@ -95,9 +95,66 @@ async def import_settings_file(
             )
         )
     try:
-        return await import_bundle(server, settings_file)
+        guarded = await _guard_agent_import(server, settings_file)
+        return await import_bundle(server, guarded)
     except TransferFailed as err:
         _raise_transfer_error(err.code)
+
+
+def _kept(
+    incoming: dict[str, Any] | None, current: dict[str, Any] | None, names: Any
+) -> dict[str, Any] | None:
+    """``incoming`` with ``names`` taken from ``current`` (or left unset)."""
+    merged = {k: v for k, v in (incoming or {}).items() if k not in names}
+    merged.update({k: v for k, v in (current or {}).items() if k in names})
+    return merged or None
+
+
+async def _guard_agent_import(
+    server: HomeAssistantSmartMCPServer | None, settings_file: dict[str, Any]
+) -> dict[str, Any]:
+    """Hold an agent's import to the limits of the single-setting actions.
+
+    The human-only settings keep this server's values, and anything that
+    loosens what limits the agent needs dev_tools_security_policy_access.
+    """
+    from .. import settings_transfer as transfer
+    from ..settings_ui._handlers_transfer import export_bundle
+    from .dev_backup import _HUMAN_BACKUP_CONTROLS
+    from .tools_dev import _HUMAN_ONLY_SETTINGS, _require_security_policy_access
+
+    try:
+        incoming = transfer.validate_server_settings(settings_file["server_settings"])
+    except KeyError, TypeError, ValueError:
+        return settings_file  # import_bundle refuses it with its own code
+    current = await export_bundle(server)
+    settings = current["server_settings"]
+    incoming["features"] = _kept(
+        incoming["features"], settings["features"], _HUMAN_ONLY_SETTINGS
+    )
+    incoming["backup"] = _kept(
+        incoming["backup"], settings["backup"], _HUMAN_BACKUP_CONTROLS
+    )
+    switch = "enable_tool_security_policies"
+    entries = settings_file.get("entries")
+    tools = entries.get("tools") if isinstance(entries, dict) else None
+    if (
+        incoming["policy"] != settings["policy"]
+        or incoming["visibility"] != settings["visibility"]
+        or (incoming["features"] or {}).get(switch)
+        != (settings["features"] or {}).get(switch)
+        or (
+            isinstance(tools, dict)
+            and not tools.get("disabled")
+            and {k: tools.get(k) for k in ("allowed_dirs", "extra_yaml_keys")}
+            != current["entries"].get("tools")
+        )
+    ):
+        _require_security_policy_access(
+            "import tool security policies, entity visibility or File & YAML "
+            "Tools permissions"
+        )
+    return {**settings_file, "server_settings": incoming}
 
 
 def _raise_transfer_error(code: str) -> NoReturn:
