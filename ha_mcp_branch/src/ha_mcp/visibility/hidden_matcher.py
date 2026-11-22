@@ -81,9 +81,15 @@ def friendly_names(states: Any) -> dict[str, str]:
     return names
 
 
+def _fold(text: str) -> str:
+    """``text`` lowercased one character at a time, so that its length holds
+    where a letter's lowercase is longer than the letter."""
+    return "".join(low if len(low := char.lower()) == 1 else char for char in text)
+
+
 def _name_forms(name: str) -> set[str]:
     """``name`` lowercased, as it is and as a JSON string writes it."""
-    return {name.lower(), json.dumps(name)[1:-1].lower()}
+    return {_fold(name), _fold(json.dumps(name)[1:-1])}
 
 
 def _typed_forms(name: str) -> set[str]:
@@ -120,7 +126,7 @@ def _part_of(text: str, first: int, name: str, longer: str) -> bool:
     offset = longer.find(name)
     while offset >= 0:
         start = first - offset
-        if start >= 0 and text[start : start + len(longer)].lower() == longer:
+        if start >= 0 and _fold(text[start : start + len(longer)]) == longer:
             return True
         offset = longer.find(name, offset + 1)
     return False
@@ -201,7 +207,7 @@ class HiddenMatcher:
                 continue
             for name, longer_names in self.names.items():
                 last = first + len(name)
-                if text[first:last].lower() != name or text[last : last + 1].isalnum():
+                if _fold(text[first:last]) != name or text[last : last + 1].isalnum():
                     continue
                 if not any(_part_of(text, first, name, n) for n in longer_names):
                     yield name
