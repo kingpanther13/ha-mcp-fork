@@ -78,6 +78,7 @@ class HiddenMatcher:
     terms: frozenset[str] = field(hash=False)
     other_ids: frozenset[str] = field(hash=False)
     regex: re.Pattern[str] | None = field(hash=False)
+    longest: int = field(hash=False)
 
     @classmethod
     def from_hidden(
@@ -91,6 +92,7 @@ class HiddenMatcher:
             terms,
             frozenset(known_ids) - terms,
             re.compile(alternation, re.IGNORECASE) if terms else None,
+            max(map(len, terms | known_ids), default=0),
         )
 
     def exact(self, text: str) -> bool:
@@ -124,14 +126,20 @@ class HiddenMatcher:
         return replace(self, other_ids=self.other_ids | typed) if typed else self
 
     def _words(self, text: str) -> Iterator[list[str]]:
-        """The word around each matched term, with and without an escape's tail."""
+        """The word around each matched term, with and without an escape's tail.
+
+        A word is followed only a little past the longest id: longer, it is no
+        entity's id, and a long run of word characters is not walked again for
+        every term in it.
+        """
         if self.regex is None:
             return
+        reach = self.longest + len("u0000") + 1
         for match in self.regex.finditer(text):
             start, end = match.span()
-            while start and text[start - 1] in _WORD:
+            while start > max(0, match.start() - reach) and text[start - 1] in _WORD:
                 start -= 1
-            while end < len(text) and text[end] in _WORD:
+            while end < min(len(text), match.end() + reach) and text[end] in _WORD:
                 end += 1
             word = text[start:end].lower()
             tail = _ESCAPE_TAIL.match(word) if text[start - 1 : start] == "\\" else None
