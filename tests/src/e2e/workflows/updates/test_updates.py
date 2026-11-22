@@ -342,6 +342,13 @@ class TestUpdateToolsEdgeCases:
                 f"Update counts differ significantly: {count1} vs {count2}"
             )
 
+            # A check for updates answers with the same listing.
+            refreshed = await mcp.call_tool_success(
+                "ha_manage_updates", {"action": "refresh"}
+            )
+            assert "updates_available" in refreshed and "categories" in refreshed
+            assert isinstance(refreshed["refreshed"], int), refreshed
+
             logger.info("Consistency test passed")
 
     async def test_system_version_fields_presence(self, mcp_client):
