@@ -224,7 +224,8 @@ class HiddenMatcher:
         result or an error echoes it, so it counts like another entity's id.
         An argument that holds a name counts like a visible name containing
         it: the name is the caller's own text where the argument is repeated,
-        and nowhere else in the output.
+        and nowhere else in the output. An argument that is the name alone
+        is repeated wherever the name stands; its caller knew the name.
         """
         typed = {
             word
