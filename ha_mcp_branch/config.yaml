@@ -1,6 +1,6 @@
-name: "HA MCP (branch build 9.3.0-fix3156.3)"
+name: "HA MCP (branch build 9.3.0-fix3156.4)"
 description: "Development channel - AI assistant integration via MCP (unstable)"
-version: "9.3.0-fix3156.3"
+version: "9.3.0-fix3156.4"
 slug: "ha_mcp_branch"
 url: "https://github.com/homeassistant-ai/ha-mcp"
 stage: experimental
