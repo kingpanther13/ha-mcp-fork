@@ -12,13 +12,21 @@ a hidden id is part of it.
 Scanned text is often serialized, so a word may begin with what an escape
 leaves after its backslash (the ``n`` of a newline's ``\\n``). The word is
 judged with and without that tail.
+
+A hidden entity's friendly name counts in output too, as a phrase of its own
+(``Front Door Lock Battery | 87``), so that a list of names and states is
+refused like a list of ids. A name does not count where it is part of a
+visible entity's, a device's or an area's name: a lock named after its device
+would otherwise close every listing of that device. A name of a single word
+("Home") is not scanned for, as it cannot be told from ordinary text. A state alone (``87``) names nothing.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import string
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -26,6 +34,7 @@ from .identifier_aliases import IdentifierAliases
 
 _WORD = frozenset(string.ascii_letters + string.digits + "_")
 _ESCAPE_TAIL = re.compile(r"[bfnrt]|u[0-9a-f]{4}")
+_ESCAPE_BEFORE = re.compile(r"\\(?:[bfnrt]|u[0-9a-f]{4})\Z", re.IGNORECASE)
 
 
 def iter_strings(value: Any) -> Any:
@@ -61,6 +70,62 @@ def known_entity_ids(states: Any, registry: Any) -> set[str]:
     }
 
 
+def friendly_names(states: Any) -> dict[str, str]:
+    """The friendly name of every entity whose state carries one."""
+    names: dict[str, str] = {}
+    for state in states if isinstance(states, list) else []:
+        attributes = state.get("attributes") if isinstance(state, dict) else None
+        name = attributes.get("friendly_name") if isinstance(attributes, dict) else None
+        if isinstance(name, str) and name.strip():
+            names[state["entity_id"]] = name
+    return names
+
+
+def _name_forms(name: str) -> set[str]:
+    """``name`` lowercased, as it is and as a JSON string writes it."""
+    return {name.lower(), json.dumps(name)[1:-1].lower()}
+
+
+def _typed_forms(name: str) -> set[str]:
+    """The forms of a ``name`` the arguments held, also read back from a JSON
+    string, so either form there stands for both in the output."""
+    try:
+        return _name_forms(name) | _name_forms(str(json.loads(f'"{name}"')))
+    except ValueError:
+        return _name_forms(name)
+
+
+def _scanned_names(
+    hidden: set[str], names: Mapping[str, str], places: Iterable[str]
+) -> dict[str, tuple[str, ...]]:
+    """The hidden entities' names of several words, each with the visible
+    names that contain it. A single word ("Home") cannot be told from
+    ordinary text."""
+    visible = {
+        form
+        for name in [n for e, n in names.items() if e not in hidden] + list(places)
+        for form in _name_forms(name)
+    }
+    everything = "\n".join(visible)
+    return {
+        form: tuple(v for v in visible if form in v) if form in everything else ()
+        for entity_id in hidden
+        if len((name := names.get(entity_id, "")).split()) > 1
+        for form in _name_forms(name)
+    }
+
+
+def _part_of(text: str, first: int, name: str, longer: str) -> bool:
+    """Whether the ``name`` at ``first`` in ``text`` is part of ``longer`` there."""
+    offset = longer.find(name)
+    while offset >= 0:
+        start = first - offset
+        if start >= 0 and text[start : start + len(longer)].lower() == longer:
+            return True
+        offset = longer.find(name, offset + 1)
+    return False
+
+
 @dataclass(frozen=True)
 class HiddenMatcher:
     """The enforced hidden set, its identifier aliases and what its scans match.
@@ -68,9 +133,10 @@ class HiddenMatcher:
     ``identifier_aliases`` holds the bare keys that address a hidden script,
     scene or automation (see ``identifier_aliases``). ``terms`` are the hidden
     entity_ids plus the alias terms that run a hidden script without naming it,
-    and ``other_ids`` the ids of every other entity. Built only through
-    :meth:`from_hidden`, so ``regex`` is ``None`` exactly when ``hidden`` is
-    empty and every scan sees one consistent view.
+    and ``other_ids`` the ids of every other entity. ``names`` are the hidden
+    entities' scanned friendly names, lowercased, each also as a JSON string
+    writes it, with the visible names that contain it. Built only through :meth:`from_hidden`, so ``regex`` is ``None``
+    exactly when ``hidden`` is empty and every scan sees one consistent view.
     """
 
     hidden: frozenset[str]
@@ -79,13 +145,24 @@ class HiddenMatcher:
     other_ids: frozenset[str] = field(hash=False)
     regex: re.Pattern[str] | None = field(hash=False)
     longest: int = field(hash=False)
+    names: Mapping[str, tuple[str, ...]] = field(hash=False)
+    name_regex: re.Pattern[str] | None = field(hash=False)
 
     @classmethod
     def from_hidden(
-        cls, hidden: set[str], aliases: IdentifierAliases, known_ids: set[str]
+        cls,
+        hidden: set[str],
+        aliases: IdentifierAliases,
+        known_ids: set[str],
+        names: Mapping[str, str] | None = None,
+        places: Iterable[str] = (),
     ) -> HiddenMatcher:
+        """``names`` are the entities' friendly names and ``places`` the device
+        and area names; without ``names`` no name is scanned for."""
         terms = frozenset(hidden | aliases.embedded_terms())
         alternation = "|".join(re.escape(term) for term in sorted(terms))
+        scanned = _scanned_names(hidden, names or {}, places)
+        phrases = "|".join(re.escape(name) for name in sorted(scanned))
         return cls(
             frozenset(hidden),
             aliases,
@@ -93,6 +170,8 @@ class HiddenMatcher:
             frozenset(known_ids) - terms,
             re.compile(f"(?=({alternation}))", re.IGNORECASE) if terms else None,
             max(map(len, terms | known_ids), default=0),
+            scanned,
+            re.compile(f"(?={phrases})", re.IGNORECASE) if scanned else None,
         )
 
     def exact(self, text: str) -> bool:
@@ -100,11 +179,32 @@ class HiddenMatcher:
         return text in self.hidden
 
     def embeds(self, text: str) -> bool:
-        """Whether output ``text`` is, or embeds, a hidden entity_id."""
+        """Whether output ``text`` embeds a hidden entity_id or friendly name."""
         return any(
             not self.terms.isdisjoint(words) or self.other_ids.isdisjoint(words)
             for words in self._words(text)
-        )
+        ) or any(self._named(text))
+
+    def _named(self, text: str) -> Iterator[str]:
+        """The scanned names that stand in ``text`` as a phrase of their own.
+
+        No letter or digit may run into the phrase, an escape's tail before it
+        aside (the ``n`` of ``\\n``). A name does not count where it is part
+        of a visible entity's, a device's or an area's name.
+        """
+        if self.name_regex is None:
+            return
+        for match in self.name_regex.finditer(text):
+            first = match.start()
+            before = text[max(0, first - 6) : first]
+            if before[-1:].isalnum() and not _ESCAPE_BEFORE.search(before):
+                continue
+            for name, longer_names in self.names.items():
+                last = first + len(name)
+                if text[first:last].lower() != name or text[last : last + 1].isalnum():
+                    continue
+                if not any(_part_of(text, first, name, n) for n in longer_names):
+                    yield name
 
     def unknown_word(self, text: str) -> bool:
         """Whether ``text`` holds a longer word around a hidden id no entity has."""
@@ -122,6 +222,10 @@ class HiddenMatcher:
 
         A longer word the arguments hold is the caller's own text when the
         result or an error echoes it, so it counts like another entity's id.
+        An argument that holds a name counts like a visible name containing
+        it: the name is the caller's own text where the argument is repeated,
+        and nowhere else in the output. An argument that is the name alone
+        is repeated wherever the name stands; its caller knew the name.
         """
         typed = {
             word
@@ -130,7 +234,18 @@ class HiddenMatcher:
             if self.terms.isdisjoint(words)
             for word in words
         }
-        return replace(self, other_ids=self.other_ids | typed) if typed else self
+        held: dict[str, set[str]] = {}
+        for text in iter_strings(args):
+            for name in self._named(text):
+                for form in _typed_forms(name):
+                    held.setdefault(form, set()).update(_typed_forms(text))
+        if not typed and not held:
+            return self
+        return replace(
+            self,
+            other_ids=self.other_ids | typed,
+            names={n: (*longer, *held.get(n, ())) for n, longer in self.names.items()},
+        )
 
     def _words(self, text: str) -> Iterator[list[str]]:
         """The word around each matched term, with and without an escape's tail.
