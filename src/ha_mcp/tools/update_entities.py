@@ -2,7 +2,7 @@
 
 The component's ``update_entities`` bridge names each entity's features from
 Core's ``UpdateEntityFeature``. Without it the rows come from Core's states and
-entity registry, and which updates can be installed is left unknown.
+entity registry, with ``supported_features`` left undecoded.
 """
 
 import logging
@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 _CAPABILITY = "update_entities"
 _NO_FEATURES_WARNING = (
-    "Which updates can be installed, backed up or installed at a chosen "
-    "version is only known with the HA-MCP component, so features and "
-    f"can_install are None. {COMPONENT_INSTALL_HINT}"
+    "Each row carries Home Assistant's supported_features number; decoding it "
+    "into feature names (which updates can be installed, backed up or "
+    "installed at a chosen version) needs the HA-MCP component, so features "
+    f"and can_install are None. {COMPONENT_INSTALL_HINT}"
 )
 _NO_CATEGORIES_WARNING = (
     "Home Assistant's entity registry could not be read, so the integration "
