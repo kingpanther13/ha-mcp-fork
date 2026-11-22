@@ -1,0 +1,1408 @@
+"""
+Configuration management tools for Home Assistant scenes.
+
+This module provides tools for retrieving, creating, updating, and removing
+Home Assistant scene configurations. Mirrors the scripts/automations
+patterns; the key shape difference is that scene ``entities`` is a dict
+keyed by entity_id (not a list).
+"""
+
+import asyncio
+import logging
+from typing import Annotated, Any, cast
+
+from pydantic import Field
+
+from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp._vendor.fastmcp.tools import tool
+
+from ..client.rest_client import (
+    HomeAssistantAPIError,
+    HomeAssistantAuthError,
+    HomeAssistantConnectionError,
+    SceneIdNotAnEntityError,
+    SceneResolution,
+    SceneStorageConfigNotFoundError,
+)
+from ..errors import (
+    ErrorCode,
+    create_entity_not_found_error,
+    create_error_response,
+)
+from ..strict_bps import BestPracticeKeyParam
+from ..utils.config_hash import compute_config_hash
+from ..utils.python_sandbox import (
+    PythonSandboxError,
+    format_sandbox_error,
+    get_security_documentation,
+    safe_execute,
+)
+from .auto_backup import with_auto_backup
+from .coercion import JSON_STRING_COERCION, parse_json_param
+from .component_config_reads import fetch_entity_lookup_via_component
+from .config_write_helpers import (
+    apply_entity_category,
+    attach_skill_content,
+    augment_error_dict_with_skill_content,
+    augment_tool_error_with_skill_content,
+    config_reload_waiter,
+    fetch_entity_category,
+    merge_validation_meta,
+    refuse_write_by_bare_id_of_another_key,
+)
+from .entity_registration import resolve_entity_id_after_write
+from .helpers import (
+    core_error_message,
+    exception_to_structured_error,
+    log_tool_usage,
+    raise_entity_refusal,
+    raise_tool_error,
+    register_tool_methods,
+    validate_identifier_not_empty,
+)
+from .reference_validator import validate_config_references as ref_check
+from .scene_capture import merge_captures, read_captures
+from .scene_checks import (
+    category_problems,
+    entity_form_create_problems,
+    raise_bare_id_of_another_key,
+    raise_problems,
+    raise_scene_id_refusal,
+    raise_scene_not_storage_error,
+    scene_body_problems,
+)
+from .scene_discovery import discover_scenes
+from .tool_hints import read_only_hints, write_hints
+from .util_helpers import search_related
+from .ws_waiters import verify_entity_removed, wait_for_entity_registered
+
+# No scene-specific reference file exists in home-assistant-best-practices;
+# SKILL.md is the top-level generic best-practice doc covering entity-naming,
+# safe-refactoring, and helper-vs-template trade-offs the agent benefits
+# from when authoring scenes. Scenes have NO actions/conditions/triggers
+# (only an ``entities`` state-snapshot dict) so the automation/script
+# reference files don't apply.
+_SCENE_SKILL_FILES: tuple[str, ...] = ("SKILL.md",)
+
+logger = logging.getLogger(__name__)
+
+
+def _activate_once_reloaded(
+    result: dict[str, Any], reloaded: bool | None, activate: bool, scene_id: str
+) -> bool:
+    """Keep activate after a write only once the scene reload is confirmed.
+
+    Activating before the reload would apply the previous snapshot or hit a
+    scene entity the reload is about to replace.
+    """
+    if not activate or reloaded:
+        return activate
+    result["activated"] = False
+    result.setdefault("warnings", []).append(
+        "Scene was written, but not activated: the scene reload the write "
+        "scheduled could not be confirmed, so the previous snapshot could have "
+        f"been applied. Activate it with ha_config_set_scene(scene_id='{scene_id}', "
+        "activate=True)."
+    )
+    return False
+
+
+def _skip_scene_activation_backup(kwargs: dict[str, Any]) -> bool:
+    """Skip config snapshots for a standalone activation (no config change)."""
+    return (
+        bool(kwargs.get("activate"))
+        and kwargs.get("config") is None
+        and kwargs.get("python_transform") is None
+    )
+
+
+class ConfigSceneTools:
+    """Scene configuration management tools for Home Assistant."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    # Short retry retained for config reads and removals; post-write polling
+    # has its own deadline in entity_registration.
+    RESOLVE_RETRY_DELAY = 0.2
+
+    @staticmethod
+    def _first_scene_entity_id(matches: list[dict[str, Any]]) -> str | None:
+        """First ``scene.``-domain ``entity_id`` in a component match list, else None."""
+        for match in matches:
+            entity_id = match.get("entity_id") or ""
+            if entity_id.startswith("scene."):
+                return entity_id
+        return None
+
+    async def _resolve_scene_entity_id(
+        self, scene_id: str, *, allow_component: bool = False
+    ) -> str:
+        """Resolve the entity ID for config reads and removals, with one retry.
+
+        HA derives scene entity IDs from the name; the storage key remains
+        the registry unique_id. Match that key instead of assuming the slug.
+        Accept either a bare key or a key prefixed with ``scene.``.
+
+        Only removals enable ``allow_component``. Config reads use the legacy
+        registry path to preserve the GET-path invariant documented in
+        ``component_config_reads``. An empty component result is rechecked
+        once; component unavailability falls through to the legacy path.
+
+        Post-write waits and categories use ``resolve_entity_id_after_write``:
+        their registration window requires deadline-based polling (#2426).
+        """
+        scene_id = scene_id.removeprefix("scene.")
+        if allow_component:
+            resolved = await self._resolve_scene_via_component(scene_id)
+            if resolved is not None:
+                return resolved
+        return await self._resolve_scene_via_registry(scene_id)
+
+    async def _resolve_scene_via_component(self, scene_id: str) -> str | None:
+        """Resolve a scene ``entity_id`` through the in-process component.
+
+        Returns the resolved ``entity_id`` (or the naive ``scene.{scene_id}``
+        guess when the component authoritatively reports the scene still absent
+        after a settle). Returns ``None`` when the component is unavailable or
+        non-authoritative (capability miss, or the recheck went
+        unavailable/errored mid-retry), so the caller falls through to the
+        legacy registry list+retry path. ``scene_id`` must already have its
+        ``scene.`` prefix stripped.
+        """
+        matches = await fetch_entity_lookup_via_component(
+            self._client, scene_id, domain="scene"
+        )
+        if matches is None:
+            return None
+        # Component answered authoritatively. A hit returns at once — the
+        # in-process registry read needs no settle. An EMPTY result right
+        # after an upsert can be HA's async entity-registration lag
+        # (#1168), not a true absence, so recheck ONCE after the same
+        # short delay the legacy path uses before the naive fallback.
+        entity_id = self._first_scene_entity_id(matches)
+        if entity_id is not None:
+            return entity_id
+        await asyncio.sleep(self.RESOLVE_RETRY_DELAY)
+        recheck = await fetch_entity_lookup_via_component(
+            self._client, scene_id, domain="scene"
+        )
+        if recheck is None:
+            # recheck is None: the component went unavailable/errored/downgraded
+            # mid-retry, so the first empty read is NOT authoritative. Fall
+            # through to the legacy list+retry path (its own retry absorbs the
+            # same registration lag) instead of guessing.
+            return None
+        # Authoritative recheck: a hit is returned; a genuine empty
+        # (still absent after the settle) falls to the naive guess.
+        entity_id = self._first_scene_entity_id(recheck)
+        if entity_id is not None:
+            return entity_id
+        return f"scene.{scene_id}"
+
+    async def _resolve_scene_via_registry(self, scene_id: str) -> str:
+        """Resolve a scene ``entity_id`` via the entity-registry list.
+
+        Legacy path used by ``_resolve_scene_entity_id`` when the component is
+        unavailable or non-authoritative: lists the registry with one
+        registration-lag retry, falling back to the naive ``scene.{scene_id}``.
+        ``scene_id`` must already have its ``scene.`` prefix stripped.
+        """
+        retried = False
+        for attempt in range(2):
+            try:
+                result = await self._client.send_websocket_message(
+                    {"type": "config/entity_registry/list"}
+                )
+                if result.get("success") is not False:
+                    for entry in result.get("result") or []:
+                        entity_id = entry.get("entity_id") or ""
+                        if entry.get("unique_id") == scene_id and entity_id.startswith(
+                            "scene."
+                        ):
+                            return entity_id
+            except TimeoutError, HomeAssistantAPIError, HomeAssistantConnectionError:
+                # Programming bugs (AttributeError, KeyError, …) propagate; only
+                # genuine HA-API failures fall through to the naive form so the
+                # caller still gets a best-effort entity_id rather than a 500.
+                logger.warning(
+                    f"Entity registry resolve failed for scene_id={scene_id}, "
+                    f"falling back to scene.{scene_id}",
+                    exc_info=True,
+                )
+                # API failure is sticky — retrying won't change a 500 / auth
+                # error. Bail to the naive form immediately.
+                break
+            if attempt == 0:
+                # Registry list succeeded but no row matched. On a freshly-
+                # upserted scene the registry index lags the storage write —
+                # one short retry catches the common case before falling
+                # back to the naive entity_id.
+                await asyncio.sleep(self.RESOLVE_RETRY_DELAY)
+                retried = True
+        # Issue #1168 R5 blocker 13 (refined per R6 blocker 19): only log on
+        # the genuine exhausted-retry exit (both list calls succeeded, neither
+        # matched). The first-pass-success path also falls through here on the
+        # legitimate "registry caught up before retry" case, but that path
+        # never sets ``retried``; gating on it stops the phantom-noise.
+        if retried:
+            logger.debug(
+                f"_resolve_scene_entity_id: registry retry exhausted for "
+                f"scene_id={scene_id!r}, falling back to scene.{scene_id}"
+            )
+        return f"scene.{scene_id}"
+
+    @tool(
+        name="ha_config_get_scene",
+        tags={"Scenes"},
+        annotations=read_only_hints("Get or Find Scenes", open_world=False),
+    )
+    @log_tool_usage
+    async def ha_config_get_scene(
+        self,
+        scene_id: Annotated[
+            str | None,
+            Field(
+                description="Scene storage ID from listing (e.g. 'movie_night') "
+                "or the scene's entity_id (e.g. 'scene.movie_night'). A bare id "
+                "names the scene stored under that key or, when none is, the "
+                "scene whose entity is 'scene.<id>'; 'scene.<x>' is an entity_id, "
+                "resolved to its storage key."
+            ),
+        ] = None,
+        query: Annotated[
+            str | None, Field(description="Filter scene names or IDs")
+        ] = None,
+        search_in_config: Annotated[
+            bool,
+            Field(
+                description="Also search full stored scene attribute values within a bounded scan"
+            ),
+        ] = False,
+        limit: Annotated[
+            int, Field(description="Maximum scenes per page", ge=1, le=100)
+        ] = 20,
+        offset: Annotated[int, Field(description="Pagination offset", ge=0)] = 0,
+    ) -> dict[str, Any]:
+        """Get a scene's complete configuration, or list and search scenes without scene_id.
+
+        Use ha_search for cross-domain discovery and dependency searches. For ordinary
+        scene discovery, use this tool and pass a returned scene_id back to retrieve
+        the complete entities dict and config_hash for editing (pass that hash to
+        ha_config_set_scene for python_transform updates).
+
+        Listing returns compact metadata. Integration-managed scenes have no editable
+        storage config or scene_id. Partial content-search results explicitly
+        report unread configs and are not exhaustive.
+
+        EXAMPLES:
+        - Get scene: ha_config_get_scene("movie_night")
+        - Find scenes: ha_config_get_scene(query="movie")
+        - Find attribute values: ha_config_get_scene(query="rainbow", search_in_config=True)
+
+        For detailed scene configuration help, use ha_get_skill_guide.
+        """
+        try:
+            if scene_id is None:
+                return await discover_scenes(
+                    self._client,
+                    query=query,
+                    search_in_config=search_in_config,
+                    limit=limit,
+                    offset=offset,
+                )
+            # Issue #1168 R6 blocker 16: empty ``scene_id`` previously
+            # surfaced as ``RESOURCE_NOT_FOUND`` with a misleading
+            # `entities`-related suggestion. Pre-flight here so the caller
+            # gets the actual problem. Migrated to the shared
+            # ``validate_identifier_not_empty`` helper (#1314) — message
+            # and ``context["scene_id"]`` key preserved for callers.
+            validate_identifier_not_empty(
+                scene_id,
+                "scene_id",
+                message="scene_id must not be empty",
+                suggestions=[
+                    "Pass a non-empty scene identifier (e.g. 'movie_night')",
+                    "Call ha_config_get_scene() without scene_id to discover scenes",
+                ],
+                context={"scene_id": scene_id},
+            )
+            # Full scene config reads ALWAYS take the legacy path — no component
+            # routing here, unlike the automation/script gets. Scenes do not
+            # retain their raw storage body in memory: HomeAssistantScene's
+            # ``scene_config.states`` holds runtime State OBJECTS built at
+            # setup, not the storage ``entities`` dict, so a component-served
+            # body can neither match the REST body byte-for-byte nor produce
+            # a stable ``config_hash`` — and the get -> surgical-edit -> set
+            # round-trip depends on both (caught live by the scene lifecycle
+            # e2e suite). automation/script expose ``raw_config`` (the exact
+            # storage dict), which is why their gets DO route.
+            return await self._legacy_get_scene(scene_id)
+        except ToolError:
+            raise
+        except SceneIdNotAnEntityError as e:
+            raise_scene_id_refusal(e.identifier, e.storage_key)
+        except SceneStorageConfigNotFoundError as e:
+            # The entity resolved but scenes.yaml has no config for it - a Hue/
+            # vendor or raw-YAML scene. Surface CONFIG_NOT_FOUND, not the
+            # ENTITY_NOT_FOUND the generic handler below would emit (#1971).
+            raise_scene_not_storage_error(e.scene_id, e.platform)
+        except Exception as e:
+            # Pass `entity_id` so a 404 from rest_client surfaces as
+            # ENTITY_NOT_FOUND (not the generic RESOURCE_NOT_FOUND fallback).
+            # The naive ``scene.{scene_id}`` form is good enough at error
+            # time — registry resolution happens inside the try block and
+            # may not have run when an exception escapes to here.
+            exception_to_structured_error(
+                e,
+                context={
+                    "scene_id": scene_id,
+                    **(
+                        {"entity_id": f"scene.{scene_id.removeprefix('scene.')}"}
+                        if scene_id is not None
+                        else {}
+                    ),
+                },
+                suggestions=[
+                    "Call ha_config_get_scene() without scene_id to discover scenes",
+                    "Check Home Assistant connection",
+                    "Use ha_get_skill_guide for help",
+                ],
+            )
+            # ``exception_to_structured_error`` always raises (NoReturn); this
+            # explicit raise makes the function's exit unambiguous (no implicit
+            # ``return None`` fall-through) and is never reached at runtime.
+            raise
+
+    async def _legacy_get_scene(self, scene_id: str) -> dict[str, Any]:
+        """Assemble the scene-get response from the REST/WS pipeline.
+
+        The multi-fetch path: id-resolution WS + per-id config REST +
+        ``_resolve_scene_entity_id`` WS + ``fetch_entity_category`` WS. This is
+        the ONLY scene-get path — see ``ha_config_get_scene`` for why scenes
+        never route through the component's ``config_get`` (their in-memory
+        ``scene_config.states`` is runtime State objects, not the storage
+        ``entities`` dict).
+        """
+        # Issue #1168 R3 blockers 3 + 6: unwrap the rest-client envelope
+        # so the response carries the scene body directly (no nested
+        # `success`/`scene_id`/`config` chain), and use the storage key
+        # consistently for `scene_id` regardless of whether the caller
+        # passed the entity_id slug or the storage key.
+        envelope = await self._client.get_scene_config(scene_id)
+        actual_config = envelope.get("config", envelope)
+        resolved_id = envelope.get("scene_id", scene_id)
+        config_hash_value = compute_config_hash(actual_config)
+
+        # Resolve real entity_id via registry — see _resolve_scene_entity_id
+        # for the reasoning. Category fetch on the wrong entity_id is a
+        # silent no-op, masking real category assignments.
+        entity_id = await self._resolve_scene_entity_id(resolved_id)
+        cat_warnings: list[str] = []
+        cat_id = await fetch_entity_category(
+            self._client, entity_id, "scene", cat_warnings
+        )
+
+        response: dict[str, Any] = {
+            "success": True,
+            "action": "get",
+            "scene_id": resolved_id,
+            "config": actual_config,
+            "config_hash": config_hash_value,
+        }
+        if cat_id:
+            response["category"] = cat_id
+        if cat_warnings:
+            response.setdefault("warnings", []).extend(cat_warnings)
+        return response
+
+    async def _get_scene_config_internal(
+        self, scene_id: str, *, _resolved: bool = False
+    ) -> tuple[dict[str, Any], str, str | None]:
+        """Fetch scene config without logging or category injection.
+
+        Returns ``(actual_config, config_hash, resolved_id)`` where
+        ``actual_config`` is the inner scene body (not the REST wrapper) and
+        ``resolved_id`` is the storage key the rest-client resolved the input
+        to (issue #1168 R3 blocker 6). Used by ``_fetch_and_verify_hash``.
+
+        ``resolved_id`` is ``None`` when the envelope omits ``scene_id`` — the
+        write target must then be re-resolved from the caller's input rather
+        than defaulting to the (unresolved) caller slug, which for a renamed
+        scene would target the wrong storage key. This is a structural
+        invariant, not a live path: ``get_scene_config`` always sets the key.
+
+        ``_resolved=True`` forwards to ``get_scene_config`` that ``scene_id`` is
+        already a resolved storage key, so the redundant registry lookup is
+        skipped (e.g. the python_transform re-fetch, which already resolved).
+        """
+        envelope = await self._client.get_scene_config(scene_id, _resolved=_resolved)
+        actual_config = envelope.get("config", envelope)
+        resolved_id = envelope.get("scene_id")
+        config_hash_value = compute_config_hash(actual_config)
+        return actual_config, config_hash_value, resolved_id
+
+    async def _fetch_and_verify_hash(
+        self, scene_id: str, config_hash: str, action: str
+    ) -> tuple[dict[str, Any], str | None]:
+        """Fetch current scene config and verify config_hash for optimistic locking.
+
+        Returns ``(actual_config, resolved_id)`` — the inner scene body and
+        the storage key the rest-client resolved the input to. ``resolved_id``
+        is ``None`` when the envelope omitted the key, so the upsert re-resolves
+        rather than writing to the caller slug; the caller then re-binds it from
+        the upsert result. Raises ``ToolError`` when a bare ``scene_id``
+        resolved to another scene's key, or when the hash does not match
+        (conflict). Issue #1168 R3 blocker 6: callers thread ``resolved_id`` into
+        responses so the outer ``scene_id`` matches the inner body's ``id``
+        whether the caller passed the entity_id or the storage key.
+        """
+        (
+            actual_config,
+            current_hash,
+            resolved_id,
+        ) = await self._get_scene_config_internal(scene_id)
+        refuse_write_by_bare_id_of_another_key("scene", scene_id, resolved_id)
+        if current_hash != config_hash:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.SERVICE_CALL_FAILED,
+                    "Scene modified since last read (conflict)",
+                    suggestions=[
+                        "Retry with the fresh config_hash returned in this error's context",
+                        "Or call ha_config_get_scene() again to fetch a new hash",
+                    ],
+                    context={
+                        "action": action,
+                        "scene_id": resolved_id,
+                        "current_config_hash": current_hash,
+                    },
+                )
+            )
+        return actual_config, resolved_id
+
+    @staticmethod
+    def _validate_scene_config(
+        config: str | dict[str, Any],
+        scene_id: str,
+        category: str | None,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Parse and validate scene config, returning ``(config_dict, effective_category)``.
+
+        Parses JSON string config, requires a JSON object, and extracts
+        category. Core's config API validates the scene itself.
+        """
+        try:
+            parsed_config = parse_json_param(config, "config")
+        except ValueError as e:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_INVALID_JSON,
+                    f"Invalid config parameter: {e}",
+                    context={
+                        "scene_id": scene_id,
+                        "provided_config_type": type(config).__name__,
+                    },
+                )
+            )
+
+        if parsed_config is None or not isinstance(parsed_config, dict):
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_INVALID_PARAMETER,
+                    "Config parameter must be a JSON object",
+                    context={
+                        "scene_id": scene_id,
+                        "provided_type": type(parsed_config).__name__,
+                    },
+                )
+            )
+
+        config_dict = cast(dict[str, Any], parsed_config)
+
+        # Extract category before sending to HA REST API (rejects unknown keys).
+        # Parameter takes precedence over config dict value.
+        config_category = config_dict.pop("category", None)
+        effective_category = category if category is not None else config_category
+        return config_dict, effective_category
+
+    @tool(
+        name="ha_config_set_scene",
+        tags={"Scenes"},
+        annotations=write_hints(
+            "Create or Update Scene",
+            destructive=True,
+            idempotent=False,
+            open_world=False,
+        ),
+    )
+    @with_auto_backup(
+        domain="scene",
+        id_param="scene_id",
+        skip_fn=_skip_scene_activation_backup,
+    )
+    @log_tool_usage
+    async def ha_config_set_scene(
+        self,
+        scene_id: Annotated[
+            str,
+            Field(
+                description="Scene storage key (e.g. 'movie_night') or entity_id "
+                "(e.g. 'scene.movie_night'). A bare id writes the scene stored "
+                "under that key; when none is but another scene's entity is "
+                "scene.<id>, the write is refused (pass scene.<id> for that "
+                "scene). A new scene takes the bare key; Core names its entity "
+                "after 'name'."
+            ),
+        ],
+        config: Annotated[
+            dict[str, Any] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description=(
+                    "Scene configuration dictionary. Must include 'entities' "
+                    "(a dict keyed by entity_id, NOT a list) unless "
+                    "capture_entities or capture_devices supplies them. Optional fields: "
+                    "'name' (defaults to scene_id), 'icon', 'id' (the storage "
+                    "key; must equal the scene's), 'metadata' (per-entity "
+                    "editor hints, e.g. {'light.x': {'entity_only': true}}). "
+                    "Mutually exclusive with python_transform."
+                ),
+                default=None,
+            ),
+        ] = None,
+        python_transform: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Python expression to transform existing scene config. "
+                    "Mutually exclusive with config. "
+                    "WARNING: Expressions with infinite loops will hang the server. "
+                    "Examples: "
+                    "Add entity: python_transform=\"config['entities']['light.bed'] = {'state': 'on'}\" "
+                    "Update brightness: python_transform=\"config['entities']['light.kitchen']['brightness'] = 50\" "
+                    "Remove entity: python_transform=\"del config['entities']['light.kitchen']\" "
+                    "\n\n" + get_security_documentation()
+                ),
+            ),
+        ] = None,
+        capture_entities: Annotated[
+            list[str] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description=(
+                    "Entity IDs whose current state and attributes are written "
+                    "into config's 'entities', as the scene editor captures "
+                    "them; a captured state replaces that entity's entry in "
+                    "config. Requires config."
+                ),
+                default=None,
+            ),
+        ] = None,
+        capture_devices: Annotated[
+            list[str] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description=(
+                    "Device IDs captured as the scene editor saves a picked "
+                    "device: each entity of the device that has a state, is not "
+                    "hidden, has no entity category and is outside the domains "
+                    "the editor leaves out (sensors, buttons, scenes, scripts, "
+                    "update, zone, ...), without entity_only unless also in "
+                    "capture_entities. Needs the ha_mcp_tools component. "
+                    "Requires config."
+                ),
+                default=None,
+            ),
+        ] = None,
+        config_hash: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Config hash from ha_config_get_scene for optimistic locking. "
+                    "REQUIRED for python_transform (validates scene unchanged). "
+                    "Optional for config updates (validates before full replacement if provided)."
+                ),
+            ),
+        ] = None,
+        category: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Category ID to assign to this scene. Use ha_config_get_category(scope='scene') "
+                    "to list available categories, or ha_config_set_category() to create one."
+                ),
+                default=None,
+            ),
+        ] = None,
+        wait: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Wait for scene to be queryable before returning. Set to False for bulk"
+                    " operations."
+                ),
+                default=True,
+            ),
+        ] = True,
+        activate: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Activate the scene (scene.turn_on). Alone with scene_id it "
+                    "activates any scene entity, including integration and YAML "
+                    "scenes (pass their entity_id). With config or "
+                    "python_transform it runs after Home Assistant has reloaded "
+                    "scenes from the write."
+                ),
+                default=False,
+            ),
+        ] = False,
+        MandatoryBPS: Annotated[
+            bool,
+            Field(default=True),
+        ] = True,
+        # BestPracticeKey (#1779): consumed by StrictBpsMiddleware, never read
+        # here — see strict_bps.py for the declaration contract.
+        BestPracticeKey: BestPracticeKeyParam = None,
+    ) -> dict[str, Any]:
+        """
+        Create or update a Home Assistant scene.
+
+        MUST call ha_get_skill_guide OR refer to your locally installed skills first.
+
+        Supports two modes: full config replacement (``config``) or
+        Python transformation of an existing scene (``python_transform``).
+        See the field descriptions for ``python_transform`` examples and
+        the ``config`` shape contract. Either mode can also take
+        ``activate``, which can be passed alone with ``scene_id`` to activate
+        a scene without touching its config.
+
+        WHEN TO USE:
+        - ``python_transform``: surgical edits to an existing scene
+          (add/remove/update a single entity entry).
+        - ``config``: creating a new scene, or wholesale replacement; with
+          ``capture_entities`` or ``capture_devices``, from current states.
+        - ``activate`` (with scene_id, no config): activate any scene,
+          e.g. ha_config_set_scene(scene_id="scene.movie_night", activate=True).
+
+        WHEN NOT TO USE:
+        - To list or look up existing scenes, use ha_config_get_scene.
+
+        SCENE SHAPE: Automations use a list of actions; scenes capture a snapshot
+        of states as a dict.
+
+        EXAMPLE:
+
+        ha_config_set_scene(scene_id="movie_night", config={
+            "name": "Movie Night",
+            "entities": {
+                "light.living_room": {"state": "on", "brightness": 50},
+            },
+            "icon": "mdi:movie",
+        })
+
+        The top-level ``SKILL.md`` for home-assistant-best-practices ships in
+        this response under ``skill_content`` by default — generic
+        best-practice index covering entity-naming and
+        safe-refactoring patterns that intersect with scene authoring. For
+        detailed scene configuration help beyond that, use ha_get_skill_guide.
+        """
+        try:
+            # Issue #1168 R6 blocker 16: empty ``scene_id`` pre-flight before
+            # any config dispatch — keeps the error code/message aligned with
+            # the actual problem rather than the misleading
+            # ``RESOURCE_NOT_FOUND`` from a downstream lookup. Migrated to
+            # the shared ``validate_identifier_not_empty`` helper (#1314) —
+            # message and ``context["scene_id"]`` key preserved for callers.
+            validate_identifier_not_empty(
+                scene_id,
+                "scene_id",
+                message="scene_id must not be empty",
+                suggestions=[
+                    "Pass a non-empty scene identifier (e.g. 'movie_night')",
+                    "For a fresh create, use a name-derived slug",
+                ],
+                context={"scene_id": scene_id},
+            )
+            # Validate mutual exclusivity of config and python_transform
+            if config is not None and python_transform is not None:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_INVALID_PARAMETER,
+                        "Cannot use both config and python_transform simultaneously",
+                        suggestions=[
+                            "Use only ONE of: config or python_transform",
+                            "config: Full replacement",
+                            "python_transform: Python-based edits (recommended for existing scenes)",
+                        ],
+                        context={"action": "set", "scene_id": scene_id},
+                    )
+                )
+
+            if (capture_entities, capture_devices) != (None, None) and config is None:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_INVALID_PARAMETER,
+                        "capture_entities or capture_devices requires config",
+                        suggestions=[
+                            "To recapture a stored scene, pass the config and "
+                            "config_hash from ha_config_get_scene with "
+                            "capture_entities or capture_devices",
+                        ],
+                        context={"action": "set", "scene_id": scene_id},
+                    )
+                )
+            if activate and config is None and python_transform is None:
+                return await self._activate_scene_only(scene_id, category, MandatoryBPS)
+
+            if python_transform is not None:
+                return await self._run_scene_python_transform(
+                    scene_id,
+                    config_hash,
+                    python_transform,
+                    category,
+                    wait,
+                    MandatoryBPS,
+                    activate=activate,
+                )
+
+            if config is None:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.VALIDATION_INVALID_PARAMETER,
+                        "Either config or python_transform must be provided",
+                        suggestions=[
+                            "config: Full scene configuration for create/replace",
+                            "python_transform: Python expression for surgical edits",
+                        ],
+                        context={"action": "set", "scene_id": scene_id},
+                    )
+                )
+
+            return await self._run_scene_config_replace(
+                scene_id,
+                config,
+                capture_entities,
+                config_hash,
+                category,
+                wait,
+                MandatoryBPS,
+                activate=activate,
+                capture_devices=capture_devices,
+            )
+
+        except ToolError as te:
+            raise augment_tool_error_with_skill_content(te, bp_warnings=None) from None
+        except SceneIdNotAnEntityError as e:
+            raise_scene_id_refusal(e.identifier, e.storage_key)
+        except SceneStorageConfigNotFoundError as e:
+            # Set on a non-storage scene: the hash-verify / python_transform
+            # pre-fetch read 404s because the entity has no editable scenes.yaml
+            # config (Hue/vendor or raw-YAML). Same CONFIG_NOT_FOUND
+            # classification as get/delete (#1971), not a generic write failure.
+            raise_scene_not_storage_error(e.scene_id, e.platform)
+        except Exception as e:  # noqa: BLE001
+            error = exception_to_structured_error(
+                e,
+                context={"scene_id": scene_id},
+                suggestions=[
+                    "Scene shape: {'name': 'Movie', 'entities': {'light.kitchen': {'state': 'on'}}}",
+                    "Use ha_search(domain_filter='scene') to find scenes",
+                    "Use ha_get_skill_guide for help",
+                ],
+                raise_error=False,
+            )
+            augment_error_dict_with_skill_content(error, bp_warnings=None)
+            raise_tool_error(error)
+
+    async def _activate_scene_only(
+        self, scene_id: str, category: str | None, MandatoryBPS: bool
+    ) -> dict[str, Any]:
+        """Activate an existing scene without touching its config."""
+        if category is not None:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_INVALID_PARAMETER,
+                    "category requires a config update",
+                    suggestions=[
+                        "Pass config or python_transform when assigning a category",
+                        "Omit category to only activate the scene",
+                    ],
+                    context={"action": "activate", "category": category},
+                )
+            )
+        # Integration and YAML scenes have no storage key, so an entity_id is
+        # taken as-is; a bare key goes through the registry like other reads.
+        entity_id = (
+            scene_id
+            if scene_id.startswith("scene.")
+            else await self._resolve_scene_entity_id(scene_id)
+        )
+        # HA's scene.turn_on is a silent no-op on an unknown entity.
+        try:
+            await self._client.get_entity_state(entity_id)
+        except HomeAssistantAPIError as e:
+            if e.status_code == 404:
+                raise_tool_error(create_entity_not_found_error(entity_id))
+            raise
+        response: dict[str, Any] = {
+            "success": True,
+            "action": "activate",
+            "scene_id": scene_id,
+            "entity_id": entity_id,
+        }
+        await self._activate_scene(response, entity_id, standalone=True)
+        attach_skill_content(
+            response,
+            MandatoryBPS=MandatoryBPS,
+            canonical_files=_SCENE_SKILL_FILES,
+            referenced_files=None,
+        )
+        return response
+
+    async def _activate_scene(
+        self, response: dict[str, Any], entity_id: str, *, standalone: bool
+    ) -> None:
+        """Call scene.turn_on; raise when standalone, warn after a config write."""
+        try:
+            await self._client.call_service(
+                "scene", "turn_on", {"entity_id": entity_id}
+            )
+        except (
+            HomeAssistantAPIError,
+            HomeAssistantAuthError,
+            HomeAssistantConnectionError,
+        ) as exc:
+            if standalone:
+                exception_to_structured_error(
+                    exc, context={"action": "activate", "entity_id": entity_id}
+                )
+            logger.warning(
+                "Scene %s not activated after config write: %s", entity_id, exc
+            )
+            response["activated"] = False
+            response.setdefault("warnings", []).append(
+                f"Scene config was written, but the scene could not be activated: {exc}"
+            )
+            return
+        response["activated"] = True
+
+    async def _run_scene_python_transform(
+        self,
+        scene_id: str,
+        config_hash: str | None,
+        python_transform: str,
+        category: str | None,
+        wait: bool,
+        MandatoryBPS: bool,
+        *,
+        activate: bool = False,
+    ) -> dict[str, Any]:
+        """Execute ``ha_config_set_scene``'s python_transform mode."""
+        if config_hash is None:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_INVALID_PARAMETER,
+                    "config_hash is required for python_transform",
+                    suggestions=[
+                        "Call ha_config_get_scene() first",
+                        "Use the config_hash from that response",
+                    ],
+                    context={
+                        "action": "python_transform",
+                        "scene_id": scene_id,
+                    },
+                )
+            )
+
+        actual_config, resolved_id = await self._fetch_and_verify_hash(
+            scene_id, config_hash, "python_transform"
+        )
+        # Capture the scene's own ``id`` BEFORE the transform mutates the
+        # config in place — it is the stable identity the id-change guard
+        # compares against (in production it equals ``resolved_id``; it is
+        # also correct when ``resolved_id`` is None because the envelope
+        # omitted ``scene_id``).
+        original_id = actual_config.get("id")
+
+        try:
+            transformed_config = safe_execute(python_transform, actual_config)
+        except PythonSandboxError as e:
+            message, suggestions = format_sandbox_error(e, python_transform)
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.VALIDATION_FAILED,
+                    message,
+                    suggestions=suggestions,
+                    context={
+                        "action": "python_transform",
+                        "scene_id": resolved_id,
+                    },
+                )
+            )
+
+        raise_problems(
+            scene_body_problems(transformed_config, original_id, "python_transform")
+            + await category_problems(self._client, category)
+        )
+        self._prune_scene_metadata(transformed_config, resolved_id)
+
+        # ``resolved_id`` is the storage key (write target); ``scene_id``
+        # stays the caller id so a missing ``name`` defaults caller-facing
+        # rather than to the storage key (#1935).
+        references = await ref_check(self._client, transformed_config, "scene")
+        # Scene writes reload every scene; activation has to follow that reload.
+        async with config_reload_waiter(
+            self._client, "scene_reloaded", enabled=activate
+        ) as wait_for_reload:
+            result = await self._client.upsert_scene_config(
+                transformed_config, scene_id, resolved_id=resolved_id
+            )
+            reloaded = await wait_for_reload()
+        activate = _activate_once_reloaded(result, reloaded, activate, scene_id)
+        # The upsert re-resolves when ``resolved_id`` was None (envelope
+        # omitted the key); re-bind to the authoritative write target it
+        # returned so the re-fetch, entity resolution, and response all
+        # use the resolved storage key rather than a possible None.
+        resolved_id = result.get("scene_id", resolved_id)
+
+        # Re-fetch to get authoritative hash (HA may normalise after save).
+        # ``resolved_id`` is already the storage key, so skip the re-resolve.
+        _, new_config_hash, _ = await self._get_scene_config_internal(
+            resolved_id, _resolved=True
+        )
+
+        # Resolve actual entity_id and apply wait + category — same
+        # post-upsert finalisation the full-config branch runs. Without
+        # these, ``wait`` and ``category`` are silently dropped on
+        # python_transform calls.
+        entity_id = (
+            await resolve_entity_id_after_write(self._client, resolved_id, "scene")
+            if wait or category or activate
+            else f"scene.{resolved_id}"
+        )
+        if wait:
+            try:
+                registered = await wait_for_entity_registered(self._client, entity_id)
+                if not registered:
+                    result.setdefault("warnings", []).append(
+                        f"Scene updated but {entity_id} not yet queryable. "
+                        "It may take a moment to become available."
+                    )
+            except (HomeAssistantConnectionError, HomeAssistantAuthError) as e:
+                result.setdefault("warnings", []).append(
+                    f"Scene updated but verification failed: {e}"
+                )
+        if category and entity_id:
+            # Pre-validation of ``category`` already ran before the
+            # upsert (R6 blocker 15) — apply directly here.
+            await apply_entity_category(
+                self._client,
+                entity_id,
+                category,
+                "scene",
+                result,
+                "scene",
+            )
+        if activate:
+            await self._activate_scene(result, entity_id, standalone=False)
+
+        # Issue #1168 R3 blocker 6: build the response from
+        # ``resolved_id`` directly (not the caller-input ``scene_id``)
+        # so the outer field always matches the storage key carried
+        # in ``result``. ``result["scene_id"]`` is also the storage
+        # key from rest_client; the kwarg-after-spread order means
+        # the explicit assignment wins on key-collision regardless.
+        response: dict[str, Any] = {
+            "success": True,
+            **{k: v for k, v in result.items() if k != "success"},
+            "action": "python_transform",
+            "scene_id": resolved_id,
+            "config_hash": new_config_hash,
+            "python_expression": python_transform,
+            "message": f"Scene {resolved_id} updated via Python transform",
+        }
+        merge_validation_meta(response, references)
+        attach_skill_content(
+            response,
+            MandatoryBPS=MandatoryBPS,
+            canonical_files=_SCENE_SKILL_FILES,
+            referenced_files=None,
+        )
+        return response
+
+    @staticmethod
+    def _prune_scene_metadata(
+        transformed_config: dict[str, Any], resolved_id: str | None
+    ) -> None:
+        """Drop orphan ``metadata`` keys whose entity was removed by the transform."""
+        # Issue #1168 R3 blocker 5: prune orphan ``metadata`` keys
+        # whose entity was deleted by the transform (e.g. a list
+        # comprehension that filters ``entities`` doesn't touch
+        # ``metadata`` and HA keeps the orphan entries on disk).
+        # Full-replace via ``config=`` clears metadata cleanly; the
+        # transform path needs to mirror that contract.
+        metadata = transformed_config.get("metadata")
+        entities = transformed_config.get("entities")
+        # A missing or non-dict ``entities`` is left for Core to refuse.
+        if isinstance(metadata, dict) and isinstance(entities, dict):
+            pruned_keys = sorted(k for k in metadata if k not in entities)
+            if pruned_keys:
+                # Issue #1168 R5 blocker 12: a buggy transform that
+                # accidentally drops entities used to silently
+                # rewrite metadata. Surface the prune so a stray
+                # ``del entities[k]`` doesn't lose the friendly_name
+                # without trace.
+                logger.info(
+                    f"python_transform pruned {len(pruned_keys)} orphan "
+                    f"metadata key(s) from scene {resolved_id}: {pruned_keys}"
+                )
+            transformed_config["metadata"] = {
+                k: v for k, v in metadata.items() if k in entities
+            }
+
+    async def _run_scene_config_replace(
+        self,
+        scene_id: str,
+        config: dict[str, Any],
+        capture_entities: list[str] | None,
+        config_hash: str | None,
+        category: str | None,
+        wait: bool,
+        MandatoryBPS: bool,
+        *,
+        activate: bool = False,
+        capture_devices: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Execute ``ha_config_set_scene``'s full-config replacement mode."""
+        config_dict, effective_category = self._validate_scene_config(
+            config,
+            scene_id,
+            category,
+        )
+        problems: list[dict[str, Any]] = []
+        # Issue #1168 R3 blocker 7: when caller passes ``config_hash``,
+        # honor the optimistic-locking semantics promised by the field
+        # description. ``_fetch_and_verify_hash`` raises ToolError on
+        # mismatch. We capture ``resolved_id`` from the verified fetch
+        # so subsequent upsert/response builders use the storage key
+        # consistently (issue #1168 R3 blocker 6).
+        #
+        # Path branching: the hash arm's inner fetch reads the config
+        # first, so a non-storage scene (Hue/vendor, raw-YAML) surfaces
+        # as CONFIG_NOT_FOUND and a genuinely-missing scene as the bare
+        # 404 – you cannot lock against a config that isn't there. The
+        # no-hash arm has no such read, so it resolves richly and, when
+        # the entity already exists, pre-checks the config API below
+        # before the upsert (issue #1971) so a plain ``set`` on a
+        # non-storage scene cannot silently shadow-create a duplicate.
+        if config_hash is not None:
+            _, resolved_id = await self._fetch_and_verify_hash(
+                scene_id, config_hash, "set"
+            )
+        else:
+            resolution = await self._client._resolve_scene(scene_id)
+            resolved_id = resolution.storage_key
+            # If the scene already exists this is an EDIT, and without a hash
+            # there is no prior read: a POST to ``config/scene/config/<key>``
+            # for a Hue/vendor or YAML scene would CREATE a duplicate managed
+            # ``scenes.yaml`` entry instead of erroring. Pre-check the config
+            # API first – its 404 raises SceneStorageConfigNotFoundError, which
+            # the outer handler maps to CONFIG_NOT_FOUND.
+            #
+            # Existence takes both signals: an ``id``-less YAML scene has no
+            # registry unique_id yet still holds a state-machine entity, and
+            # shadow-creates just the same. Only a scene missing from both is a
+            # real create, at the price of one extra ``/states/`` GET there.
+            if resolution.registry_hit or await self._client._scene_state_exists(
+                resolved_id
+            ):
+                await self._client.get_scene_config(scene_id, resolution=resolution)
+                # A bare id that resolved to another key is no edit of it.
+                refuse_write_by_bare_id_of_another_key("scene", scene_id, resolved_id)
+            else:
+                problems += entity_form_create_problems(scene_id, resolved_id)
+        # These input refusals (entity-form create, body, category, captures)
+        # come in one response.
+        problems += scene_body_problems(config_dict, resolved_id, "set")
+        problems += await category_problems(self._client, effective_category)
+        captured = await read_captures(
+            self._client, capture_entities or [], capture_devices or [], problems
+        )
+        raise_problems(problems)
+        if captured:
+            merge_captures(config_dict, captured, capture_entities or [])
+
+        references = await ref_check(self._client, config_dict, "scene")
+        # ``resolved_id`` is already the storage key (from the hash-verify
+        # fetch or the resolve above) — pass it as the write target to skip
+        # the redundant re-resolve. ``scene_id`` stays the caller id so a
+        # missing ``name`` defaults caller-facing, not to the storage key
+        # (#1935).
+        # Scene writes reload every scene; activation has to follow that reload.
+        async with config_reload_waiter(
+            self._client, "scene_reloaded", enabled=activate
+        ) as wait_for_reload:
+            result = await self._client.upsert_scene_config(
+                config_dict, scene_id, resolved_id=resolved_id
+            )
+            reloaded = await wait_for_reload()
+        activate = _activate_once_reloaded(result, reloaded, activate, scene_id)
+        # The upsert re-resolves when ``resolved_id`` was None (envelope
+        # omitted the key); re-bind to the authoritative write target it
+        # returned so entity resolution and the response use the resolved
+        # storage key rather than a possible None.
+        resolved_id = result.get("scene_id", resolved_id)
+
+        # Resolve actual entity_id via registry — HA derives scene
+        # entity_ids from the 'name' slug, not the scene_id storage key,
+        # so f"scene.{scene_id}" is wrong whenever a name is supplied.
+        entity_id = (
+            await resolve_entity_id_after_write(self._client, resolved_id, "scene")
+            if wait or effective_category or activate
+            else f"scene.{resolved_id}"
+        )
+
+        # Wait for scene to be queryable
+        if wait:
+            try:
+                registered = await wait_for_entity_registered(self._client, entity_id)
+                if not registered:
+                    result.setdefault("warnings", []).append(
+                        f"Scene saved but {entity_id} not yet queryable. "
+                        "It may take a moment to become available."
+                    )
+            except (HomeAssistantConnectionError, HomeAssistantAuthError) as e:
+                result.setdefault("warnings", []).append(
+                    f"Scene saved but verification failed: {e}"
+                )
+
+        # Apply category to entity registry if provided.
+        if effective_category and entity_id:
+            # Pre-validation of ``effective_category`` already ran before
+            # the upsert (R6 blocker 15) — apply directly here.
+            await apply_entity_category(
+                self._client,
+                entity_id,
+                effective_category,
+                "scene",
+                result,
+                "scene",
+            )
+        if activate:
+            await self._activate_scene(result, entity_id, standalone=False)
+
+        merge_validation_meta(result, references)
+
+        # Issue #1168 R3 blocker 6: build response from ``resolved_id``
+        # so the outer ``scene_id`` always matches the storage key.
+        # ``result["scene_id"]`` is also the storage key (from
+        # rest_client); explicit assignment after the spread guards
+        # against any future result-shape drift.
+        response = {
+            "success": True,
+            **result,
+            "scene_id": resolved_id,
+        }
+        # attach AFTER the outer dict is built so hint lands at
+        # position 0 of the FINAL response (see
+        # config_write_helpers._SKILL_CONTENT_OPTOUT_HINT).
+        attach_skill_content(
+            response,
+            MandatoryBPS=MandatoryBPS,
+            canonical_files=_SCENE_SKILL_FILES,
+            referenced_files=None,
+        )
+        return response
+
+    @tool(
+        name="ha_config_remove_scene",
+        tags={"Scenes"},
+        annotations=write_hints(
+            "Remove Scene", destructive=True, idempotent=True, open_world=False
+        ),
+    )
+    @with_auto_backup(domain="scene", id_param="scene_id")
+    @log_tool_usage
+    async def ha_config_remove_scene(
+        self,
+        scene_id: Annotated[
+            str,
+            Field(
+                description="Scene to delete: storage key (e.g. 'old_scene') or "
+                "entity_id (e.g. 'scene.old_scene'). A bare id deletes only the "
+                "scene stored under that key; a scene made by scene.create has "
+                "none and is deleted by its entity_id."
+            ),
+        ],
+        wait: Annotated[
+            bool,
+            Field(
+                description="Wait for scene to be fully removed before returning.",
+                default=True,
+            ),
+        ] = True,
+    ) -> dict[str, Any]:
+        """Delete a Home Assistant scene.
+
+        EXAMPLE: ha_config_remove_scene("old_scene")
+
+        Deletes a scene from Home Assistant's editable scene storage
+        (``scenes.yaml`` entries with an ``id``, as the UI and
+        ha_config_set_scene write them) or one made by ``scene.create``
+        (through Core's ``scene.delete``); a scene defined elsewhere in YAML or
+        by an integration is CONFIG_NOT_FOUND.
+
+        The scene is deleted even when automations or scripts reference it;
+        the ones Home Assistant's related search finds are listed in
+        ``referenced_by``, with a warning.
+        """
+        try:
+            # Issue #1168 R6 blocker 16: empty ``scene_id`` pre-flight before
+            # the resolver — keeps the error code/message aligned with the
+            # actual problem. Migrated to the shared
+            # ``validate_identifier_not_empty`` helper (#1314) — message
+            # and ``context["scene_id"]`` key preserved for callers.
+            validate_identifier_not_empty(
+                scene_id,
+                "scene_id",
+                message="scene_id must not be empty",
+                suggestions=[
+                    "Pass a non-empty scene identifier (e.g. 'old_scene')",
+                    "Use ha_search(domain_filter='scene') to find existing scene_ids",
+                ],
+                context={"scene_id": scene_id},
+            )
+            # Resolve once up-front; the rich resolution carries
+            # ``registry_hit``/``platform`` so a config-API 404 on a
+            # non-storage scene (Hue/vendor, raw-YAML) classifies as
+            # CONFIG_NOT_FOUND rather than the misleading generic 404 (#1971).
+            # A scene with no storage key (scene.create) answers with its
+            # entity_id as ``scene_id``.
+            target = await self._resolve_scene_to_remove(scene_id)
+            # Resolve actual entity_id BEFORE delete — once the registry
+            # entry is gone, the unique_id lookup can no longer find it.
+            # Falls back to scene.<storage key> when the registry has no
+            # matching unique_id; a scene left to Core's scene.delete is
+            # looked up by the caller's entity_id.
+            entity_id = (
+                await self._resolve_scene_entity_id(
+                    target.storage_key, allow_component=True
+                )
+                if isinstance(target, SceneResolution)
+                else scene_id
+            )
+            # A failed lookup only warns: it must not keep the scene alive.
+            lookup: list[str] = []
+            related = (
+                await search_related(self._client, "scene", entity_id, lookup) or {}
+            )
+            users = {k: related[k] for k in ("automation", "script") if related.get(k)}
+
+            result = await self._delete_scene(scene_id, target)
+            if users:
+                result["referenced_by"] = users
+                names = ", ".join(sorted(i for ids in users.values() for i in ids))
+                result.setdefault("warnings", []).append(
+                    f"{entity_id} was deleted while still referenced by {names}; "
+                    "update or remove those references."
+                )
+            elif lookup:
+                result.setdefault("warnings", []).append(
+                    "Could not check which automations and scripts use "
+                    f"{entity_id} ({lookup[0]})"
+                )
+
+            if wait:
+                await verify_entity_removed(self._client, entity_id, result)
+
+            return {"success": True, "action": "delete", **result}
+        except ToolError:
+            raise
+        except SceneStorageConfigNotFoundError as e:
+            # Only a bare id gets here (an entity_id goes to scene.delete): a
+            # Hue/vendor, raw-YAML or scene.create scene with no stored config
+            # (#1971).
+            raise_scene_not_storage_error(e.scene_id, e.platform, remove=True)
+        except Exception as e:
+            exception_to_structured_error(
+                e,
+                context={"scene_id": scene_id},
+                suggestions=[
+                    "Verify scene_id exists using ha_search(domain_filter='scene')",
+                    "Use ha_get_skill_guide for help",
+                ],
+            )
+            # ``exception_to_structured_error`` always raises (NoReturn); this
+            # explicit raise makes the function's exit unambiguous (no implicit
+            # ``return None`` fall-through) and is never reached at runtime.
+            raise
+
+    async def _resolve_scene_to_remove(
+        self, scene_id: str
+    ) -> SceneResolution | SceneIdNotAnEntityError:
+        """The resolution of a scene to delete; a bare id that resolved to
+        another scene's key is refused here. When ``scene.<id>`` is no
+        registered entity while key ``<id>`` holds a scene, the error is
+        returned: Core's ``scene.delete`` then decides."""
+        try:
+            resolution: SceneResolution = await self._client._resolve_scene(scene_id)
+        except SceneIdNotAnEntityError as e:
+            return e
+        key = resolution.storage_key
+        if key != scene_id and not scene_id.startswith("scene."):
+            # A bare id is a storage key: no delete goes to another key.
+            if await self._client._config_exists("scene", key):
+                raise_bare_id_of_another_key(scene_id, key)
+            raise_scene_not_storage_error(scene_id, resolution.platform)
+        return resolution
+
+    async def _delete_scene(
+        self, scene_id: str, target: SceneResolution | SceneIdNotAnEntityError
+    ) -> dict[str, Any]:
+        """Delete the stored scene; ``scene.<id>`` with no stored config goes to
+        Core's ``scene.delete``, which removes only a scene ``scene.create``
+        made. Core's refusal leads the error: a scene it did not make has no
+        editable config, and with no such entity the bare key is named."""
+        platform = None
+        if isinstance(target, SceneResolution):
+            try:
+                # Reuses the resolved storage key and classifies a 404.
+                return cast(
+                    dict[str, Any],
+                    await self._client.delete_scene_config(scene_id, resolution=target),
+                )
+            except SceneStorageConfigNotFoundError as e:
+                if not scene_id.startswith("scene."):
+                    raise
+                platform = e.platform
+        reply = await self._client.send_websocket_message(
+            {
+                "type": "call_service",
+                "domain": "scene",
+                "service": "delete",
+                "target": {"entity_id": scene_id},
+            },
+            expected_error_codes=frozenset({"service_validation_error"}),
+        )
+        if not reply.get("success"):
+            refusal = (
+                reply.get("translation_key")
+                if reply.get("translation_domain") == "scene"
+                else None
+            )
+            core = core_error_message(reply.get("error", ""))
+            if refusal == "entity_not_scene" and isinstance(
+                target, SceneIdNotAnEntityError
+            ):
+                raise_scene_id_refusal(target.identifier, target.storage_key, core=core)
+            if refusal in ("entity_not_scene", "entity_not_dynamically_created"):
+                raise_scene_not_storage_error(scene_id, platform, core=core)
+            raise_entity_refusal("Could not delete scene", reply, scene_id)
+        return {"scene_id": scene_id, "deleted_with": "scene.delete"}
+
+
+def register_config_scene_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
+    """Register Home Assistant scene configuration tools."""
+    register_tool_methods(mcp, ConfigSceneTools(client))

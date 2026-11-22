@@ -1,0 +1,63 @@
+schema_version: "1.1"
+name: motion-light-automation-mode
+description: >
+  A motion light with a timeout is broken by the default `mode: single` — a
+  re-trigger during the wait is dropped and the light goes dark with someone there.
+  With the wait as a `for:` on the off trigger and none in the actions, every run
+  ends at once and the mode does not matter.
+tags: [automations]
+
+execution:
+  prompt: >-
+    Home Assistant automation: when binary_sensor.hallway_motion trips, turn on
+    light.hallway and switch it off 5 minutes after motion stops
+  allowed_tools: [Read, Glob, Grep]
+  model: haiku
+  max_turns: 10
+  timeout_seconds: 300
+runs: 3
+
+graders:
+  - type: tool_used
+    name: skill-fired
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?home-assistant-best-practices"'
+    min: 1
+
+  # Free: new motion must reset the timeout. Passes `mode: restart`, or an answer
+  # with no `delay` or `wait_` step whose `motion.cleared` trigger on the hallway
+  # (the sensor or `area_id: hallway`), or `state` trigger on
+  # binary_sensor.hallway_motion to off, has a `for:` within its next 8 lines:
+  # each run ends at once and the mode does not matter. A `for:` on the
+  # `motion.detected` trigger, or on another sensor's trigger, does not pass.
+  - type: regex
+    name: new-motion-resets-timeout
+    pattern: '^\s*"?mode"?\s*:\s*["'']?restart|(?<![\s\S])(?![\s\S]*^\s*-?\s*"?(?:delay|wait_for_trigger|wait_template)"?\s*:)[\s\S]*^\s*(?:-\s*)?(?:trigger|platform):\s*(?:(?:motion|occupancy)\.cleared\b(?=[^\n]*(?:\n(?![a-z_]+:|\s*-\s*(?:trigger|platform):)[^\n]*){0,8}?hallway)|state\b(?=[^\n]*(?:\n(?![a-z_]+:|\s*-\s*(?:trigger|platform):)[^\n]*){0,8}?binary_sensor\.hallway_motion\b)(?=[^\n]*(?:\n(?![a-z_]+:|\s*-\s*(?:trigger|platform):)[^\n]*){0,8}?\bto"?\s*:\s*["'']?off\b))[^\n]*(?:\n(?![a-z_]+:|\s*-\s*(?:trigger|platform):)[^\n]*){0,8}?\bfor"?\s*:'
+    flags: mi
+    match: contains
+
+  # Free and exact: the trigger type is one YAML line. The Sonnet judge failed
+  # answers whose config had exactly this line. HA still loads the pre-2024.10
+  # `platform:` key as `trigger:`. Only `detected` turns the light on; a
+  # `motion.cleared` line alone can be the wait, not the trigger.
+  - type: regex
+    name: prefers-purpose-specific-trigger
+    pattern: '^\s*-\s*(?:trigger|platform):\s*(motion|occupancy)\.detected\b'
+    flags: m
+    match: contains
+
+  - type: llm
+    name: delay-starts-after-motion-clears
+    criteria: >-
+      The five-minute timeout begins when motion STOPS, not when motion is detected
+      — the automation waits for the sensor to clear (a `wait_for_trigger` on the
+      off state, a `for:` duration on a cleared state, or an equivalent) and only
+      then counts down before switching the light off.
+
+      FAIL if the light is switched off five minutes after motion is DETECTED,
+      which is what a bare `delay:` after `light.turn_on` does.
+
+expected_outcome: >-
+  New motion resets the timeout (`mode: restart` with a wait in the actions, or
+  the wait as a `for:` on a `motion.cleared` trigger), with a purpose-specific
+  motion trigger, and the five minutes counted from when motion clears.

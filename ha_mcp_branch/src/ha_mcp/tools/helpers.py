@@ -1,0 +1,697 @@
+"""
+Reusable helper functions for MCP tools.
+
+Centralized utilities that can be shared across multiple tool implementations.
+"""
+
+import functools
+import json
+import logging
+import re
+import sys
+import time
+from typing import Any, Literal, NoReturn, overload
+
+from ha_mcp._vendor.fastmcp import Context
+from ha_mcp._vendor.fastmcp.exceptions import ToolError
+
+from ..client.rest_client import (
+    HomeAssistantAPIError,
+    HomeAssistantAuthError,
+)
+from ..client.websocket_client import HomeAssistantWebSocketClient
+from ..client_error_responses import create_client_error_response
+from ..errors import (
+    TOOL_ERROR_LOG_LEVEL,
+    ErrorCode,
+    create_auth_error,
+    create_connection_error,
+    create_error_response,
+    create_validation_error,
+)
+from ..redaction import scrub_known_secrets
+from ..utils.usage_logger import log_tool_call
+from .coercion import UNSET, parse_json_param
+
+logger = logging.getLogger(__name__)
+
+
+def raise_tool_error(error_response: dict[str, Any]) -> NoReturn:
+    """
+    Raise a ToolError with structured error information.
+
+    This function converts a structured error response dictionary into a ToolError
+    exception, which signals to MCP clients that the tool execution failed via
+    the isError flag in the protocol response.
+
+    The structured error information is preserved as JSON in the error message,
+    allowing AI agents to parse and act on the detailed error information.
+
+    Args:
+        error_response: Structured error response dictionary with 'success': False
+                       and 'error' containing code, message, suggestions, etc.
+
+    Raises:
+        ToolError: Always raises with the JSON-serialized error response
+
+    Example:
+        >>> error = create_error_response(
+        ...     ErrorCode.ENTITY_NOT_FOUND,
+        ...     "Entity light.nonexistent not found"
+        ... )
+        >>> raise_tool_error(error)  # Raises ToolError with isError=true
+    """
+    raise tool_error_from_response(error_response)
+
+
+def tool_error_from_response(error_response: dict[str, Any]) -> ToolError:
+    """Build the ``ToolError`` that :func:`raise_tool_error` raises."""
+    return ToolError(
+        json.dumps(error_response, indent=2, default=str),
+        log_level=TOOL_ERROR_LOG_LEVEL,
+    )
+
+
+def _parse_json_dict_param(
+    data: str | dict[str, Any] | None,
+    *,
+    type_error_message: str,
+) -> dict[str, Any] | None:
+    """Parse a JSON-object tool parameter, rejecting lists and invalid JSON."""
+    if data is None:
+        return None
+    raw: Any = None
+    try:
+        raw = parse_json_param(data, "data")
+    except ValueError as e:
+        raise_tool_error(
+            create_validation_error(
+                f"Invalid data parameter: {e}",
+                parameter="data",
+                invalid_json=True,
+            )
+        )
+    if raw is not None and not isinstance(raw, dict):
+        raise_tool_error(
+            create_validation_error(
+                type_error_message,
+                parameter="data",
+                details=f"Received type: {type(raw).__name__}",
+            )
+        )
+    return raw if isinstance(raw, dict) else None
+
+
+def extract_tool_error_message(te: ToolError | str) -> str:
+    """Extract a human-readable error message from a ToolError or its logged text.
+
+    Pairs with raise_tool_error() which serializes error dicts as JSON.
+    Falls back to str(te) if the message is not valid JSON.
+    """
+    try:
+        error_data = json.loads(str(te))
+        msg = error_data.get("error", {}).get("message", str(te))
+        return str(msg)
+    except json.JSONDecodeError, TypeError, AttributeError:
+        return str(te)
+
+
+def extract_structured_error_reason(exc: BaseException) -> str | None:
+    """Extract "message" + first actionable suggestion from a structured error.
+
+    Like ``extract_tool_error_message`` but for surfaces that show the reason
+    to a human (settings UI, degraded-result warnings): it appends the first
+    suggestion when one exists, and returns ``None`` — instead of the raw
+    ``str(exc)`` JSON envelope — when the payload is not a structured error
+    or carries no usable message, so callers pick their own fallback.
+    ``create_error_response`` emits only the singular ``suggestion`` key for
+    one-suggestion errors (the plural ``suggestions`` list needs two or
+    more), so both keys are honored.
+    """
+    try:
+        payload = json.loads(str(exc))
+    except TypeError, ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    if not isinstance(message, str) or not message:
+        return None
+    suggestions = error.get("suggestions")
+    first = (
+        suggestions[0]
+        if isinstance(suggestions, list) and suggestions
+        else error.get("suggestion")
+    )
+    if isinstance(first, str) and first:
+        separator = " " if message[-1] in ".!?:" else ". "
+        return f"{message}{separator}{first}"
+    return message
+
+
+def reject_malformed_list_fields(
+    config: dict[str, Any],
+    list_keys: tuple[str, ...],
+    context: dict[str, Any],
+    *,
+    source: Literal["config", "patch", "python_transform"] = "config",
+) -> None:
+    """Reject list fields received as ``{"item": ...}`` or ``""`` (issue #2548).
+
+    Home Assistant either rejects these shapes with an error that does not name
+    them, or stores them and fails later, so the caller cannot tell what to fix.
+    """
+    received = {
+        k: '{"item": ...}' if isinstance(v, dict) and list(v) == ["item"] else '""'
+        for k in list_keys
+        if (v := config.get(k)) == "" or (isinstance(v, dict) and list(v) == ["item"])
+    }
+    if not received:
+        return
+    names = ", ".join(f"'{k}'" for k in received)
+    shapes = "; ".join(f"'{k}' as {shape}" for k, shape in received.items())
+    first = next(iter(received))
+    example = "[{...}, {...}]"
+    if re.fullmatch(r"\w+", first):
+        example = f'"{first}": {example}'
+    if source == "python_transform":
+        message = f"python_transform produced {shapes} instead of a list"
+        suggestions = [f"Assign {names} a list, e.g. {example}, or delete an empty one"]
+    else:
+        noun = "config" if source == "config" else "patch value"
+        message = f"Received {noun} {shapes} instead of a JSON array"
+        suggestions = [
+            f"Send {names} as a JSON array, e.g. {example}, or omit an empty one",
+            f"If it still arrives malformed, pass the whole {source} as one "
+            + "JSON-encoded string instead",
+            "If neither works, check the model or MCP client in use",
+        ]
+    raise_tool_error(
+        create_error_response(
+            ErrorCode.VALIDATION_INVALID_PARAMETER,
+            f"{message}; nothing was saved in Home Assistant",
+            suggestions=suggestions,
+            context={**context, "malformed_list_fields": received},
+        )
+    )
+
+
+def validate_identifier_not_empty(
+    value: str | None,
+    param_name: str,
+    *,
+    message: str | None = None,
+    suggestions: list[str] | None = None,
+    context: dict[str, Any] | None = None,
+) -> str:
+    """Reject ``None``, empty, or whitespace-only identifier values.
+
+    Surfaces a structured ``VALIDATION_INVALID_PARAMETER`` response so
+    CRUD-style tools fail loudly on missing identifiers instead of silently
+    routing on Python falsy semantics or relying on Home Assistant to
+    translate a missing identifier into a generic ``RESOURCE_NOT_FOUND``.
+
+    The destructive class this protects against:
+    ``action = "update" if label_id else "create"`` — passing ``""`` as
+    ``label_id`` silently routes to ``create`` when the caller intended
+    ``update``. The whitespace class this protects against: ``" "`` is truthy
+    in Python so ``if not value:`` lets it through, but Home Assistant has
+    no entry with id ``" "``.
+
+    The value is checked but not normalised: ``" abc "`` (a real id wrapped
+    in spaces) is accepted as-is and returned untouched. Only purely empty or
+    purely whitespace strings are rejected.
+
+    ``None`` is also rejected by this helper. Callers for whom ``None`` is a
+    documented sentinel (e.g. ``label_id=None`` meaning "list all" or
+    "create new") must gate the call themselves with
+    ``if value is not None: validate_identifier_not_empty(value, ...)``.
+
+    Returning ``str`` (rather than ``None``) lets call sites use the helper
+    in narrowing position — ``name = validate_identifier_not_empty(name, …)``
+    re-binds ``name`` from ``str | None`` to ``str`` so mypy can prove later
+    uses are safe without a duplicate inline check.
+
+    Args:
+        value: Identifier string supplied by the caller. ``None`` is
+            rejected — see the ``None``-sentinel note above for the caller
+            pattern that permits the sentinel.
+        param_name: Name of the parameter, used in the structured error
+            response's ``context`` and the human-readable message.
+        message: Optional override for the human-readable error message.
+            Defaults to ``"{param_name} must be a non-empty, non-whitespace
+            string"`` when omitted.
+        suggestions: Optional list of guidance strings for the response's
+            ``suggestions`` field. Defaults to a generic
+            "provide a non-empty value" hint.
+        context: Optional additional context fields merged into the error
+            response (e.g. ``{"action": "update"}``). The keys ``parameter``
+            and ``value`` are always set and take precedence.
+
+    Returns:
+        The validated ``value`` unchanged (typed as ``str``).
+
+    Raises:
+        ToolError: When ``value`` is ``None``, empty, or whitespace-only —
+            carrying a structured ``VALIDATION_INVALID_PARAMETER`` response
+            with the parameter name, the offending value (for diagnostics),
+            and the suggestions.
+
+    Example:
+        >>> validate_identifier_not_empty(label_id, "label_id",
+        ...     suggestions=["Omit label_id to create a new label"])
+    """
+    if value is not None and value.strip():
+        return value
+
+    final_context: dict[str, Any] = {}
+    if context:
+        final_context.update(context)
+    final_context["parameter"] = param_name
+    final_context["value"] = value
+    raise_tool_error(
+        create_error_response(
+            ErrorCode.VALIDATION_INVALID_PARAMETER,
+            message or f"{param_name} must be a non-empty, non-whitespace string",
+            suggestions=suggestions
+            or [f"Provide a valid non-empty value for {param_name}"],
+            context=final_context,
+        )
+    )
+
+
+WHITESPACE_CLEARS_NOTE = (
+    "A whitespace-only value acts like '', for clients that cannot send an "
+    "empty string."
+)
+_QUOTE_ONLY = re.compile(r"[\s\"'‘’“”]+")
+
+
+def clear_hint(param_name: str) -> str:
+    return (
+        f"To clear {param_name}, pass an empty string '', or a single space ' ' "
+        "if your client cannot send an empty string"
+    )
+
+
+def clearable_value(
+    value: str | None,
+    param_name: str,
+    *,
+    hint: str | None = None,
+) -> str | None:
+    """Map an empty or whitespace-only value to None, the registry's clear value.
+
+    Other values are returned stripped. A model whose client cannot send ``''``
+    falls back to ``'""'`` (#2585); a value made only of quotes and whitespace
+    is never a real value, so reject it.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if _QUOTE_ONLY.fullmatch(value):
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"{param_name} {value!r} contains only quote characters and whitespace",
+                suggestions=[hint or clear_hint(param_name)],
+                context={"parameter": param_name, "value": value},
+            )
+        )
+    return value
+
+
+async def get_connected_ws_client(
+    base_url: str, token: str, verify_ssl: bool | None = None
+) -> tuple[HomeAssistantWebSocketClient | None, dict[str, Any] | None]:
+    """
+    Create and connect a WebSocket client.
+
+    Args:
+        base_url: Home Assistant base URL
+        token: Authentication token
+        verify_ssl: TLS verification override. Pass ``client.verify_ssl``
+            from the calling REST client so a programmatic
+            ``HomeAssistantClient(verify_ssl=False)`` propagates to the
+            WebSocket too. ``None`` falls back to ``settings.verify_ssl``.
+
+    Returns:
+        Tuple of (ws_client, error_dict). If connection fails, ws_client is None.
+    """
+    ws_client = HomeAssistantWebSocketClient(base_url, token, verify_ssl=verify_ssl)
+    connected = await ws_client.connect()
+    if not connected:
+        reason = ws_client.last_connect_error
+        details = (
+            reason
+            if isinstance(reason, str)
+            else "WebSocket connection could not be established"
+        )
+        if isinstance(ws_client.last_connect_exception, HomeAssistantAuthError):
+            return None, create_auth_error(
+                "Home Assistant rejected the WebSocket token", details=details
+            )
+        return None, create_connection_error(
+            "Failed to connect to Home Assistant WebSocket",
+            details=details,
+        )
+    return ws_client, None
+
+
+# Environment failures: the classified guidance (token, admin rights, reachability)
+# is what fixes them and most callers do not anticipate them, so it leads and a
+# caller's own hints follow. Every other code keeps the caller's list as given.
+_ENVIRONMENT_CODES = frozenset(
+    {
+        ErrorCode.AUTH_INVALID_TOKEN.value,
+        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS.value,
+        ErrorCode.CONNECTION_FAILED.value,
+        ErrorCode.CONNECTION_TIMEOUT.value,
+    }
+)
+
+
+def _with_classified_suggestions(
+    error: dict[str, Any], suggestions: list[str]
+) -> list[str]:
+    """Put the classified suggestions of an environment code before the caller's."""
+    if error.get("code") not in _ENVIRONMENT_CODES:
+        return suggestions
+    classified = error.get("suggestions") or (
+        [error["suggestion"]] if error.get("suggestion") else []
+    )
+    return [*classified, *(s for s in suggestions if s not in classified)]
+
+
+def _append_macos_hints(error_response: dict[str, Any]) -> None:
+    if not (
+        sys.platform == "darwin"
+        and "error" in error_response
+        and isinstance(error_response["error"], dict)
+        and error_response["error"].get("code")
+        in (ErrorCode.CONNECTION_FAILED, ErrorCode.CONNECTION_TIMEOUT)
+    ):
+        return
+    macos_hints = [
+        "macOS may block local network access for Claude Desktop subprocesses "
+        + "(System Settings > Privacy & Security > Local Network)",
+        "Try an SSH tunnel: ssh -N -L 8123:localhost:8123 user@ha-server, "
+        + "then use http://localhost:8123",
+        "Ensure you are using http:// (not https://) unless SSL/TLS is configured",
+    ]
+    # Handle both "suggestions" (plural, 2+ items) and "suggestion" (singular, 1 item)
+    existing = error_response["error"].get("suggestions") or []
+    if not existing:
+        single = error_response["error"].get("suggestion")
+        if single:
+            existing = [single]
+    error_response["error"]["suggestions"] = existing + macos_hints
+
+
+@overload
+def exception_to_structured_error(
+    error: Exception,
+    context: dict[str, Any] | None = None,
+    *,
+    raise_error: Literal[True] = True,
+    suggestions: list[str] | None = None,
+) -> NoReturn:
+    pass
+
+
+@overload
+def exception_to_structured_error(
+    error: Exception,
+    context: dict[str, Any] | None = None,
+    *,
+    raise_error: Literal[False],
+    suggestions: list[str] | None = None,
+) -> dict[str, Any]:
+    pass
+
+
+def exception_to_structured_error(
+    error: Exception,
+    context: dict[str, Any] | None = None,
+    *,
+    raise_error: bool = True,
+    suggestions: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Convert an exception to a structured error response.
+
+    This function maps common exception types to appropriate error codes
+    and creates informative error responses. By default, it raises a ToolError
+    to signal the error at the MCP protocol level (isError=true).
+
+    Args:
+        error: The exception to convert
+        context: Additional context to include in the response
+        raise_error: If True (default), raises ToolError with the structured error.
+                    If False, returns the error dict for further modification.
+        suggestions: Optional list of actionable suggestions to embed in the error.
+                    Saves callers from manually inserting suggestions after the call.
+                    They replace the classified ones, except for the AUTH_*,
+                    CONNECTION_FAILED and CONNECTION_TIMEOUT codes, where they
+                    follow them (duplicates dropped).
+
+    Returns:
+        Structured error response dictionary (only if raise_error=False)
+
+    Raises:
+        ToolError: If raise_error=True (default), raises with JSON-serialized error
+    """
+    error_msg = str(error)
+    error_response = create_client_error_response(error, context)
+
+    # Tracebacks are operationally valuable only for genuinely unclassified
+    # exceptions (programmer errors, library bugs) — every other branch in
+    # create_client_error_response produces a structured signal that's sufficient on
+    # its own. Logging the traceback here gives operators line numbers for the
+    # bug class where ``str(error)`` is least informative, without
+    # re-introducing the duplicate ERROR-log noise that classified failures
+    # produced.
+    #
+    # ``exc_info=error`` rather than ``logger.exception()``: the traceback is
+    # taken from the exception we were handed, not from ``sys.exc_info()``.
+    # Every caller passes the exception explicitly, and the ``raise_error=False``
+    # paths may run outside an ``except`` block, where ``sys.exc_info()`` is
+    # empty and ``.exception()`` would log "NoneType: None" for the traceback.
+    if (
+        isinstance(error_response.get("error"), dict)
+        and error_response["error"].get("code") == ErrorCode.INTERNAL_ERROR
+    ):
+        logger.error("Unclassified exception: %s", error_msg, exc_info=error)
+
+    if (
+        suggestions
+        and "error" in error_response
+        and isinstance(error_response["error"], dict)
+    ):
+        # Set both `suggestion` (singular, first item) and `suggestions`
+        # (plural, full list). create_error_response (errors.py) sets the
+        # singular key; existing tests for exception_to_structured_error
+        # rely on the plural key being present even for single-item caller
+        # suggestions. Setting both keeps response consumers on both code
+        # paths working.
+        suggestions = _with_classified_suggestions(error_response["error"], suggestions)
+        error_response["error"]["suggestion"] = suggestions[0]
+        error_response["error"]["suggestions"] = suggestions
+
+    # Append macOS-specific hints for connection failures (after all other processing
+    # so hints survive regardless of whether caller provided explicit suggestions)
+    _append_macos_hints(error_response)
+
+    if raise_error:
+        raise_tool_error(error_response)
+
+    return error_response
+
+
+def log_tool_usage(func: Any) -> Any:
+    """
+    Decorator to automatically log MCP tool usage.
+
+    Tracks execution time, success/failure, and response size for all tool calls.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start_time = time.time()
+        tool_name = func.__name__
+        success = True
+        error_message = None
+        response_size = None
+
+        try:
+            result = await func(*args, **kwargs)
+            if isinstance(result, str):
+                response_size = len(result.encode("utf-8"))
+            elif hasattr(result, "__len__"):
+                response_size = len(str(result).encode("utf-8"))
+            return result
+        except BaseException as e:
+            # BaseException, not Exception: a cancelled tool call must not be
+            # recorded as a success. str() is empty on a bare CancelledError,
+            # so the class name stands in. RedactSecretsMiddleware scrubs the
+            # error only after this log entry is written.
+            success = False
+            error_message = scrub_known_secrets(str(e)) or type(e).__name__
+            raise
+        finally:
+            execution_time_ms = (time.time() - start_time) * 1000
+            log_tool_call(
+                tool_name=tool_name,
+                # UNSET means the caller omitted the argument; ha_report_issue
+                # returns these entries as JSON, so the sentinel must not land.
+                parameters={k: v for k, v in kwargs.items() if v is not UNSET},
+                execution_time_ms=execution_time_ms,
+                success=success,
+                error_message=error_message,
+                response_size_bytes=response_size,
+            )
+
+    return wrapper
+
+
+async def safe_progress(
+    ctx: Context | None,
+    *,
+    progress: float,
+    total: float | None = None,
+    message: str | None = None,
+) -> None:
+    """Report progress via ``ctx.report_progress`` with best-effort error handling.
+
+    A transport hiccup on a progress notification must never convert a
+    successful tool result into a ``ToolError``. Transport errors are logged
+    at debug; ``TypeError``/``AttributeError`` are escalated to ``warning``
+    because they signal a signature/interface mismatch (call-site bug or
+    Context object missing the expected method), not a flaky client.
+    ``ctx is None`` short-circuits without I/O.
+    """
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(progress=progress, total=total, message=message)
+    except (TypeError, AttributeError) as e:
+        logger.warning(
+            "ctx.report_progress signature error (%s): %s", type(e).__name__, e
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("ctx.report_progress failed (%s): %s", type(e).__name__, e)
+
+
+async def get_entity_state_or_none(
+    client: Any, entity_id: str
+) -> dict[str, Any] | None:
+    """Return the entity's state, or None when Core answers 404; other failures propagate."""
+    try:
+        state: dict[str, Any] = await client.get_entity_state(entity_id)
+    except HomeAssistantAPIError as e:
+        if e.status_code != 404:
+            raise
+        return None
+    return state
+
+
+def ws_failure_code(result: dict[str, Any]) -> ErrorCode:
+    """Map Core's WS error code: every ``invalid_<what>`` (``invalid_format``;
+    ``invalid_info``, a registry refusing an update such as a rename into
+    another domain; the recorder's ``invalid_start_time``),
+    ``service_validation_error`` and ``not_supported`` (e.g. ``todo/item/move``
+    on a list without reordering) refuse the caller's input; ``not_found`` is an
+    item Core does not hold (e.g. a YAML-configured helper)."""
+    code = result.get("error_code")
+    if code in ("service_validation_error", "not_supported") or (
+        isinstance(code, str) and code.startswith("invalid_")
+    ):
+        return ErrorCode.VALIDATION_INVALID_PARAMETER
+    if code == "not_found":
+        return ErrorCode.RESOURCE_NOT_FOUND
+    return ErrorCode.SERVICE_CALL_FAILED
+
+
+def core_error_message(error: object) -> str:
+    """Core's error text without the ``Command failed:`` prefix the WebSocket
+    client puts on a refused command (a result's ``error`` or the raised
+    ``HomeAssistantCommandError``)."""
+    return str(error).removeprefix("Command failed: ")
+
+
+def raise_core_refusal(
+    what: str,
+    result: dict[str, Any],
+    context: dict[str, Any] | None = None,
+    suggestions: list[str] | None = None,
+    suffix: str = "",
+) -> NoReturn:
+    """Raise a failed WebSocket command as ``{what}: <error>{suffix}``, the
+    error without the client's prefix, coded by :func:`ws_failure_code` with
+    Core's own code kept as ``ha_error_code``."""
+    raise_tool_error(
+        create_error_response(
+            ws_failure_code(result),
+            f"{what}: {core_error_message(result.get('error', 'Unknown error'))}{suffix}",
+            suggestions=suggestions,
+            context={**(context or {}), "ha_error_code": result.get("error_code")},
+        )
+    )
+
+
+def raise_entity_refusal(what: str, result: dict[str, Any], entity_id: str) -> NoReturn:
+    """:func:`raise_core_refusal` for a command on one entity; when Core does
+    not know the entity, the caller is also told how to find a valid id."""
+    unknown = result.get("error_code") == "not_found"
+    raise_core_refusal(
+        what,
+        result,
+        {"entity_id": entity_id},
+        ["Use ha_search() to find valid entity IDs"] if unknown else None,
+    )
+
+
+def refuse_blank_name(name: str | None, context: dict[str, Any]) -> None:
+    """Refuse a blank ``name`` of a label or category (``None`` leaves it as is).
+
+    An HA-MCP safeguard: Core stores a blank name, and a blank value clears the
+    other fields, so a blank name is refused instead of read as "clear it".
+    """
+    if name is not None:
+        validate_identifier_not_empty(
+            name,
+            "name",
+            message=(
+                "name must not be blank (an HA-MCP safeguard: Core accepts a "
+                "blank name, and a blank value clears the other fields)"
+            ),
+            suggestions=["Pass a non-empty name, or omit name on update to keep it"],
+            context=context,
+        )
+
+
+def clear_or_keep(value: str | None, param_name: str) -> str | None:
+    """``clearable_value`` for params where None means "not passed": blank → ''."""
+    return None if value is None else clearable_value(value, param_name) or ""
+
+
+def register_tool_methods(mcp: Any, instance: Any) -> None:
+    """Register all @tool-decorated methods from a class instance with the MCP server.
+
+    Discovers methods bearing a ``__fastmcp__`` attribute (set by the outermost
+    ``@tool`` decorator — must be listed above ``@log_tool_usage``) and registers
+    them via ``mcp.add_tool()``.
+    """
+    count = 0
+    for attr in dir(instance):
+        method = getattr(instance, attr)
+        if callable(method) and hasattr(method, "__fastmcp__"):
+            mcp.add_tool(method)
+            count += 1
+    if count == 0:
+        logger.warning(f"No @tool-decorated methods found on {type(instance).__name__}")

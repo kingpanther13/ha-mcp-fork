@@ -1,0 +1,71 @@
+schema_version: "1.1"
+name: button-event-entity
+description: >
+  The user asks for an event the hardware does not emit. Hue exposes
+  initial_press / repeat / short_release / long_press / long_release and no
+  double-press, so the correct answer surfaces the limitation instead of
+  inventing an event type that will never fire.
+tags: [automations, devices]
+
+execution:
+  prompt: >-
+    I've got a Hue dimmer switch, paired through the Hue Bridge in Home
+    Assistant. when I double-press the on button I want light.living_room_lamp
+    to go to 30%. how do I wire that up?
+  allowed_tools: [Read, Glob, Grep]
+  model: haiku
+  max_turns: 10
+  timeout_seconds: 300
+runs: 3
+
+graders:
+  - type: tool_used
+    name: skill-fired
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?home-assistant-best-practices"'
+    min: 1
+
+  # Free: an `event.received` or `state` trigger followed, within the same
+  # trigger, by an `event.*` entity ID (under `target:` or the legacy
+  # `entity_id:` key). The Sonnet judge failed answers whose config had exactly
+  # this.
+  - type: regex
+    name: uses-event-entity
+    pattern: '^\s*-\s*(?:trigger|platform):\s*(?:event\.received|state)\b[\s\S]{0,200}?\bentity_id"?\s*:\s*"?event\.[a-z0-9_]+'
+    flags: m
+    match: contains
+
+  - type: llm
+    name: reads-event-types
+    criteria: >-
+      The response reads the valid event types from the entity's `event_types`
+      attribute rather than asserting them from memory.
+
+      PASS if it tells the user to check the entity's `event_types` attribute, even
+      when it also names the values HA's Hue integration reports. FAIL if it states
+      which event types the device emits without indicating that they should be
+      read off the entity.
+
+  - type: llm
+    name: does-not-invent-double-press
+    criteria: >-
+      The response does NOT hand the user a made-up double-press event type for Hue.
+
+      PASS if it reports that no double-press event exists and either says so
+      plainly or proposes an explicit workaround (for example counting two
+      `initial_press` events within a window). FAIL if an automation is given whose
+      trigger is a `double_press` / `double` event type presented as real.
+
+  - type: llm
+    name: no-device-id-trigger
+    criteria: >-
+      The automation the user is told to create is not keyed off a `device_id`.
+
+      Judge the produced automation, not the prose — mentioning device_id to warn
+      against it is fine, and so is opening the device page to find the entity.
+      FAIL only if the automation has a `device_id` key or a device trigger, or
+      the user is told to pick a Device trigger in the UI.
+
+expected_outcome: >-
+  Targets the button's event.* entity, reads event_types off the entity, and
+  surfaces that Hue has no double-press event rather than inventing one.

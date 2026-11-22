@@ -1,0 +1,77 @@
+schema_version: "1.1"
+name: holdout-floor-occupancy-fans-off
+description: >
+  Held out: never used to tune the skill. "Nobody detected anywhere on the
+  floor for N minutes" needs `occupancy.cleared` with `behavior: all` and
+  `for:`. The default `each` fires once one sensor has been clear that long,
+  and a delay after a detection counts from the wrong moment. Same pattern as
+  floor-no-motion-lights-off, on another domain, floor and duration.
+tags: [automations, triggers, holdout]
+
+execution:
+  prompt: >-
+    in Home Assistant, switch off every fan on the ground floor once none of the
+    occupancy sensors on that floor has detected anyone for 20 minutes. the
+    floor is called ground_floor
+  allowed_tools: [Read, Glob, Grep]
+  model: haiku
+  max_turns: 10
+  timeout_seconds: 300
+runs: 3
+
+graders:
+  - type: tool_used
+    name: skill-fired
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?home-assistant-best-practices"'
+    min: 1
+
+  # Free: a cleared trigger as a trigger item, not only a mention.
+  - type: regex
+    name: uses-cleared-trigger
+    pattern: '^\s*-\s*(?:trigger|platform):\s*(occupancy|motion)\.cleared\b'
+    flags: m
+    match: contains
+
+  # The trigger item targets the floor the prompt names, not an area with its
+  # ID: `floor_id: ground_floor` on a line indented under that item.
+  - type: regex
+    name: trigger-targets-the-floor
+    pattern: '^([ \t]*)-[ \t]*(?:trigger|platform):[ \t]*(?:occupancy|motion)\.cleared\b[^\n]*(?:\n\1[ \t]+[^\n]*)*?\n\1[ \t]+[^\n]*?\bfloor_id"?[ \t]*:[ \t]*(?:\[[ \t]*|\n\1[ \t]+-[ \t]*)?["'']?ground_floor\b'
+    flags: m
+    match: contains
+
+  # `behavior: all` on the trigger, or on a condition that checks every sensor,
+  # both pass, on a line indented under that item. `each` (the default) and the
+  # pre-2026.6 `last` do not.
+  - type: regex
+    name: waits-for-all-sensors
+    pattern: '^([ \t]*)-[ \t]*(?:trigger|platform|condition):[ \t]*(?:occupancy|motion)\.(?:cleared|is_not_detected)\b[^\n]*(?:\n\1[ \t]+[^\n]*)*?\n\1[ \t]+[^\n]*?\bbehavior"?\s*:\s*"?all\b'
+    flags: m
+    match: contains
+
+  # `for: "00:20:00"` and `for:` with `minutes: 20` both pass, under the cleared
+  # trigger or condition item when the answer has one, else under any trigger or
+  # condition item (the trigger type is `uses-cleared-trigger`'s job).
+  - type: regex
+    name: waits-twenty-minutes
+    pattern: '^([ \t]*)-[ \t]*(?:trigger|platform|condition):[ \t]*(?:occupancy|motion)\.(?:cleared|is_not_detected)\b[^\n]*(?:\n\1[ \t]+[^\n]*)*?\n\1[ \t]+[^\n]*?\bfor"?\s*:\s*(?:"?0?0:20:00"?|\{?\s*"?minutes"?\s*:\s*20\b)|(?<![\s\S])(?![\s\S]*^[ \t]*-[ \t]*(?:trigger|platform|condition):[ \t]*(?:occupancy|motion)\.(?:cleared|is_not_detected)\b)[\s\S]*^([ \t]*)-[ \t]*(?:trigger|platform|condition):[^\n]*(?:\n\2[ \t]+[^\n]*)*?\n\2[ \t]+[^\n]*?\bfor"?\s*:\s*(?:"?0?0:20:00"?|\{?\s*"?minutes"?\s*:\s*20\b)'
+    flags: m
+    match: contains
+
+  - type: regex
+    name: turns-off-the-fans
+    pattern: '^\s*-\s*(?:action|service):\s*fan\.turn_off\b'
+    flags: m
+    match: contains
+
+  - type: regex
+    name: action-targets-the-floor
+    pattern: '^([ \t]*)-[ \t]*(?:action|service):[ \t]*fan\.turn_off\b[^\n]*(?:\n\1[ \t]+[^\n]*)*?\n\1[ \t]+[^\n]*?\bfloor_id"?[ \t]*:[ \t]*(?:\[[ \t]*|\n\1[ \t]+-[ \t]*)?["'']?ground_floor\b'
+    flags: m
+    match: contains
+
+expected_outcome: >-
+  An `occupancy.cleared` trigger targeting floor_id ground_floor with
+  `behavior: all` and `for: "00:20:00"`, and a `fan.turn_off` action on the
+  ground floor.
