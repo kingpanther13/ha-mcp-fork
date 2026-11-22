@@ -69,7 +69,12 @@ from ..renamed_tools import current_tool_name
 from ..tool_dispatch import CALL_PROXY_META_TOOLS, coerce_proxy_arguments
 from ..tools.helpers import raise_tool_error
 from . import resolver
-from .hidden_matcher import HiddenMatcher, known_entity_ids, scan_value
+from .hidden_matcher import (
+    HiddenMatcher,
+    friendly_names,
+    known_entity_ids,
+    scan_value,
+)
 from .identifier_aliases import (
     IdentifierAliases,
     build_identifier_aliases,
@@ -777,11 +782,41 @@ async def _refresh_hidden_set(config: VisibilityConfig, client: Any) -> HiddenMa
     hidden, _warnings = await load_hidden_set(
         fetched[1], fetched[0], client, device_result, strict=True
     )
+    places = await _place_names(client, device_result)
     return HiddenMatcher.from_hidden(
         hidden,
         build_identifier_aliases(hidden, fetched[1]),
         known_entity_ids(fetched[0], fetched[1]),
+        friendly_names(fetched[0]) if places is not None else None,
+        places or (),
     )
+
+
+async def _place_names(client: Any, device_result: Any) -> set[str] | None:
+    """The device and area names, which a hidden entity's name may equal.
+
+    ``None`` when they cannot be read: the matcher then scans for no name,
+    since it could not tell a hidden entity's name from its device's.
+    """
+    try:
+        devices = device_result or await core_device_list_reply(client)
+        areas = await client.send_websocket_message(
+            {"type": "config/area_registry/list"}
+        )
+    except Exception:
+        logger.warning(
+            "visibility enforce: device or area names unreadable; hidden "
+            "entities' names are not scanned for",
+            exc_info=True,
+        )
+        return None
+    names: set[str] = set()
+    for reply, keys in ((devices, ("name", "name_by_user")), (areas, ("name",))):
+        rows = reply.get("result") if isinstance(reply, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict):
+                names.update(v for k in keys if isinstance(v := row.get(k), str))
+    return names
 
 
 class _HiddenSetCache:
