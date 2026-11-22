@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import string
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -121,15 +122,26 @@ def _scanned_names(
     }
 
 
-def _part_of(text: str, first: int, name: str, longer: str) -> bool:
-    """Whether the ``name`` at ``first`` in ``text`` is part of ``longer`` there."""
-    offset = longer.find(name)
-    while offset >= 0:
-        start = first - offset
-        if start >= 0 and _fold(text[start : start + len(longer)]) == longer:
-            return True
-        offset = longer.find(name, offset + 1)
-    return False
+class _Places:
+    """Where the longer names stand in one scanned text, each found once."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._folded = ""
+        self._starts: dict[str, list[int]] = {}
+
+    def within(self, first: int, last: int, longer: str) -> bool:
+        """Whether ``longer`` stands in the text over all of ``first:last``."""
+        starts = self._starts.get(longer)
+        if starts is None:
+            self._folded = self._folded or _fold(self._text)
+            starts = self._starts[longer] = []
+            at = self._folded.find(longer)
+            while at >= 0:
+                starts.append(at)
+                at = self._folded.find(longer, at + 1)
+        nearest = bisect_right(starts, first) - 1
+        return nearest >= 0 and starts[nearest] + len(longer) >= last
 
 
 @dataclass(frozen=True)
@@ -201,6 +213,7 @@ class HiddenMatcher:
         if self.name_regex is None:
             return
         sizes: list[int] = []
+        places = _Places(text)
         for match in self.name_regex.finditer(text):
             first = match.start()
             before = text[max(0, first - 6) : first]
@@ -213,7 +226,7 @@ class HiddenMatcher:
                 name = here[: last - first]
                 if name not in self.names or text[last : last + 1].isalnum():
                     continue
-                if not any(_part_of(text, first, name, n) for n in self.names[name]):
+                if not any(places.within(first, last, n) for n in self.names[name]):
                     yield name
 
     def unknown_word(self, text: str) -> bool:
