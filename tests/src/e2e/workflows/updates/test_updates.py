@@ -680,10 +680,30 @@ class TestManageUpdates:
     async def test_install_all_with_no_pending_updates(self, mcp_client):
         """Category install with nothing pending succeeds with zero targets."""
         async with MCPAssertions(mcp_client) as mcp:
-            result = await mcp.call_tool_success(
+            listing = await safe_call_tool(
+                mcp_client, "ha_manage_updates", {"include_skipped": True}
+            )
+            result = await safe_call_tool(
+                mcp_client,
                 "ha_manage_updates",
                 {"action": "install", "categories": ["addons", "hacs"]},
             )
+            assert result.get("success") is True, {
+                "result": result,
+                "rows": [
+                    (
+                        u.get("entity_id"),
+                        u.get("title"),
+                        u.get("platform"),
+                        u.get("category"),
+                        u.get("in_progress"),
+                        u.get("installed_version"),
+                        u.get("latest_version"),
+                        u.get("supported_features"),
+                    )
+                    for u in listing.get("updates", [])
+                ],
+            }
             assert result["action"] == "install"
             assert result["requested"] == result["succeeded"] + result["failed"]
             assert isinstance(result["results"], list)
