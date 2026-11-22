@@ -200,16 +200,20 @@ class HiddenMatcher:
         """
         if self.name_regex is None:
             return
+        sizes: list[int] = []
         for match in self.name_regex.finditer(text):
             first = match.start()
             before = text[max(0, first - 6) : first]
             if before[-1:].isalnum() and not _ESCAPE_BEFORE.search(before):
                 continue
-            for name, longer_names in self.names.items():
-                last = first + len(name)
-                if _fold(text[first:last]) != name or text[last : last + 1].isalnum():
+            # Every name that starts here is tried, a shorter one too.
+            sizes = sizes or sorted({len(name) for name in self.names})
+            here = _fold(text[first : first + sizes[-1]])
+            for last in (first + size for size in sizes):
+                name = here[: last - first]
+                if name not in self.names or text[last : last + 1].isalnum():
                     continue
-                if not any(_part_of(text, first, name, n) for n in longer_names):
+                if not any(_part_of(text, first, name, n) for n in self.names[name]):
                     yield name
 
     def unknown_word(self, text: str) -> bool:
