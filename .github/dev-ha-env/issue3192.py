@@ -40,7 +40,7 @@ async def session(url, fs_enabled, stage):
         transport = StdioTransport(command=shutil.which("ha-mcp"), args=[], env=env, keep_alive=False)
         async with Client(transport, timeout=90) as client:
             tools = {tool.name: tool for tool in await client.list_tools()}
-            log(stage + "/catalog", {"search_args": sorted(tools["ha_search"].inputSchema["properties"]),
+            log(stage + "/catalog", {"search_args": sorted(tools["ha_search"].model_dump(by_alias=True)["inputSchema"]["properties"]),
                 "search_description": tools["ha_search"].description.splitlines()[:5],
                 "related": sorted(n for n in tools if any(k in n for k in
                     ("automation","script","yaml","_file","trace","eval","call_service","execute","skill","ws_command","tool_search")))})
@@ -49,7 +49,8 @@ async def session(url, fs_enabled, stage):
                     log(stage + "/" + label, {"listed": False})
                     return
                 response = await client.call_tool_mcp(tool, params)
-                body = response.structuredContent
+                wire = response.model_dump(mode="json", by_alias=True)
+                body = wire.get("structuredContent")
                 if body is None:
                     body = [getattr(part, "text", "") for part in response.content]
                     if len(body) == 1:
@@ -58,7 +59,7 @@ async def session(url, fs_enabled, stage):
                         except (ValueError, TypeError):
                             body = body[0]
                 text = json.dumps(body, ensure_ascii=False)
-                view = {"error": response.isError, "markers": [m for m in MARKERS if m in text]}
+                view = {"error": wire.get("isError", False), "markers": [m for m in MARKERS if m in text]}
                 if label == "guide":
                     view["available"] = bool(body)
                 elif label.startswith("yaml_") or label == "file":
