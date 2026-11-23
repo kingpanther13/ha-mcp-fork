@@ -1,0 +1,5 @@
+qualification_editor_control:
+  alias: Qualification Editor Control
+  sequence:
+    - event: qualification_editor_script_event
+  mode: single

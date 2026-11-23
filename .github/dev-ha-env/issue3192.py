@@ -36,7 +36,7 @@ async def session(url, fs_enabled, stage):
         env = {"HOMEASSISTANT_URL": url, "HOMEASSISTANT_TOKEN": TEST_TOKEN,
                "HA_MCP_CONFIG_DIR": config_dir, "HA_MCP_DISABLE_SETTINGS_UI": "true",
                "HAMCP_ENV_FILE": "/dev/null", "ENABLE_TOOL_SEARCH": "false",
-               "READ_ONLY_MODE": "true", "HAMCP_ENABLE_FILESYSTEM_TOOLS": str(fs_enabled).lower()}
+               "READ_ONLY_MODE": "true", "ENABLE_BETA_FEATURES": str(fs_enabled).lower(), "HAMCP_ENABLE_FILESYSTEM_TOOLS": str(fs_enabled).lower()}
         transport = StdioTransport(command=shutil.which("ha-mcp"), args=[], env=env, keep_alive=False)
         async with Client(transport, timeout=90) as client:
             tools = {tool.name: tool for tool in await client.list_tools()}
@@ -69,16 +69,21 @@ async def session(url, fs_enabled, stage):
                 log(stage + "/" + label, view)
             if stage == "stock":
                 await call("guide", "ha_get_skill_guide")
+                await call("managed_automation", "ha_config_get_automation", entity_id="automation.e2e_seed_automation")
+                await call("managed_script", "ha_config_get_script", script_id="qualification_editor_control")
                 await call("integration", "ha_get_integration", domain="ha_mcp_tools")
                 await call("auto_get", "ha_config_get_automation", entity_id=AUTO)
                 await call("script_get", "ha_config_get_script", script_id=SCRIPT)
                 await call("script_get_bare", "ha_config_get_script", script_id=SCRIPT.split(".")[1])
+            if stage == "file_tools":
+                await call("list_packages", "ha_list_files", path="packages", pattern="*.yaml")
             for domain, eid in IDS.items():
                 search = {"query": eid, "exact_match": True, "limit": 1}
                 if stage == "stock":
                     await call(domain+"_state", "ha_get_state", entity_id=eid)
                     await call(domain+"_trace", "ha_get_automation_traces", automation_id=eid, sections="config")
                     await call(domain+"_exact", "ha_search", **search)
+                    await call(domain+"_action_search", "ha_search", query=f"qualification_{domain}_only", limit=10)
                     await call(domain+"_exact_wide", "ha_search", **(search | {"limit": 10}))
                 if stage != "file_tools":
                     await call(domain+"_compat", "ha_search", **search, include_config=True, search_types=[domain])
