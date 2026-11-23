@@ -1,0 +1,20 @@
+automation:
+  - id: qualification_packaged_night
+    alias: Qualification Packaged Night
+    initial_state: false
+    triggers:
+      - trigger: event
+        event_type: qualification_unfired_event
+    conditions:
+      - condition: time
+        after: "19:00:00"
+        before: "06:00:00"
+    actions:
+      - event: qualification_automation_only
+    mode: single
+script:
+  qualification_packaged_speakers:
+    alias: Qualification Packaged Speakers
+    sequence:
+      - event: qualification_script_only
+    mode: single

@@ -8,7 +8,7 @@ homeassistant:
   # packages-folder detection (#1854) instead of the hardcoded default. The
   # tool keeps "packages" as a fallback, so tests writing to packages/*.yaml
   # still pass.
-  packages: !include_dir_named custom_packages
+  packages: !include_dir_named packages
 
 # Load frontend themes from the themes folder
 frontend:
