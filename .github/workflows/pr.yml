@@ -8,4 +8,4 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
-      - run: uv run --python 3.14 --all-extras --dev pytest tests/src/unit/test_ha_search_component_routing.py::TestOlderComponent::test_missing_editor_bodies_warns_when_a_body_was_requested -q --tb=short
+      - run: uv run --python 3.14 --all-extras --dev pytest tests/src/unit/test_ha_search_component_routing.py::test_body_request_without_component_explains_how_to_enable_it -q --tb=short
