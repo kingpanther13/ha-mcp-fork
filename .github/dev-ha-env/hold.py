@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shlex
+import signal
 import subprocess
 import tarfile
 import time
@@ -215,7 +216,7 @@ class Instance:
         # The child keeps its own copy of the log handle.
         with open(SRC.parent / "server.log", "ab") as out:
             self.server = subprocess.Popen(
-                ["uv", "run", command], cwd=SRC, env=env, stdout=out, stderr=out
+                ["uv", "run", command], cwd=SRC, env=env, stdout=out, stderr=out, start_new_session=True
             )
 
     def update_component(self) -> None:
@@ -309,4 +310,25 @@ def test_hold_dev_ha_env(ha_container_with_fresh_config: dict[str, Any]) -> None
     except Exception as err:  # noqa: BLE001
         # HA is up; fix the server through the tools, as on any instance.
         log(sha=sha, backend=inst.backend, ready=False, error=str(err))
+    # Fork-only experiment. The runner can request one update to a fixed public commit.
+    request = SRC.parent / "restart-request"
+    deadline = time.monotonic() + 900
+    while not request.exists() and time.monotonic() < deadline:
+        time.sleep(0.25)
+    if request.exists():
+        try:
+            assert inst.server is not None and inst.server.poll() is None
+            old_pid = inst.server.pid
+            os.killpg(old_pid, signal.SIGTERM)
+            inst.server.wait(timeout=45)
+            git("checkout", "--detach", "ad2b2cfdfd91102c9dfae511f8c34affdc08ef96")
+            subprocess.run(["uv", "sync", "--frozen", "--all-extras", "--dev"], cwd=SRC, check=True)
+            inst.start_server()
+            inst.wait_server()
+            receipt = {"old_pid": old_pid, "new_pid": inst.server.pid, "sha": git("rev-parse", "HEAD")}
+        except Exception as exc:
+            receipt = {"failure": type(exc).__name__}
+        path = SRC.parent / "restart-result"
+        path.with_suffix(".tmp").write_text(json.dumps(receipt))
+        path.with_suffix(".tmp").replace(path)
     time.sleep(60 * int(os.environ.get("DEVENV_MINUTES", "340")))

@@ -102,6 +102,7 @@ jobs:
           sparse-checkout: |
             .github/dev-ha-env/hold.py
             .github/dev-ha-env/tunnels.sh
+            .github/dev-ha-env/probe_restart.py
           sparse-checkout-cone-mode: false
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
@@ -292,51 +293,7 @@ jobs:
           name: dev-ha-env-urls
           path: out/dev-ha-env-urls.enc
           retention-days: 1
-      # A restarted tunnel has a new URL. Each Keep running step returns when
-      # the URLs change so the next step can upload them again; after three,
-      # new URLs are in the job log only.
-      - name: Keep running
-        id: keep-1
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-1.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-2
-        if: steps.keep-1.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-2.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-3
-        if: steps.keep-2.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running
-      - name: Upload the new URLs
-        if: steps.keep-3.outputs.urls_changed == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dev-ha-env-urls
-          path: out/dev-ha-env-urls.enc
-          retention-days: 1
-          overwrite: true
-      - name: Keep running
-        id: keep-4
-        if: steps.keep-3.outputs.urls_changed == 'true'
-        run: source devenv/.github/dev-ha-env/tunnels.sh && keep_running last
-      - name: Logs
-        if: always()
+      - name: Verify hosted web and stdio across the same checkout update
+        timeout-minutes: 12
         run: |
-          docker ps --format '{{.Image}} {{.Status}}' || true
-          tail -200 env.log || true
-          tail -100 server.log || true
+          src/.venv/bin/python -u devenv/.github/dev-ha-env/probe_restart.py
