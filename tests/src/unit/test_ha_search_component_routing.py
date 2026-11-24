@@ -274,6 +274,24 @@ async def test_component_diagnostics_mark_partial(
     assert any("config components inaccessible" in w for w in resp["warnings"])
 
 
+async def test_body_request_without_component_explains_how_to_enable_it(
+    hass: HomeAssistant, core_client: HomeAssistantClient
+) -> None:
+    await set_up_domain(hass, "script", {"garden_routine": {"sequence": []}})
+    result = await _search(
+        core_client,
+        query="garden_routine",
+        search_types=["script"],
+        include_config=True,
+    )
+
+    assert [row["entity_id"] for row in result["scripts"]] == ["script.garden_routine"]
+    assert any(
+        "install" in w.lower() and "ha_mcp_tools" in w and "incomplete" in w
+        for w in result.get("warnings", [])
+    )
+
+
 class TestOlderComponent:
     """A component without a capability keeps the legacy path for what it
     cannot serve."""
@@ -294,7 +312,7 @@ class TestOlderComponent:
         spies.states.assert_awaited_once()
         assert frames(spies.component, SEARCH) == []
 
-    async def test_missing_editor_bodies_warns_when_a_body_was_requested(
+    async def test_missing_editor_bodies_require_an_update_before_search(
         self,
         hass: HomeAssistant,
         component_core_client: HomeAssistantClient,
@@ -313,26 +331,32 @@ class TestOlderComponent:
             ],
         )
 
-        async def search(include_config: bool) -> dict[str, Any]:
-            return await _search(
-                component_core_client,
-                query="garden_probe",
-                search_types=["automation"],
-                include_config=include_config,
-            )
-
-        metadata = await search(False)
+        metadata = await _search(
+            component_core_client,
+            query="garden_probe",
+            search_types=["automation"],
+        )
         assert [row["entity_id"] for row in metadata["automations"]] == [
             "automation.garden_routine"
         ]
-        assert not any("update" in w.lower() for w in metadata.get("warnings", []))
 
-        with_bodies = await search(True)
-        assert not with_bodies["automations"]
-        assert any(
-            "update" in w.lower() and "ha_mcp_tools" in w and "incomplete" in w
-            for w in with_bodies.get("warnings", [])
-        )
+        socket = await pooled(component_core_client)
+        with (
+            routes(component_core_client, socket) as spies,
+            pytest.raises(ToolError) as exc,
+        ):
+            await _search(
+                component_core_client,
+                query="garden_probe",
+                search_types=["automation", "helper"],
+                include_config=True,
+            )
+
+        assert "ha_mcp_tools" in str(exc.value)
+        assert "Update" in str(exc.value)
+        spies.states.assert_not_called()
+        spies.bridge.assert_not_called()
+        assert frames(spies.component, SEARCH) == []
 
     async def test_membership_request_falls_back_from_old_component(
         self,
