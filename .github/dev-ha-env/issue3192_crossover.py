@@ -109,4 +109,5 @@ async def main():
     write(PACKAGE, package)
     await phase(url, "package-after", bodies)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

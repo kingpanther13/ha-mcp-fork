@@ -12,18 +12,3 @@ automation:
     actions:
       - event: qualification_automation_only
     mode: single
-script:
-  qualification_packaged_speakers:
-    alias: Qualification Packaged Speakers
-    sequence:
-      - event: qualification_script_only
-    mode: single
-  set_evening_target:
-    alias: Set Evening Target
-    sequence:
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.e2e_pagination_seed
-        data:
-          value: 67
-    mode: single

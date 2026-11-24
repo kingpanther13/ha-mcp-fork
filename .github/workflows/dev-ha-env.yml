@@ -262,4 +262,4 @@ jobs:
           done
           if [ ! -s targets.json ]; then echo "HA never came up"; tail -150 env.log; exit 1; fi
           cd src
-          uv run python .github/dev-ha-env/issue3192_crossover.py
+          uv run python .github/dev-ha-env/issue3192_normal.py
