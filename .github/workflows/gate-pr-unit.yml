@@ -4,6 +4,11 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Commit to verify
+        required: true
+        type: string
 
 # A new push to a PR makes the previous commit's lanes dead weight: nothing
 # merges on their result, so cancel them instead of paying for a full second
@@ -38,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+          ref: ${{ inputs.candidate }}
           persist-credentials: false
       - name: Component version and server pin match the server version
         run: |
@@ -82,7 +87,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+        ref: ${{ inputs.candidate }}
         persist-credentials: false
 
     - name: Docs Size Check
@@ -285,7 +290,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+        ref: ${{ inputs.candidate }}
         persist-credentials: false
 
     - name: Setup Node
@@ -356,7 +361,7 @@ jobs:
 
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+        ref: ${{ inputs.candidate }}
         persist-credentials: false
         submodules: true
 
@@ -490,7 +495,7 @@ jobs:
 
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+        ref: ${{ inputs.candidate }}
         persist-credentials: false
         submodules: true
 
@@ -579,7 +584,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        ref: fc1f23b7c402663fd88b64750eb6fef14560317c
+        ref: ${{ inputs.candidate }}
         persist-credentials: false
         submodules: true
 
