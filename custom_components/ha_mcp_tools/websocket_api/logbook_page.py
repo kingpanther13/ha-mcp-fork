@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -69,15 +70,12 @@ def _prime_contexts(
         processor.logbook_run.context_lookup[origin[CONTEXT_ID_BIN_POS]] = origin
 
 
-def _read_rows(
-    session: Session, source: Subquery, page: dict[str, Any]
-) -> tuple[list[Row[Any]], bool]:
-    """Choose a bounded set by indexed identity, before hydrating wide records."""
+def row_sizes(
+    session: Session, source: Subquery, keys: Any, probed: Sequence[Row[Any]]
+) -> dict[RowKey, int]:
+    """The stored size of each probed row that still exists."""
     cols = _columns(source)
-    order = tuple(c.desc() for c in cols) if page["order"] == "newest" else cols
-    keys = tuple_(*cols)
-    # Probe sizes without bringing the event JSON/attributes into Python. Use
-    # a conservative UTF-8 allowance for databases where LENGTH counts chars.
+    # Use a conservative UTF-8 allowance for databases where LENGTH counts chars.
     size = sum(
         (
             func.coalesce(func.length(col), 0)
@@ -85,6 +83,26 @@ def _read_rows(
         ),
         start=literal(0),
     )
+    return {
+        (stamp, kind, row_id): chars
+        for stamp, kind, row_id, chars in session.connection().execute(
+            select(*cols, size).where(keys.in_(probed))
+        )
+    }
+
+
+def _read_rows(
+    session: Session, source: Subquery, page: dict[str, Any]
+) -> tuple[list[Row[Any]], bool, RowKey | None]:
+    """Choose a bounded set by indexed identity, before hydrating wide records.
+
+    Also returns the last probed key the choice examined, so a batch whose rows
+    a purge removed can still advance past them.
+    """
+    cols = _columns(source)
+    order = tuple(c.desc() for c in cols) if page["order"] == "newest" else cols
+    keys = tuple_(*cols)
+    # Probe sizes without bringing the event JSON/attributes into Python.
     probe = select(*cols).order_by(*order).limit(RAW_PAGE_ROWS + 1)
     if after := page.get("after"):
         anchor = tuple(after)
@@ -93,18 +111,16 @@ def _read_rows(
         )
     candidates = session.connection().execute(probe).all()
     if not candidates:
-        return [], False
-    sizes = {
-        (stamp, kind, row_id): chars
-        for stamp, kind, row_id, chars in session.connection().execute(
-            select(*cols, size).where(keys.in_(candidates[:RAW_PAGE_ROWS]))
-        )
-    }
+        return [], False, None
+    probed = candidates[:RAW_PAGE_ROWS]
+    sizes = row_sizes(session, source, keys, probed)
     chosen: list[RowKey] = []
     used = 0
-    for stamp, kind, row_id in candidates[:RAW_PAGE_ROWS]:
+    examined: RowKey | None = None
+    for stamp, kind, row_id in probed:
+        examined = (stamp, kind, row_id)
         # A purge can remove a probed row before its size is read.
-        if (chars := sizes.get((stamp, kind, row_id))) is None:
+        if (chars := sizes.get(examined)) is None:
             continue
         if chosen and used + chars * 4 > PAGE_BYTES:
             break
@@ -116,7 +132,7 @@ def _read_rows(
             select(source).where(keys.in_(chosen)).order_by(*cols)
         )
     )
-    return rows, len(chosen) < len(candidates)
+    return rows, len(chosen) < len(candidates), chosen[-1] if chosen else examined
 
 
 def read_logbook_page(
@@ -140,7 +156,16 @@ def read_logbook_page(
                     session, processor, source, bounds, page.get("search", "")
                 ),
             }
-        rows, more = _read_rows(session, source, page)
+        rows, more, examined = _read_rows(session, source, page)
+        if not rows and more and examined:
+            # A purge removed every row this batch chose; continue past them.
+            return {
+                "entries": [],
+                "matched": 0,
+                "total": None,
+                "skip": page["skip"],
+                "after": list(examined),
+            }
         if rows and (page.get("after") or (more and page["order"] == "newest")):
             _prime_contexts(session, source, processor, rows)
         rendered = [(row, processor.humanify([row])) for row in rows]

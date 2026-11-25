@@ -631,6 +631,47 @@ async def test_dense_logbook_pages_return_each_tied_event_once(
 
 
 @pytest.mark.usefixtures("logbook")
+async def test_rows_purged_during_a_page_read_do_not_end_the_paging(
+    hass: HomeAssistant,
+    component_core_client: HomeAssistantClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a Recorder purge removes every row a batch probed before their sizes
+    are read, the cursor moves past them instead of reporting the end."""
+    from custom_components.ha_mcp_tools.websocket_api import logbook_page
+
+    stamp = dt_util.utcnow().timestamp() - 30
+    for i in range(6):
+        hass.bus.async_fire(
+            "logbook_entry",
+            {"name": f"purge marker {i}", "message": "test"},
+            time_fired=stamp + i,
+        )
+    await async_wait_recording_done(hass)
+    monkeypatch.setattr(logbook_page, "RAW_PAGE_ROWS", 2)
+    real_sizes = logbook_page.row_sizes
+    reads = 0
+
+    def purged_once(*args: Any) -> dict[Any, int]:
+        nonlocal reads
+        reads += 1
+        # The second batch's rows vanish between the probe and the size read.
+        return {} if reads == 2 else real_sizes(*args)
+
+    monkeypatch.setattr(logbook_page, "row_sizes", purged_once)
+    params = call_kwargs(source="logbook", order="oldest", search="purge marker")
+    found: list[str] = []
+    for _ in range(10):
+        data = (await LogTools(component_core_client).get_logs(**params))["data"]
+        found.extend(row["name"] for row in data["entries"])
+        if not data["has_more"]:
+            break
+        params["offset"] = data["next_offset"]
+    # Only the two rows of the purged batch are missing; the rest still arrive.
+    assert found == [f"purge marker {i}" for i in (0, 1, 4, 5)]
+
+
+@pytest.mark.usefixtures("logbook")
 @pytest.mark.parametrize("order", ["oldest", "newest"])
 @pytest.mark.parametrize("component_enabled", [False, True])
 async def test_sparse_search_across_context_and_page_boundaries(
