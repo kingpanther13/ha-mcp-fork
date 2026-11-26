@@ -37,17 +37,7 @@ rules:
                       - pattern: $METHOD(..., $V, ...)
                   - metavariable-regex:
                       metavariable: $METHOD
-                      regex: '(?i)^(?:.*_)?(?:ok|reply|answer|default|respond|response|send_result|send_json|json_response|register_uri)
-          - focus-metavariable: $V
-        requires: RECORD
-    # Calls above are narrowed by their role in the test, independently of the HA endpoint.
-      - patterns:
-          - pattern-either:
-              - pattern: $PATH.write_text($V, ...)
-              - pattern: $STREAM.write($V)
-              - pattern: $PATH.write_bytes($V, ...)
-          - focus-metavariable: $V
-        requires: CODE
+                      regex: '(?i)^(?:.*_)?(?:ok|reply|answer|default|respond|response|send_result|send_json|json_response|register_uri)$'
               - pattern: $OWNER.$METHOD(..., json=$V, ...)
           - focus-metavariable: $V
         requires: RECORD
