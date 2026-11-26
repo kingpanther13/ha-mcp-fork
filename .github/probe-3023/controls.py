@@ -49,3 +49,18 @@ def bad_gateway(supervisor):
 def configure(hass):
     hass.states.async_set("sensor.test", "1", {"unit_of_measurement": "W"})  # expect: allowed
 
+
+def nested_success(web, wrap_ok, sessions):
+    return web.json_response(wrap_ok({"session": sessions[-1]}))  # expect: positive
+
+
+def inbound_request(core):
+    return core.post("/api/states", json={"state": "on"})  # expect: allowed
+
+
+def release_transition(monkeypatch, module, real_error):
+    monkeypatch.setattr(module, "load", Mock(side_effect=real_error))  # expect: allowed
+
+
+def legitimate_model_in_envelope(web, model):
+    return web.json_response({"result": "ok", "data": model.to_dict()})  # expect: allowed
