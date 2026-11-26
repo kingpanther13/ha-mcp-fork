@@ -1,0 +1,61 @@
+rules:
+  - id: test-authored-contract
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: Check who owns this fixture or response and whether the real producer can supply it.
+    options:
+      taint_assume_safe_functions: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: '{"...": $VALUE, ...}'
+          - pattern: 'dict($KEY=$VALUE, ...)'
+          - pattern: '[{..., $K: $V, ...}, ...]'
+        exact: true
+        label: RECORD
+      - patterns:
+          - pattern: '"$SOURCE"'
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '(?s).*\b(?:export\s|function\s|class\s|const\s|customElements\.|window\.)'
+        exact: true
+        label: CODE
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $MODEL.to_dict(...)
+          - pattern: $MODEL.model_dump(...)
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $MOCK.return_value = $V
+              - pattern: $MOCK.side_effect = $V
+              - pattern: $FACTORY(..., return_value=$V, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $OWNER.$METHOD(..., $V, ...)
+                      - pattern: $METHOD(..., $V, ...)
+                  - metavariable-regex:
+                      metavariable: $METHOD
+                      regex: '(?i)^(?:.*_)?(?:ok|reply|answer|default|respond|response|send_result|send_json|json_response|register_uri)
+          - focus-metavariable: $V
+        requires: RECORD
+    # Calls above are narrowed by their role in the test, independently of the HA endpoint.
+      - patterns:
+          - pattern-either:
+              - pattern: $PATH.write_text($V, ...)
+              - pattern: $STREAM.write($V)
+              - pattern: $PATH.write_bytes($V, ...)
+          - focus-metavariable: $V
+        requires: CODE
+              - pattern: $OWNER.$METHOD(..., json=$V, ...)
+          - focus-metavariable: $V
+        requires: RECORD
+    # Calls above are narrowed by their role in the test, independently of the HA endpoint.
+      - patterns:
+          - pattern-either:
+              - pattern: $PATH.write_text($V, ...)
+              - pattern: $STREAM.write($V)
+              - pattern: $PATH.write_bytes($V, ...)
+          - focus-metavariable: $V
+        requires: CODE

@@ -1,0 +1,30 @@
+name: Investigate handwritten test contracts
+on:
+  push:
+    branches: ['ci/probe-3023-provenance']
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the analysis tool
+        run: pipx install semgrep==1.187.0
+      - name: Scan both trees, historical regression and controls with the same rule
+        run: |
+          mkdir -p probe-data/replay
+          touch .semgrepignore
+          git show b2646124:tests/src/unit/test_card_review_round8.py > probe-data/replay/historical.py
+          cp .github/probe-3023/controls.py probe-data/replay/controls.py
+          semgrep scan --metrics=off --disable-version-check --strict --timeout=60 --max-memory=4096 --no-git-ignore --config=.github/probe-3023/authorship.yml --json-output=probe-data/report.json tests/src/unit tests/addon probe-data/replay > /dev/null
+          python .github/probe-3023/summarize.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: authorship-evidence
+          path: probe-data/report.json
