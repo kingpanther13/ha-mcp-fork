@@ -1,0 +1,45 @@
+name: Verify HA-MCP FAQ site
+on:
+  push:
+    branches: [verify/3210-faq-58b90b6b]
+permissions:
+  contents: read
+jobs:
+  site-checks:
+    name: Site (astro check + eslint a11y)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: site
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        ref: 58b90b6b54f87ac8a6fbc3c0a560ede1e8fb6148
+        persist-credentials: false
+
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        # Corepack is bundled only through Node 24; `corepack npm ci` enforces packageManager.
+        node-version: "22"
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+
+    - name: Install dependencies
+      run: corepack npm ci
+
+    - name: Astro type & diagnostics check
+      run: npm run check
+
+    - name: ESLint (eslint-plugin-astro + jsx-a11y)
+      run: npm run lint
+
+    - name: Build site
+      run: npm run build
+
+    - name: Accessibility audit (axe-core)
+      # Blocking: the baseline is clean (0 violations across all pages), so a
+      # new axe-core violation fails the PR rather than slipping through.
+      run: npm run audit:a11y
+
