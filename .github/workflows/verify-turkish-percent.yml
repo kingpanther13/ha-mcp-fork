@@ -1,0 +1,353 @@
+name: Verify Turkish percentage fix
+'on':
+  push:
+    branches:
+    - verify/turkish-percent-jobs
+    paths:
+    - .github/workflows/verify-turkish-percent.yml
+permissions:
+  contents: read
+env:
+  PYTHON_VERSION: '3.14'
+  UV_CACHE_DIR: /tmp/.uv-cache
+  HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.11.3
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+jobs:
+  component-version-gate:
+    name: Component Version Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Component version and server pin match the server version
+      run: "python3 - <<'PY'\nimport json, re, sys, tomllib\nsys.path.insert(0, \"custom_components/ha_mcp_tools\")\n\
+        from server_pin import server_pins\nserver = tomllib.load(open(\"pyproject.toml\", \"rb\"))[\"project\"][\"version\"\
+        ]\nmanifest = json.load(open(\"custom_components/ha_mcp_tools/manifest.json\"))\nconst = open(\"custom_components/ha_mcp_tools/const.py\"\
+        ).read()\npins = server_pins(manifest[\"requirements\"])\nfound = {\n    \"manifest.json version\": (manifest[\"\
+        version\"], server),\n    \"manifest.json server pin\": (\n        pins[0] if len(pins) == 1 else pins, f\"ha-mcp=={server}\"\
+        ),\n    \"const.py COMPONENT_VERSION\": (\n        m.group(1) if (m := re.search(\n            r'^COMPONENT_VERSION\
+        \ = \"([^\"]+)\"', const, re.M)) else None,\n        server),\n}\nwrong = {k: v for k, v in found.items() if\
+        \ v[0] != v[1]}\nfor key, (value, expected) in wrong.items():\n    print(f\"::error::{key} is {value!r}, but\
+        \ pyproject.toml's version \"\n          f\"{server!r} needs {expected!r}. semantic-release stamps these \"\n\
+        \          \"at release time; restore them \"\n          \"(docs/agents/custom-component.md#version-cycle).\"\
+        )\nsys.exit(1 if wrong else 0)\nPY\n"
+  fast-checks:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Docs Size Check
+      run: "max_chars=16000\nmax_lines=200\nchars=$(LC_ALL=C.UTF-8 wc -m < AGENTS.md)\nlines=$(wc -l < AGENTS.md)\nif\
+        \ [ \"$chars\" -gt \"$max_chars\" ] || [ \"$lines\" -gt \"$max_lines\" ]; then\n  echo \"::error file=AGENTS.md::AGENTS.md\
+        \ is ${chars} Unicode characters and ${lines} lines; keep the canonical startup guidance at or below ${max_chars}\
+        \ characters and ${max_lines} lines, and move scoped detail to linked documents.\"\n  exit 1\nfi\n"
+    - name: HACS validation
+      if: success() || failure()
+      uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
+      with:
+        category: integration
+    - name: Hassfest
+      if: success() || failure()
+      uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361
+    - name: Install uv
+      if: success() || failure()
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      with:
+        version: 0.13.9
+    - name: Set up Python
+      if: success() || failure()
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Verify uv.lock is in sync with pyproject.toml
+      if: success() || failure()
+      run: uv lock --check
+    - name: Check dependency alignment with HA core constraints
+      if: success() || failure()
+      run: "minimum=$(python3 -c 'import json; print(json.load(open(\"hacs.json\"))[\"homeassistant\"])')\n[[ \"$minimum\"\
+        \ =~ ^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+$ ]]\nfailed=0\nimage=\"${HA_IMAGE_GHCR##*:}\"\nfor ha_version in \"$image\"\
+        \ \"$minimum\"; do\n  status=0\n  lock=()\n  # uv.lock tracks the image's Core (the dev group pins it), not the\
+        \ floor.\n  [ \"$ha_version\" = \"$image\" ] && lock=(--lock uv.lock)\n  uv run --no-project --with packaging\
+        \ python \\\n    scripts/check_ha_constraint_alignment.py \\\n    --ha-version \"$ha_version\" \"${lock[@]}\"\
+        \ || status=$?\n  if [ \"$status\" -eq 78 ]; then\n    echo \"::warning::could not reach HA ${ha_version} constraints\
+        \ - dependency alignment for this version was not verified\"\n  elif [ \"$status\" -ne 0 ]; then\n    failed=1\n\
+        \  fi\ndone\nexit \"$failed\"\n"
+    - name: Install dependencies
+      if: success() || failure()
+      run: uv sync --dev
+    - name: Run ruff check
+      if: success() || failure()
+      run: uv run ruff check src/ tests/ custom_components/ homeassistant-addon/ homeassistant-addon-webhook-proxy/ homeassistant-addon-webhook-proxy-dev/
+        scripts/
+    - name: Run ruff format check on changed Python files
+      if: success() || failure()
+      run: 'git fetch --depth=1 origin a89d4029302d375716dea758138ddcdaa0d4aaaa
+
+        git diff --name-only --diff-filter=ACMR a89d4029302d375716dea758138ddcdaa0d4aaaa HEAD -- ''*.py'' | xargs -r
+        uv run ruff format --check'
+    - name: Check private names reached through strings
+      if: success() || failure()
+      run: uv run python scripts/private_test_access.py
+    - name: Check stand-ins registered under a real integration's name
+      if: success() || failure()
+      run: uv run python scripts/integration_stand_ins.py
+    - name: Check decisions by the wording of an error
+      if: success() || failure()
+      run: uv run python scripts/error_wording.py
+    - name: Run ast-grep
+      if: success() || failure()
+      run: uv run ast-grep scan
+    - name: Run mypy
+      if: success() || failure()
+      run: 'status=0
+
+        uv run mypy src/ custom_components/ homeassistant-addon/ scripts/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy/ || status=1
+
+        uv run mypy homeassistant-addon-webhook-proxy-dev/ || status=1
+
+        # The unit and app tests, against Core''s real types (tests/AGENTS.md).
+
+        uv run mypy tests/src/unit/ tests/addon/ || status=1
+
+        exit "$status"
+
+        '
+    - name: Check the ratchet baselines and files against the base
+      if: success() || failure()
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: 'base_sha=a89d4029302d375716dea758138ddcdaa0d4aaaa
+
+        git fetch --depth=1 origin "$base_sha"
+
+        status=0
+
+        uv run python scripts/module_size_ratchet.py --base "$base_sha" || status=1
+
+        uv run python scripts/duplicate_code_ratchet.py --base "$base_sha" || status=1
+
+        # No test is exempted from the real-Core checks (tests/AGENTS.md).
+
+        uv run python scripts/stand_in_lists_ratchet.py --base "$base_sha" || status=1
+
+        # No public name exists only for the tests (tests/AGENTS.md).
+
+        uv run python scripts/test_only_public_names.py || status=1
+
+        exit "$status"
+
+        '
+  site-checks:
+    name: Site (astro check + eslint a11y)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: site
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+    - name: Install dependencies
+      run: corepack npm ci
+    - name: Astro type & diagnostics check
+      run: npm run check
+    - name: ESLint (eslint-plugin-astro + jsx-a11y)
+      run: npm run lint
+    - name: Build site
+      run: npm run build
+    - name: Accessibility audit (axe-core)
+      run: npm run audit:a11y
+  unit-tests:
+    name: Unit Tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+        - 1/2
+        - 2/2
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    timeout-minutes: 12
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-gpp-v1
+    - name: Install git, jq and g++
+      run: "# Keep cached .debs after install so the cache stays warm for\n# future runs (default Debian behaviour deletes\
+        \ them).\nrm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";'\
+        \ \\\n  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\n# git and jq for the workflow contract tests;\
+        \ g++ builds the cloud\n# integration's pymicro-vad and pyspeex-noise, which ship no 3.14 wheel.\napt-get install\
+        \ -y -qq git jq g++ >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+    - name: Install Python dependencies
+      run: uv sync --all-extras --dev
+    - name: Install JS test dependencies (jsdom, esbuild)
+      run: cd tests/js && corepack npm ci
+    - name: Run unit tests
+      env:
+        UNIT_TEST_SHARD: ${{ matrix.shard }}
+      run: uv run pytest tests/src/unit/ -n logical --tb=short -v
+    - name: Run BAT runner tests
+      if: matrix.shard == '1/2'
+      run: uv run pytest tests/uat/ --ignore=tests/uat/stories/test_stories.py -n logical --tb=short -v
+    - name: Check unit tests left no local state
+      run: "if [ -e ~/.ha-mcp ]; then\n  find ~/.ha-mcp\n  echo \"::error::Unit tests wrote to ~/.ha-mcp\"\n  exit 1\n\
+        fi\nif [ -e tests/testing_config ]; then\n  find tests/testing_config\n  echo \"::error::Unit tests wrote to\
+        \ Core's shared tests/testing_config\"\n  exit 1\nfi\n# procps (pgrep) is not in the slim image; read /proc directly.\n\
+        if grep -ls '[s]tdio_settings_sidecar' /proc/[0-9]*/cmdline; then\n  echo \"::error::Unit tests left a settings\
+        \ sidecar running\"\n  exit 1\nfi\n"
+    - name: Run add-on structure tests
+      if: matrix.shard == '1/2'
+      run: uv run pytest tests/addon/ -n logical --tb=short -v --ignore=tests/addon/test_addon_startup.py
+    - name: Check app tests left no local state
+      if: matrix.shard == '1/2'
+      run: "if [ -e tests/testing_config ]; then\n  find tests/testing_config\n  echo \"::error::App tests wrote to Core's\
+        \ shared tests/testing_config\"\n  exit 1\nfi\n"
+  unit-tests-gate:
+    name: Unit Tests
+    needs: unit-tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+    - name: Require every unit test runner to pass
+      env:
+        RESULT: ${{ needs.unit-tests.result }}
+      run: 'echo "unit-tests result: $RESULT"
+
+        [ "$RESULT" = "success" ]
+
+        '
+  unit-tests-beta:
+    name: Unit Tests (beta Core, ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+        - 1/2
+        - 2/2
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    timeout-minutes: 15
+    steps:
+    - name: Restore apt download cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /var/cache/apt/archives
+        key: apt-trixie-git-jq-gpp-v1
+    - name: Install git, jq and g++
+      run: "rm -f /etc/apt/apt.conf.d/docker-clean\necho 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n\
+        \  > /etc/apt/apt.conf.d/keep-downloaded\napt-get update -qq\napt-get install -y -qq git jq g++ >/dev/null\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Resolve the beta Core version
+      id: beta
+      run: "python3 - <<'PY'\nimport json, os, re, tomllib, urllib.request\n\n# The endpoint refuses urllib's default\
+        \ User-Agent with a 403.\nrequest = urllib.request.Request(\n    \"https://version.home-assistant.io/beta.json\"\
+        ,\n    headers={\"User-Agent\": \"ha-mcp-ci\"},\n)\nwith urllib.request.urlopen(request, timeout=30) as reply:\n\
+        \    beta = json.load(reply)[\"homeassistant\"][\"default\"]\nif not re.fullmatch(r\"\\d{4}\\.\\d{1,2}\\.\\d+([.]dev\\\
+        d+|b\\d+)?\", beta):\n    print(f\"::error::Unexpected beta Core version: {beta}\")\n    raise SystemExit(1)\n\
+        with open(\"pyproject.toml\", \"rb\") as project:\n    dev = tomllib.load(project)[\"dependency-groups\"][\"\
+        dev\"]\npins = [\n    entry.split(\"==\", 1)[1]\n    for entry in dev\n    if isinstance(entry, str) and entry.startswith(\"\
+        homeassistant==\")\n]\nif len(pins) != 1:\n    print(f\"::error::Expected one homeassistant== pin in the dev\
+        \ group, found {pins}\")\n    raise SystemExit(1)\nsuperfluous = beta == pins[0]\nif superfluous:\n    print(f\"\
+        ::notice::Beta Core {beta} equals the stable pin; skipping the beta unit tests\")\nwith open(os.environ[\"GITHUB_OUTPUT\"\
+        ], \"a\") as out:\n    out.write(f\"version={beta}\\nsuperfluous={str(superfluous).lower()}\\n\")\nPY\n"
+    - name: Install Python dependencies with the beta Core
+      id: install
+      env:
+        BETA_CORE: ${{ steps.beta.outputs.version }}
+      run: "uv sync --all-extras --dev\n# The lock holds the stable Core. Core's test plugin is built from the\n# same\
+        \ Core release, so both move to the beta together.\nif ! uv pip install \"homeassistant==$BETA_CORE\" \"pytest-homeassistant==$BETA_CORE\"\
+        ; then\n  echo \"::error::PyPI has no installable homeassistant and pytest-homeassistant $BETA_CORE\"\n  exit\
+        \ 1\nfi\n# The integrations the unit tests run, at the beta's manifest pins; the\n# script reads them from the\
+        \ beta just installed, and restating Core's\n# pins keeps -r from moving it.\nuv run --no-sync python scripts/sync_dev_integration_pins.py\
+        \ --installed-requirements > \"$RUNNER_TEMP/beta-requirements.txt\"\nif ! uv pip install \"homeassistant==$BETA_CORE\"\
+        \ \"pytest-homeassistant==$BETA_CORE\" -r \"$RUNNER_TEMP/beta-requirements.txt\"; then\n  echo \"::error::Core\
+        \ $BETA_CORE's integration requirements do not install over the locked environment\"\n  exit 1\nfi\nuv run --no-sync\
+        \ python -c \\\n  'import os; from homeassistant.const import __version__ as v; assert v == os.environ[\"BETA_CORE\"\
+        ], v'\n"
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: tests/js/package-lock.json
+    - name: Install JS test dependencies (jsdom, esbuild)
+      run: cd tests/js && corepack npm ci
+    - name: Run unit tests on the beta Core
+      env:
+        BETA_CORE: ${{ steps.beta.outputs.version }}
+        UNIT_TEST_SHARD: ${{ matrix.shard }}
+      run: uv run --no-sync pytest tests/src/unit/ -n logical --tb=short -q -rf
+    - name: Run app tests on the beta Core
+      if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == '1/2' }}
+      run: uv run --no-sync pytest tests/addon/ -n logical --tb=short -q -rf --ignore=tests/addon/test_addon_startup.py
+  docker-validation:
+    name: Docker & Add-on Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: 2c0691ebd977abdab30ec223061d6231e08c89e2
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        cache-binary: true
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      with:
+        version: 0.13.9
+    - name: Set up Python
+      run: uv python install ${{ env.PYTHON_VERSION }}
+    - name: Install test dependencies
+      run: uv sync --dev
+    - name: "Pull python base image (GHCR mirror \u2192 ECR Public \u2192 Docker Hub)"
+      run: "PYTHON_BASE_ECR=$(sed -n 's/^ARG PYTHON_BASE=//p' Dockerfile)\n[ -n \"$PYTHON_BASE_ECR\" ] || { echo \"Dockerfile\
+        \ has no ARG PYTHON_BASE\"; exit 1; }\nPYTHON_BASE_MIRROR=\"ghcr.io/homeassistant-ai/ha-mcp-python-base@${PYTHON_BASE_ECR#*@}\"\
+        \nPYTHON_BASE_DOCKERHUB=\"docker.io/library/${PYTHON_BASE_ECR#public.ecr.aws/docker/library/}\"\nfor image in\
+        \ \"$PYTHON_BASE_MIRROR\" \"$PYTHON_BASE_ECR\" \"$PYTHON_BASE_DOCKERHUB\"; do\n  echo \"Trying $image...\"\n\
+        \  if docker pull \"$image\"; then\n    echo \"PYTHON_BASE=$image\" >> \"$GITHUB_ENV\"\n    echo \"Pulled from\
+        \ $image\"\n    exit 0\n  fi\n  echo \"Failed to pull $image, trying next...\"\n  sleep 15\ndone\necho \"All\
+        \ registries failed\" && exit 1\n"
+    - name: Run add-on tests
+      run: uv run pytest tests/addon/ --ignore=tests/addon/test_skills_config.py --tb=short -v
+    - name: Validate docker-compose configuration
+      run: uv run pytest tests/test_docker/test_docker_compose.py -v
+    - name: Build and test standalone Docker image
+      run: uv run pytest tests/test_docker/test_docker_build.py -v
