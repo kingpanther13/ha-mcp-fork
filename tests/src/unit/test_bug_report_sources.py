@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 import ifaddr
 import pytest
 from aiohttp import web
+from homeassistant.components import websocket_api
 from homeassistant.components.network import async_reload_adapters
 from homeassistant.const import KEY_DATA_LOGGING
 from homeassistant.core import HomeAssistant
@@ -354,6 +355,33 @@ class TestReport:
         assert f"- **Home Assistant Install:** {info['installation_type']}" in body
         assert info["python_version"] in body
         assert "warnings" not in result
+
+    @pytest.mark.parametrize("failed_command", [False, True])
+    async def test_report_identifies_its_core_log_reader(
+        self,
+        hass: HomeAssistant,
+        log_file: Path,
+        component_core_client: HomeAssistantClient,
+        monkeypatch: pytest.MonkeyPatch,
+        failed_command: bool,
+    ) -> None:
+        await _set_up_reporting_core(hass)
+        if failed_command:
+            monkeypatch.delitem(
+                hass.data[websocket_api.DOMAIN], "ha_mcp_tools/core_log_window"
+            )
+        with patch.object(
+            component_core_client,
+            "get_error_log",
+            AsyncMock(wraps=component_core_client.get_error_log),
+        ) as rest:
+            result = await BugReportTools(component_core_client).ha_report_issue(
+                report_type="runtime_bug"
+            )
+        log = result["core_error_log"]
+        assert "Lost [IP] link" in log
+        assert ("Marketplace" in log) is failed_command
+        assert rest.await_count == int(failed_command)
 
     async def test_install_without_container_arch(
         self, hass: HomeAssistant, core_client: HomeAssistantClient

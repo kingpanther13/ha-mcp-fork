@@ -48,6 +48,7 @@ from .exceptions import (
     HomeAssistantError as HomeAssistantError,
 )
 from .exceptions import SceneIdNotAnEntityError, websocket_close_error_type
+from .file_log_backlog import backlog_page
 from .models import ErrorLogPage
 from .service_identifiers import service_rest_path
 from .supervisor_client import make_supervisor_httpx_client
@@ -892,16 +893,13 @@ class HomeAssistantClient:
                     )
                     return await journald_page(window, offset, self._proxied_core_logs)
 
-                if isinstance(offset, str):
-                    raise HomeAssistantAPIError(
-                        "Cursor-token paging needs a Supervisor-backed install; "
-                        "the container /api/error_log endpoint has no cursor"
-                    )
-                logger.debug("Fetching error log via HA Core proxy (Container/pip)")
-                raw_response = await self._raw_request(
+                if page := await backlog_page(self, window, offset):
+                    return page
+                assert isinstance(offset, int)
+                response = await self._raw_request(
                     "GET", "/error_log", headers={"Accept": "text/plain"}
                 )
-                return container_page(raw_response.text, window, offset)
+                return container_page(response.text, window, offset)
         except TimeoutError as e:
             raise HomeAssistantConnectionError(
                 f"Timeout fetching the error log after {self.timeout}s: "

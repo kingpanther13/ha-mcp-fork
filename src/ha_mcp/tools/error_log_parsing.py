@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypedDict
 
 from ..client.error_log_journald import cursor_token
 from ..client.rest_client import MIN_LOG_WINDOW_LINES
@@ -30,23 +30,7 @@ from .log_common import (
     _coerce_limit,
 )
 
-# Full HA log line, e.g.
-# "2026-05-27 10:15:23.456 ERROR (MainThread) [homeassistant.components.zha] msg"
-# The thread field is matched lazily instead of as `\([^)]*\)`: since Python 3.10
-# an unnamed thread is called "Thread-1 (target_fn)", so the field itself can
-# contain parentheses, and a class that cannot cross them drops every line those
-# threads log. Core 2026.11+ appends the local UTC offset ("…10:15:23.456-04:00").
-_HA_LOG_LINE_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
-    r"\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)"
-    r"\s+\(.*?\)"
-    r"\s+\[([^\]]+)\]"
-    r"\s+(.+)$",
-    re.IGNORECASE,
-)
 _MAX_MESSAGE_LEN = 200
-_COMPONENT_PREFIX_DEPTH = 3
-_CUSTOM_COMPONENT_PREFIX_DEPTH = 2
 _DEFAULT_TOP_N = 20
 _MAX_COMPONENTS = 50
 # Marks a message the 200-char cap cut short, so a truncated entry is never
@@ -67,35 +51,13 @@ _EMPTY_FETCH_WARNING = (
 # stream, where every line is wrapped in ANSI colour codes:
 #   "\x1b[31m2026-08-02 08:12:27.290 ERROR (MainThread) [x] msg\x1b[0m"
 # Only container/pip installs read the plain home-assistant.log file.
-# Two independent reasons to strip, not one chain:
-#   * the leading code alone is already fatal — _HA_LOG_LINE_RE is ^-anchored
-#     and str.strip() does not remove ESC, so the line matches nothing and no
-#     `message` is produced at all;
-#   * the trailing reset is what a leading-only strip would leave behind: it
-#     lands inside `message` and splits the dedup key for one recurring error.
-# Strip both ends, always.
+# Search and summary text exclude the terminal colour sequences.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences (journald colour codes) from a log line."""
     return _ANSI_RE.sub("", text)
-
-
-def _normalize_timestamp(timestamp: str) -> str:
-    """Put a matched timestamp on one date/time separator.
-
-    ``_HA_LOG_LINE_RE`` accepts both the space and the ``T`` form
-    (case-insensitively); one form keeps a recurring issue's reported
-    timestamps uniform. HA core emits the space form, so normalize onto that:
-    real logs come out byte-identical and only the ISO-8601 variant is
-    rewritten. Comparisons go through ``_instant_order``.
-
-    The date is fixed-width in the pattern (``\\d{4}-\\d{2}-\\d{2}``), so the
-    separator is always at index 10 — replacing by position also covers the
-    lowercase ``t`` that ``re.IGNORECASE`` admits.
-    """
-    return timestamp[:10] + " " + timestamp[11:]
 
 
 def _instant_order(stamps: list[str]) -> Callable[[str], datetime]:
@@ -122,29 +84,19 @@ def _instant_order(stamps: list[str]) -> Callable[[str], datetime]:
     return key
 
 
-def _get_component_prefix(logger_name: str) -> str:
-    """Extract the component prefix (first N dotted segments) of a logger name.
-
-    A custom integration's identity is ``custom_components.<domain>`` — one
-    segment shallower than a core component — so its modules roll up into one
-    bucket instead of one per module.
-    """
-    parts = logger_name.split(".")
-    depth = (
-        _CUSTOM_COMPONENT_PREFIX_DEPTH
-        if parts[0] == "custom_components"
-        else _COMPONENT_PREFIX_DEPTH
-    )
-    if len(parts) >= depth:
-        return ".".join(parts[:depth])
-    return logger_name
-
-
 def _truncate_message(message: str) -> str:
     """Cap a message for display, marking it when it was cut."""
     if len(message) <= _MAX_MESSAGE_LEN:
         return message
     return message[:_MAX_MESSAGE_LEN] + _TRUNCATION_MARK
+
+
+class _SummaryEntry(TypedDict):
+    timestamp: str
+    level: str
+    logger: str
+    integrations: list[str]
+    message: str
 
 
 class _ExtractedLines(NamedTuple):
@@ -159,7 +111,7 @@ class _ExtractedLines(NamedTuple):
     ``total input lines == blank + unparseable + matched`` holds by construction.
     """
 
-    entries: list[dict[str, str]]
+    entries: list[_SummaryEntry]
     matched: int
     unparseable: int
     blank: int
@@ -170,6 +122,7 @@ class _ExtractedLines(NamedTuple):
 
 def _extract_log_entries(
     lines: list[str],
+    headers: dict[str, dict[str, Any]],
     search: str | None = None,
     level: str | None = None,
 ) -> _ExtractedLines:
@@ -180,30 +133,26 @@ def _extract_log_entries(
     the HA log format at all — lines dropped by ``level``/``search`` are simply
     absent from ``entries``, never counted as unparseable.
     """
-    entries: list[dict[str, str]] = []
+    entries: list[_SummaryEntry] = []
     matched = 0
     unparseable = 0
     blank = 0
     stamps: list[str] = []
     needle = search.lower() if search else None
 
-    for line in lines:
-        # Strip ANSI *before* matching: on Supervisor-backed installs the line
-        # arrives colour-wrapped. Both ends matter for separate reasons — the
-        # leading code alone already defeats the ^-anchor so the line matches
-        # nothing, and a leading-only strip would leave the trailing reset
-        # inside `message`, splitting the dedup key for one recurring error.
+    for index, line in enumerate(lines):
         clean = _strip_ansi(line).strip()
         if not clean:
             blank += 1
             continue
-        match = _HA_LOG_LINE_RE.match(clean)
+        match = headers.get(str(index))
         if not match:
             unparseable += 1
             continue
         matched += 1
-        timestamp, log_level, logger_name, message = match.groups()
-        timestamp = _normalize_timestamp(timestamp)
+        timestamp, log_level, logger_name, message = (
+            match[key] for key in ("timestamp", "level", "logger", "message")
+        )
         # The covered window spans every parseable line, filtered or not:
         # it describes the log slice that was read, not the summary's contents.
         stamps.append(timestamp)
@@ -221,6 +170,7 @@ def _extract_log_entries(
                 "timestamp": timestamp,
                 "level": log_level,
                 "logger": logger_name,
+                "integrations": match["integrations"],
                 # Kept whole: the display cap is applied at dedup time, because
                 # keying on a capped message merges two errors that differ only
                 # past the cap into one issue with a summed count.
@@ -287,7 +237,9 @@ class _RecordPage:
     leading_partial: bool
 
 
-def _split_log_records(lines: list[str]) -> list[_LogRecord]:
+def _split_log_records(
+    lines: list[str], headers: dict[str, dict[str, Any]] | None
+) -> list[_LogRecord]:
     """Group window lines into records: a header plus its continuation lines.
 
     Blank lines stay inside the record: Python prints chained exceptions with
@@ -301,14 +253,14 @@ def _split_log_records(lines: list[str]) -> list[_LogRecord]:
     level: str | None = None
     for index, line in enumerate(lines):
         clean = _strip_ansi(line).strip()
-        match = _HA_LOG_LINE_RE.match(clean)
-        if match:
+        match = headers.get(str(index)) if headers is not None else None
+        if match or headers is None:
             if current:
                 records.append(_LogRecord(current, start, header, level))
             current = [line]
             start = index
             header = clean
-            level = match.group(2).upper()
+            level = match["level"] if match else None
         else:
             if not current:
                 start = index
@@ -407,6 +359,7 @@ def _select_error_log_page(
 
 def _parse_error_log_structured(
     raw_text: str,
+    headers: dict[str, dict[str, Any]],
     search: str | None = None,
     level: str | None = None,
     top_n: int = _DEFAULT_TOP_N,
@@ -437,7 +390,7 @@ def _parse_error_log_structured(
     """
     lines = raw_text.splitlines() if raw_text else []
     total_raw_lines = len(lines)
-    extracted = _extract_log_entries(lines, search=search, level=level)
+    extracted = _extract_log_entries(lines, headers, search=search, level=level)
     parsed = extracted.entries
 
     # Dedupe on (level, logger, message), keyed on the FULL message: two errors
@@ -452,6 +405,8 @@ def _parse_error_log_structured(
         if record is None:
             record = {
                 "logger": entry["logger"],
+                "integrations": entry["integrations"],
+                "component": ", ".join(entry["integrations"]) or entry["logger"],
                 "level": entry["level"],
                 "message": _truncate_message(entry["message"]),
                 "count": 0,
@@ -486,16 +441,17 @@ def _parse_error_log_structured(
 
     by_component: dict[str, dict[str, Any]] = {}
     for issue in all_issues:
-        prefix = _get_component_prefix(issue["logger"])
-        bucket = by_component.setdefault(
-            prefix, {"total_occurrences": 0, "issue_count": 0}
-        )
-        bucket["total_occurrences"] += issue["count"]
-        bucket["issue_count"] += 1
+        for domain in issue["integrations"] or [issue["logger"]]:
+            bucket = by_component.setdefault(
+                domain, {"total_occurrences": 0, "issue_count": 0}
+            )
+            bucket["total_occurrences"] += issue["count"]
+            bucket["issue_count"] += 1
 
     top_issues = [
         {
-            "component": _get_component_prefix(issue["logger"]),
+            "component": issue["component"],
+            "integrations": issue["integrations"],
             "logger": issue["logger"],
             "level": issue["level"],
             "message": issue["message"],

@@ -386,14 +386,20 @@ from .. import (
     config_file_items,
     config_references,
     core_contract,
+    core_log_records,
+    core_log_window,
     dashboard_cards_ws,
     entity_restore,
+    fault_log,
     flow_outline,
     flow_record,
     helper_collections,
     history_page,
+    log_time_window,
     recorder_status,
     scene_editor,
+    supervisor_log,
+    system_log_entries,
     todo_items,
     update_entities,
 )
@@ -509,11 +515,25 @@ def async_register_commands(hass: HomeAssistant) -> None:
     """
     for schema, do_fn, prep in _command_specs():
         websocket_api.async_register_command(hass, _build_handler(schema, do_fn, prep))
+    websocket_api.async_register_command(hass, _logger_info)
     _LOGGER.debug(
         "Registered ha_mcp_tools WS commands: schema_version=%s capabilities=%s",
         SCHEMA_VERSION,
         CAPABILITIES,
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "ha_mcp_tools/logger_info"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def _logger_info(
+    hass: HomeAssistant, connection: Any, msg: dict[str, Any]
+) -> None:
+    from homeassistant.components.logger.websocket_api import (
+        handle_integration_log_info,
+    )
+
+    handle_integration_log_info(hass, connection, msg)
 
 
 def _command_specs() -> list[tuple[dict[Any, Any], Any, Any]]:
@@ -595,6 +615,12 @@ def _command_specs() -> list[tuple[dict[Any, Any], Any, Any]]:
         *dashboard_cards_ws.command_specs(vol),
         *_oauth_callback_specs(),
         *history_page.command_specs(vol),
+        *fault_log.command_specs(vol),
+        *system_log_entries.command_specs(vol),
+        *core_log_window.command_specs(vol),
+        *core_log_records.command_specs(vol),
+        *supervisor_log.command_specs(vol),
+        *log_time_window.command_specs(vol),
     ]
 
 

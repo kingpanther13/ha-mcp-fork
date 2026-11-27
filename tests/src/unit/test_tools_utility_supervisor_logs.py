@@ -210,21 +210,22 @@ class TestTheRoute:
 
 
 class TestTheSlugParameter:
-    async def test_a_service_outside_the_allowed_set_is_refused_before_asking(
-        self, app_route: Route
-    ):
+    async def test_unknown_service_reaches_supervisor(self, app_route: Route):
+        app_route.supervisor.reply("No such log route", status=404)
         with pytest.raises(ToolError) as refused:
             await ask(
                 app_route.client,
                 Target("system_service", "not_a_real_service", ""),
             )
 
-        error = error_body(refused)["error"]
-        assert error["code"] == "VALIDATION_INVALID_PARAMETER"
-        # The caller sees what is allowed.
-        listed = error["message"] + " ".join(error.get("suggestions", []))
-        assert all(service in listed for service in SERVICES)
-        assert app_route.supervisor.requests == []
+        body = error_body(refused)
+        assert body["status"] == 404
+        error = body["error"]
+        assert error["code"] == "RESOURCE_NOT_FOUND"
+        assert "No such log route" in error["message"]
+        assert [r.path for r in app_route.supervisor.requests] == [
+            "/not_a_real_service/logs"
+        ]
 
     async def test_a_service_log_with_no_slug_is_refused_before_asking(
         self, app_route: Route

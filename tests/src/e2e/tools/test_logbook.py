@@ -349,9 +349,9 @@ async def test_logbook_empty_result(mcp_client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.requires_tools_entry
+@pytest.mark.requires_component_surface
 async def test_logs_fault_log_source_reads_seeded_crash(mcp_client):
-    """source='fault_log' reads faulthandler's dump via the tools entry (#2373).
+    """Read faulthandler's dump with either component entry.
 
     ``tests/initial_test_state/home-assistant.log.fault`` ships two fake
     faulthandler blocks (a segfault, then an abort). HA Core opens the file in
@@ -361,6 +361,7 @@ async def test_logs_fault_log_source_reads_seeded_crash(mcp_client):
     """
     async with MCPAssertions(mcp_client) as mcp:
         raw_data = await mcp.call_tool_success("ha_get_logs", {"source": "fault_log"})
+    assert_component_path(raw_data)
     data = get_logbook_data(raw_data)
 
     assert data["success"] is True
@@ -425,6 +426,7 @@ async def test_logs_system_source(mcp_client):
 
     async with MCPAssertions(mcp_client) as mcp:
         raw_data = await mcp.call_tool_success("ha_get_logs", {"source": "system"})
+    assert_component_path(raw_data)
     data = get_logbook_data(raw_data)
 
     assert data["success"] is True
@@ -770,10 +772,23 @@ async def test_logs_logbook_with_search(mcp_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.container_only
+async def test_file_log_tail_reports_its_bounds(mcp_client):
+    async with MCPAssertions(mcp_client) as mcp:
+        data = await mcp.call_tool_success(
+            "ha_get_logs", {"source": "error_log", "limit": 1}
+        )
+    assert_component_path(data)
+    assert data["returned_lines"] <= 1
+    assert isinstance(data["has_more"], bool)
+
+
+@pytest.mark.asyncio
 async def test_logs_logger_source_basic(mcp_client):
     """ha_get_logs(source='logger') returns per-integration log levels."""
     async with MCPAssertions(mcp_client) as mcp:
         raw_data = await mcp.call_tool_success("ha_get_logs", {"source": "logger"})
+    assert_component_path(raw_data)
     data = get_logbook_data(raw_data)
 
     assert data["success"] is True

@@ -12,6 +12,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.components.recorder import Recorder
@@ -240,9 +241,9 @@ async def test_system_log_level_and_search_keep_only_matching_entries(
 
 
 async def test_error_log_newest_reverses_recent_records(
-    error_log_file: object, core_client: HomeAssistantClient
+    error_log_file: object, component_core_client: HomeAssistantClient
 ) -> None:
-    result = await get_logs(core_client, source="error_log", limit=2)
+    result = await get_logs(component_core_client, source="error_log", limit=2)
     assert result["order"] == "newest"
     assert [ln.split()[-1] for ln in result["log"].splitlines()] == ["l3", "l2"]
     assert result["returned_lines"] == 2
@@ -295,12 +296,29 @@ async def test_logger_non_default_order_warns_and_is_ignored(
 
 
 async def test_logger_default_order_emits_no_warning(
+    hass: HomeAssistant, component_core_client: HomeAssistantClient
+) -> None:
+    assert await async_setup_component(hass, "logger", {})
+    with patch.object(
+        component_core_client,
+        "send_websocket_message",
+        AsyncMock(wraps=component_core_client.send_websocket_message),
+    ) as ws:
+        result = await get_logs(component_core_client, source="logger")
+    commands = [call.args[0]["type"] for call in ws.await_args_list]
+    assert "ha_mcp_tools/logger_info" in commands
+    assert "logger/log_info" not in commands
+    assert result["loggers"]
+    assert "warnings" not in result
+
+
+async def test_logger_without_component_labels_the_native_read(
     hass: HomeAssistant, core_client: HomeAssistantClient
 ) -> None:
     assert await async_setup_component(hass, "logger", {})
     result = await get_logs(core_client, source="logger")
     assert result["loggers"]
-    assert "warnings" not in result
+    assert any("logger/log_info" in warning for warning in result["warnings"])
 
 
 _LEAD = "Detected blocking call to write_bytes with args "
