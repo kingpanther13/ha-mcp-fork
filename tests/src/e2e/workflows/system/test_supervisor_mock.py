@@ -94,14 +94,10 @@ class TestGetLogsSystemService:
         assert f"[{service}]" in result["log"]
         assert result["total_lines"] == 3
 
-    async def test_unknown_service_rejected_by_caller_validation(
+    async def test_unknown_service_returns_supervisor_error(
         self, mcp_client, supervisor_mock
     ):
-        """The tool validates the slug against SYSTEM_SERVICE_SLUGS before dispatch.
-
-        Provides regression coverage that an unknown service never reaches the
-        mock — caller-side validation short-circuits.
-        """
+        """An unknown route is rejected by the journal server."""
         result = await safe_call_tool(
             mcp_client,
             "ha_get_logs",

@@ -18,6 +18,7 @@ from .._vendor.fastmcp.exceptions import ToolError
 from ..client.error_log_journald import is_cursor_token, parse_cursor_token
 from ..client.journal_window import parse_window_token
 from ..errors import TOOL_ERROR_LOG_LEVEL
+from .coercion import JSON_STRING_COERCION
 from .error_log_parsing import _DEFAULT_TOP_N
 from .helpers import log_tool_usage
 from .log_common import (
@@ -31,6 +32,7 @@ from .log_sources_fault import FaultLogSourceMixin
 from .log_sources_logbook import LogbookLogSourceMixin
 from .log_sources_supervisor import SupervisorLogSourcesMixin
 from .logbook_cursor import LOGBOOK_CURSOR_PREFIX, LogbookCursor
+from .supervisor_log_reader import exact_log_window, selected_journal
 from .tool_hints import read_only_hints
 
 
@@ -121,6 +123,7 @@ class LogTools(
         structured: bool = False,
         top_n: int | None = None,
         action_calls: bool = False,
+        integration: str | None = None,
     ) -> dict[str, Any]:
         # Only a supervisor/system_service page read can take its order from a
         # token, so only those two are given ``order`` as it came.
@@ -142,7 +145,12 @@ class LogTools(
             )
         if source == "system":
             return await self._get_system_log(
-                limit=limit, search=search, level=level, order=chosen, compact=compact
+                limit=limit,
+                search=search,
+                level=level,
+                order=chosen,
+                compact=compact,
+                integration=integration,
             )
         if source == "error_log":
             return await self._get_error_log(
@@ -153,6 +161,7 @@ class LogTools(
                 offset=offset,
                 structured=structured,
                 top_n=top_n,
+                integration=integration,
             )
         if source == "logger":
             # logger reports per-integration levels, not time-ordered events;
@@ -200,7 +209,61 @@ class LogTools(
         structured: bool = False,
         top_n: int | None = None,
         action_calls: bool = False,
+        integration: str | None = None,
+        boot: int | str | None = None,
+        identifier: str | None = None,
+        latest: bool = False,
+        listing: str | None = None,
+        start_time: str | None = None,
+        sources: list[str] | None = None,
     ) -> dict[str, Any]:
+        if start_time is not None or sources is not None:
+            if any(
+                (
+                    hours_back,
+                    level,
+                    structured,
+                    integration,
+                    boot is not None,
+                    identifier,
+                    latest,
+                    listing,
+                )
+            ):
+                raise ToolError(
+                    "Exact windows accept sources, start_time, end_time, search and limit. Use offset for a single raw source.",
+                    log_level=TOOL_ERROR_LOG_LEVEL,
+                )
+            return await exact_log_window(
+                self._client,
+                source,
+                slug,
+                sources,
+                start_time,
+                end_time,
+                limit,
+                offset,
+                search,
+                order,
+            )
+        if boot is not None or identifier or latest or listing:
+            if hours_back or offset or integration or level or structured:
+                raise ToolError(
+                    "A journal selection accepts limit, search and order.",
+                    log_level=TOOL_ERROR_LOG_LEVEL,
+                )
+            return await selected_journal(
+                self._client,
+                source,
+                slug,
+                boot=boot,
+                identifier=identifier,
+                latest=latest,
+                listing=listing,
+                limit=limit,
+                search=search,
+                order=order,
+            )
         level = _validate_log_level(level)
         offset = _validate_log_offset(source, offset)
         warnings = _collect_log_warnings(
@@ -237,6 +300,10 @@ class LogTools(
                 f"structured=True; {reason}"
             )
         _validate_log_slug(source, slug)
+        if integration and source not in {"error_log", "system"}:
+            warnings.append(
+                f"Parameter 'integration' applies to system and error_log; ignored for source='{source}'."
+            )
         result = await self._fetch_log_source(
             source,
             limit,
@@ -254,6 +321,7 @@ class LogTools(
             structured=structured_error_log,
             top_n=top_n,
             action_calls=action_calls,
+            integration=integration,
         )
         if warnings:
             # Prepend, don't overwrite: the structured error_log path emits its
@@ -305,7 +373,7 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                     "never reaches journald or error_log; empty on a healthy "
                     "install (crash_recorded=False); whole crash blocks are "
                     "ordered with each block's lines kept in place; reads "
-                    "through the 'HA-MCP File & YAML Tools' entry."
+                    "through either HA-MCP component entry."
                 )
             ),
         ] = "logbook",
@@ -459,6 +527,12 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             ),
         ] = False,
         # System/error_log-specific
+        integration: Annotated[
+            str | None,
+            Field(
+                description="Filter system entries or the raw Core log by integration domain, including its library loggers."
+            ),
+        ] = None,
         level: Annotated[
             str | None,
             Field(
@@ -492,14 +566,42 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             ),
         ] = None,
         # Supervisor + system_service-specific (different namespaces)
+        start_time: Annotated[
+            str | None,
+            Field(
+                description="Start of the exact raw or timeline window, ISO 8601 with offset. Supply end_time too."
+            ),
+        ] = None,
+        sources: Annotated[
+            list[str] | None,
+            JSON_STRING_COERCION,
+            Field(
+                description="Return an oldest-first timeline for these sources: core, supervisor, host, plugin name or app:<slug>. Continue with next_start_time."
+            ),
+        ] = None,
+        boot: Annotated[
+            int | str | None,
+            Field(
+                description="Journal boot ID or offset, e.g. -1 for the previous boot."
+            ),
+        ] = None,
+        identifier: Annotated[
+            str | None, Field(description="Syslog identifier in the host journal.")
+        ] = None,
+        latest: Annotated[
+            bool, Field(description="Read since the selected container last started.")
+        ] = False,
+        listing: Annotated[
+            Literal["boots", "identifiers"] | None,
+            Field(description="List journal boots or host syslog identifiers."),
+        ] = None,
         slug: Annotated[
             str | None,
             Field(
                 description=(
                     "source='supervisor': app slug, e.g. 'core_mosquitto' (use "
                     "ha_get_app() to list installed slugs). "
-                    "source='system_service': service name, one of supervisor, "
-                    "host, core, dns, audio, multicast — here "
+                    "source='system_service': a Supervisor service name, e.g. host or core. Here "
                     "'supervisor' is the Supervisor service's own logs, not an "
                     "app with that name."
                 )
@@ -545,4 +647,11 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             structured=structured,
             top_n=top_n,
             action_calls=action_calls,
+            integration=integration,
+            boot=boot,
+            identifier=identifier,
+            latest=latest,
+            listing=listing,
+            start_time=start_time,
+            sources=sources,
         )
