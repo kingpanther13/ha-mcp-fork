@@ -143,6 +143,7 @@ async def test_every_command_is_registered_and_config_get_is_not(
         recorder_status.WS_RECORDER_STATUS,
         flow_outline.WS_FLOW_OUTLINE,
         scene_editor.WS_SCENE_IGNORED_DOMAINS,
+        "ha_mcp_tools/history_page",
     }
     assert "ha_mcp_tools/config_get" not in registered
 
