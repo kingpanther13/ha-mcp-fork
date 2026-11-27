@@ -83,6 +83,7 @@ def _collect_log_warnings(
     offset: int | str,
     hours_back: int | None = None,
     search: str | None = None,
+    action_calls: bool = False,
 ) -> list[str]:
     warnings: list[str] = []
     if source not in ("logbook", "supervisor", "system_service") and hours_back:
@@ -96,7 +97,8 @@ def _collect_log_warnings(
             "(entries are sorted by integration name); ignored"
         )
     if source != "logbook" and any(
-        p is not None for p in [entity_id, device_id, context_id, end_time]
+        p is not None
+        for p in [entity_id, device_id, context_id, end_time, action_calls or None]
     ):
         ignored = [
             p
@@ -105,6 +107,7 @@ def _collect_log_warnings(
                 ("device_id", device_id),
                 ("context_id", context_id),
                 ("end_time", end_time),
+                ("action_calls", action_calls or None),
             ]
             if v is not None
         ]
