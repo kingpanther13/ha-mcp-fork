@@ -1,0 +1,31 @@
+name: tmp proof 3218
+
+on:
+  push:
+    branches: ["ci/tmp-3218"]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/astral-sh/uv:0.13.9-python3.14-trixie-slim
+    steps:
+      - name: Install git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git >/dev/null
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Install runtime dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run proof
+        run: uv run --no-sync python scripts/tmp_proof_3218.py
