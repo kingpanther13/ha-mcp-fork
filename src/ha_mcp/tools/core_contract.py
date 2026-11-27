@@ -87,14 +87,12 @@ async def _contract_bridge(
 ) -> dict[str, Any]:
     """Ask the component's ``capability`` bridge; ``feature`` names it in
     the reason and error texts."""
-    unavailable = {
-        "status": "unavailable",
-        "reason": f"The installed component does not expose {feature}. {absent_note}",
-    }
+    unavailable = {"status": "unavailable", "reason": ""}
     try:
         caps = await get_component_caps(client, strict=True)
-        unavailable["reason"] += " " + component_unusable_warning(
-            caps, "the requested Core schema could not be described"
+        unavailable["reason"] = (
+            component_unusable_warning(caps, f"{feature} is unavailable")
+            + f" {absent_note}"
         )
         if not component_supports(caps, capability):
             return unavailable
