@@ -16,6 +16,7 @@ from .. import (
     flow_outline,
     flow_record,
     helper_collections,
+    history_page,
     recorder_status,
     scene_editor,
     todo_items,
@@ -264,6 +265,7 @@ CAPABILITIES: list[str] = [
     config_file_items.CAPABILITY,
     recorder_status.CAPABILITY,
     *card_definitions.CAPABILITIES,
+    history_page.CAPABILITY,
 ]
 
 # The registry kinds ``ha_mcp_tools/registries`` can serve. The WS schema gates
