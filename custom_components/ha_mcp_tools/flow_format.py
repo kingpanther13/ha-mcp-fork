@@ -14,9 +14,12 @@ API to be enabled. An older Core has no formatter and answers
 
 from __future__ import annotations
 
-import importlib
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
+
+# Imported with the component, off the event loop: importing on the loop a
+# module not yet loaded is a blocking call Core reports.
+from homeassistant.components import llm
 
 from .flow_record import MANAGERS, flow_manager
 
@@ -43,14 +46,15 @@ _ENDED_STEP_KEYS = (
 
 
 def core_formatter() -> ModuleType | None:
-    """Core's ``llm.flow`` module, or ``None`` before Home Assistant 2026.12."""
-    # 2026.11 has no llm.flow, so it is imported by name and may be missing.
-    # Remove once the hacs.json minimum is 2026.12: import it directly and drop the None
-    # answers below (``supported: false``, ``format_form``'s None).
-    try:
-        return importlib.import_module("homeassistant.components.llm.flow")
-    except ImportError:
-        return None
+    """Core's ``llm.flow`` module, or ``None`` before Home Assistant 2026.12.
+
+    The ``llm`` package binds ``flow`` when it is imported (2026.12); 2026.11
+    has no ``flow``. Remove once the hacs.json minimum is 2026.12: import
+    ``flow`` directly and drop the None answers below (``supported: false``,
+    ``format_form``'s None).
+    """
+    flow: ModuleType | None = getattr(llm, "flow", None)
+    return flow
 
 
 async def translations(
