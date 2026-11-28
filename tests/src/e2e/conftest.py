@@ -50,6 +50,7 @@ from haos_runtime import (
 )
 
 from ha_mcp._vendor.fastmcp import Client
+from ha_mcp._vendor.fastmcp.skills.client import SkillsClientExtension
 from ha_mcp.client import HomeAssistantClient
 from ha_mcp.config import get_global_settings
 from ha_mcp.server import HomeAssistantSmartMCPServer
@@ -520,17 +521,22 @@ async def mcp_client(
             raise RuntimeError(missing_msg)
         logger.info(f"🔗 FastMCP client connecting (HTTP) to {server_url}")
         transport = StreamableHttpTransport(url=server_url)
-        client = Client(transport)
+        client = _mcp_client(transport)
         async with client:
             logger.debug("🔗 FastMCP client connected (HTTP transport, %s)", backend)
             yield client
         return
 
     # Default path: in-memory transport.
-    client = Client(mcp_server.mcp)
+    client = _mcp_client(mcp_server.mcp)
     async with client:
         logger.debug("🔗 FastMCP client connected (in-memory transport)")
         yield client
+
+
+def _mcp_client(transport: Any) -> Client:
+    """A client declaring the extensions a current MCP client declares."""
+    return Client(transport, extensions=[SkillsClientExtension()])
 
 
 def _stdio_env(container_info: dict[str, Any], config_dir: Path) -> dict[str, str]:
@@ -582,7 +588,7 @@ def _stdio_client(container_info: dict[str, Any], config_dir: Path) -> Client:
         # The fixture owns process lifetime and must run lifespan cancellation.
         keep_alive=False,
     )
-    return Client(transport)
+    return _mcp_client(transport)
 
 
 async def _retire_stdio_sidecar(config_dir: Path) -> None:

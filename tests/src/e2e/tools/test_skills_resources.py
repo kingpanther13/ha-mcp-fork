@@ -3,7 +3,8 @@ Tests for bundled skills served as MCP resources and via ha_get_skill_guide.
 
 Verifies that:
 - Server instructions (bootstrap prompt) include skill guidance
-- SKILL.md and the reference files are listed as skill:// resources
+- SKILL.md and the reference files are listed as skill:// resources, and
+  through the Skills extension (skills/list, skills/get)
 - ha_get_skill_guide returns SKILL.md with no arguments, and every
   reference file SKILL.md links by the path it links
 - An installed ha-mcp serves the bundled SKILL.md over stdio (#1280)
@@ -77,8 +78,7 @@ async def test_skills_bootstrap_instructions(mcp_client):
 @pytest.mark.asyncio
 async def test_skills_resources_listed(mcp_client):
     """Resource-capable clients must see SKILL.md and the reference files
-    as skill:// resources. Reference files are listed only because the
-    provider is registered with ``supporting_files="resources"``."""
+    as skill:// resources."""
     resources = await mcp_client.list_resources()
     uris = [str(r.uri) for r in resources if str(r.uri).startswith("skill://")]
     base = f"skill://{EXPECTED_BUNDLED_SKILL}/"
@@ -88,6 +88,27 @@ async def test_skills_resources_listed(mcp_client):
     assert any(u.startswith(f"{base}references/") for u in uris), (
         f"No reference files listed. Found: {uris}"
     )
+
+
+@pytest.mark.asyncio
+async def test_skills_extension_serves_the_bundled_skill(mcp_client):
+    """A client using the MCP Skills extension (skills/list, skills/get)
+    finds no skill, or misses files, when the bundled skill folder is
+    rejected by the provider or the extension is not advertised."""
+    uri = f"skill://{EXPECTED_BUNDLED_SKILL}/SKILL.md"
+    listed = [str(skill.uri) for skill in await mcp_client.list_skills()]
+    assert listed == [uri], f"skills/list returned {listed}. " + SKILLS_MISSING_HINT
+
+    fetched = await mcp_client.get_skill(uri)
+    resources = await mcp_client.list_resources()
+    served = {str(r.uri) for r in resources if str(r.uri).startswith("skill://")}
+    files = {str(resource.uri) for resource in fetched.resources}
+    references = {
+        u
+        for u in served
+        if u.startswith(f"skill://{EXPECTED_BUNDLED_SKILL}/references/")
+    }
+    assert {uri, *references} <= files <= served
 
 
 @pytest.mark.asyncio
