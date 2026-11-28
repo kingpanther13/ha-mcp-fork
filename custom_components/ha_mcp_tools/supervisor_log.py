@@ -59,7 +59,7 @@ async def _read(client: Any, msg: dict[str, Any]) -> dict[str, Any]:
                     "byte_limited": True,
                 }
             lines.append(line)
-    # The iterator removes each newline. Reattach it so splitlines() also
+    # The iterator removes each newline. Reattach it so the readers' newline split also
     # preserves an empty final journal entry.
     return {"text": "".join(f"{line}\n" for line in lines), "first_cursor": cursor}
 
@@ -116,12 +116,7 @@ def command_specs(vol: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
                 vol.Optional("boot"): vol.Any(
                     int, vol.Match(r"^(?:-?[0-9]+|[a-fA-F0-9]{32})\Z")
                 ),
-                # One URL path segment of Supervisor's API.
-                vol.Optional("identifier"): vol.All(
-                    str,
-                    vol.Length(min=1, max=255),
-                    vol.Match(r"^(?!\.{1,2}\Z)[^/\\?#%\x00-\x20]+\Z"),
-                ),
+                vol.Optional("identifier"): vol.All(str, vol.Length(min=1, max=255)),
                 vol.Optional("latest"): bool,
                 vol.Optional("format"): vol.In(["plain", "verbose"]),
                 vol.Optional("listing"): vol.In(["boots", "identifiers"]),

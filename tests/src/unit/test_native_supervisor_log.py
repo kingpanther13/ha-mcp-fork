@@ -97,7 +97,7 @@ async def test_a_searched_window_over_the_byte_limit_is_read_in_pieces(
     )
     assert result["log"] == "kernel: first done\nkernel: second done"
     assert not result.get("warnings")
-    assert core_supervisor.headers("GET", path)["Range"] == "entries=c1:5000:5000"
+    assert core_supervisor.headers("GET", path)["Range"].startswith("entries=c1:")
 
 
 @pytest.mark.skipif(

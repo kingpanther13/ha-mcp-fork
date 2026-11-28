@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,8 +15,11 @@ from .component_api import ask_component, component_unusable_warning, get_compon
 from .helpers import raise_tool_error
 from .supervisor_log_reader import component_journal_page, journal_fallback_warning
 
-# Under the 1,000,000 characters ``core_log_records`` accepts in one call.
+# One ``core_log_records`` call: under the 1,000,000 characters the command
+# accepts, and under Core's 4 MiB WebSocket message once JSON has escaped every
+# non-ASCII character.
 RECORDS_CHARS = 900_000
+RECORDS_BYTES = 3_000_000
 
 
 async def _record_headers(client: Any, text: str) -> dict[str, dict[str, Any]] | None:
@@ -24,9 +28,13 @@ async def _record_headers(client: Any, text: str) -> dict[str, dict[str, Any]] |
     headers: dict[str, dict[str, Any]] = {}
     start = 0
     while start < len(lines):
-        end, size = start + 1, len(lines[start]) + 1
-        while end < len(lines) and size + len(lines[end]) + 1 <= RECORDS_CHARS:
-            size += len(lines[end]) + 1
+        end = start
+        chars = encoded = 0
+        while end < len(lines):
+            chars += len(lines[end]) + 1
+            encoded += len(json.dumps(lines[end]))
+            if end > start and (chars > RECORDS_CHARS or encoded > RECORDS_BYTES):
+                break
             end += 1
         parsed = await ask_component(
             client, "core_log_records", text="\n".join(lines[start:end])
@@ -80,8 +88,9 @@ class CoreLogWindow(ErrorLogPage):
 
     ``headers`` maps a line's index in ``text`` to Core's parse of the record
     it starts; ``None`` means no parse was available, so lines are not grouped
-    into records. ``requested_lines`` is the window's width when the reader
-    changed it from what was asked.
+    into records. ``requested_lines`` is the width the reader fetched when it
+    knows it (a byte limit halves it, the fallback raises it to the minimum);
+    ``None`` means the width that was asked.
     """
 
     warning: str | None = None

@@ -235,7 +235,7 @@ class LogTools(
     ) -> dict[str, Any]:
         level = _validate_log_level(level)
         offset = _validate_log_offset(source, offset)
-        logbook_only = {
+        unused_here = {
             "entity_id": entity_id,
             "device_id": device_id,
             "context_id": context_id,
@@ -275,7 +275,7 @@ class LogTools(
                     search,
                     order,
                 ),
-                _unused(**logbook_only, slug=sources is not None and slug),
+                _unused(**unused_here, slug=sources is not None and slug),
             )
         if boot is not None or identifier or latest or listing:
             if hours_back or offset or integration or level or structured:
@@ -299,7 +299,7 @@ class LogTools(
                     search=search,
                     order=order,
                 ),
-                _unused(**logbook_only, end_time=end_time),
+                _unused(**unused_here, end_time=end_time),
             )
         warnings = _collect_log_warnings(
             source,
@@ -517,8 +517,10 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             str | None,
             Field(
                 description=(
-                    "End of the window, ISO 8601 with offset. Logbook: the "
-                    "window's end, with hours_back. Required with start_time."
+                    "End of the window, ISO 8601. Required with start_time, "
+                    "and both then carry a UTC offset. Logbook: used with "
+                    "hours_back; a time without an offset is Home Assistant's "
+                    "local time."
                 )
             ),
         ] = None,
@@ -626,7 +628,8 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 description=(
                     "Up to twelve timeline sources: core, supervisor, host, a "
                     "plugin name or app:<slug>. The journal ones need a "
-                    "Supervisor install."
+                    "Supervisor install. A source that cannot be read is named "
+                    "in 'errors' and the others are returned."
                 )
             ),
         ] = None,
@@ -689,7 +692,7 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         as window_start/window_end; every install reads a capped window) and
         drops tracebacks; structured=False returns the raw records instead, so
         it covers what falls outside system_log's WARNING+ in-memory buffer. Use
-        structured=True for the per-component rollup; in structured mode
+        structured=True for the per-integration rollup; in structured mode
         limit/order do not apply: issues are ranked by count, then severity,
         then recency, over a fixed deep window.
 
@@ -702,13 +705,11 @@ def register_logs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         page reads carry has_more with a next_offset to pass back while it
         stays true.
 
-        Exact windows: start_time and end_time with source error_log,
-        supervisor or system_service return that source's lines in the window,
-        oldest-first, paged by integer offset. With sources they return one
-        merged timeline of records instead; pass next_start_time back as
-        start_time to continue. boot, latest, identifier and listing select
-        from the journal on Supervisor installs and take only limit, search
-        and order. integration narrows system and error_log to one integration.
+        Exact windows: start_time and end_time with a source return that
+        source's lines in the window. With sources they return one merged
+        timeline of records instead; pass next_start_time back as start_time
+        to continue. boot, latest, identifier and listing take only limit,
+        search and order.
 
         EXAMPLES:
         - Timeline: ha_get_logs(sources=["core", "supervisor"],

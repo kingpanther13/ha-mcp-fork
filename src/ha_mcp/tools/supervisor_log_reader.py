@@ -1,8 +1,8 @@
 """Journal reads through the component's Supervisor client, and their fallback.
 
-The component reads Supervisor's journals over Core's own client, which Core
-has from 2026.12. Before that, and without the component, the reads go to
-Supervisor's API directly or through Core's proxy.
+The component reads Supervisor's journals over Core's own Supervisor client,
+whose log reads Core has from 2026.12. Before that, and without the component,
+the reads go to Supervisor's API directly or through Core's proxy.
 """
 
 import json
@@ -30,7 +30,6 @@ from .component_api import (
 from .helpers import exception_to_structured_error, raise_tool_error
 from .log_common import (
     DEFAULT_LOG_LIMIT,
-    IDENTIFIER_PATTERN,
     SLUG_PATTERN,
     SUPERVISOR_SEARCH_WINDOW_LINES,
     _addon_auth_error_suggestions,
@@ -119,7 +118,7 @@ async def _proxy_texts(
     texts: dict[str, str] = {}
     limited: list[str] = []
     errors: dict[str, str] = {}
-    failure: HomeAssistantAPIError | None = None
+    statuses: set[int | None] = set()
     for name, (request,) in requests.items():
         try:
             text = (await _proxied(client, request)).text
@@ -127,19 +126,21 @@ async def _proxy_texts(
             if not await proxy_refused_path(client):
                 raise
             errors[name] = "Home Assistant serves no logs for this source."
+            statuses.add(404)
             continue
         except HomeAssistantAPIError as exc:
-            errors[name], failure = str(exc), exc
+            errors[name] = str(exc)
+            statuses.add(exc.status_code)
             continue
         texts[name], cut = _fit(text, budget)
         if cut:
             limited.append(name)
-    if alone and failure and not texts:
-        raise failure
     if alone and not texts:
         raise_tool_error(
             create_error_response(
-                ErrorCode.RESOURCE_NOT_FOUND,
+                ErrorCode.RESOURCE_NOT_FOUND
+                if statuses == {404}
+                else ErrorCode.SERVICE_CALL_FAILED,
                 "; ".join(f"{name}: {text}" for name, text in errors.items()),
             )
         )
@@ -154,8 +155,8 @@ async def _proxy_window(
 ) -> dict[str, Any]:
     """Make the reads the component could not, through Supervisor's API.
 
-    The component then merges them with the sources it reads itself: Core's
-    log file, where an install writes one beside the journal.
+    For a timeline, the component then merges them with the sources it reads
+    itself: Core's log file, where an install writes one beside the journal.
     """
     warning = await journal_fallback_warning(
         client, "the exact journal window uses the Supervisor API"
@@ -371,9 +372,9 @@ async def component_journal_page(
                 "range": f"entries={first.first_cursor}:{half}:{count - half}",
             },
         )
-        if rest is None:
-            return None
-        return JournaldPage(first.text + rest.text, first.first_cursor)
+        return JournaldPage(
+            first.text + (rest.text if rest else ""), first.first_cursor
+        )
     if result is None:
         return None
     return JournaldPage(result["text"], result.get("first_cursor"))
@@ -382,7 +383,7 @@ async def component_journal_page(
 async def _proxy_listing(client: Any, listing: str) -> dict[str, Any]:
     """The host journal's boots or identifiers, asked of Supervisor."""
     if is_running_in_addon():
-        # Core refuses the app's token on its Supervisor command.
+        # Supervisor's proxy to Core drops an app's supervisor/* commands.
         response = await client._supervisor_logs_response(
             "host", {"Accept": "application/json"}, {}, f"/{listing}"
         )
@@ -422,7 +423,8 @@ async def _proxy_selection(
     headers = {"Accept": "text/plain"}
     params = {"no_colors": "true", "lines": str(args["lines"])}
     if is_running_in_addon():
-        # Core's proxy refuses the app's token; Supervisor serves every selection.
+        # Supervisor's proxy to Core refuses an app's /api/hassio requests, and
+        # Supervisor serves every selection itself.
         response = await client._supervisor_logs_response(
             _journal_path(source), headers, params, selection
         )
@@ -436,8 +438,9 @@ async def _proxy_selection(
         raise_tool_error(
             create_error_response(
                 ErrorCode.SERVICE_CALL_FAILED,
-                "A boot ID, a host identifier and the latest start of an app or "
-                "service need Home Assistant 2026.12 or newer with the HA-MCP component.",
+                "A boot ID, a host identifier and the latest start of an app or of "
+                "a service other than Core need Home Assistant 2026.12 or newer with "
+                "the HA-MCP component.",
                 suggestions=[
                     warning,
                     "A boot can be chosen by its offset: 0 is the current boot, -1 the one before.",
@@ -497,10 +500,8 @@ def _selected_name(
         if source == "supervisor"
         else slug or "host"
     )
-    if (
-        source not in {"system_service", "error_log", "supervisor"}
-        or (identifier and journal != "host")
-        or (identifier and not re.fullmatch(IDENTIFIER_PATTERN, identifier))
+    if source not in {"system_service", "error_log", "supervisor"} or (
+        identifier and journal != "host"
     ):
         raise_tool_error(
             create_error_response(

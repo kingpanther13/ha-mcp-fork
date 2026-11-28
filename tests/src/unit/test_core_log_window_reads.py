@@ -1,11 +1,13 @@
 """Core log windows through the component: bursts, odd lines and filters."""
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
 import aiohasupervisor.models
 import pytest
+from homeassistant.const import KEY_DATA_LOGGING
 from homeassistant.core import HomeAssistant
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -45,7 +47,7 @@ async def test_a_record_longer_than_one_read_is_returned_and_the_timeline_moves_
     assert [row["message"].split("\n")[0] for row in first["records"]] == [
         "INFO (MainThread) [a] burst"
     ]
-    assert first["warnings"]
+    assert any("core" in warning for warning in first["warnings"])
     last = await call_logs(
         component_core_client, **(args | {"start_time": first["next_start_time"]})
     )
@@ -91,6 +93,75 @@ async def test_a_supervisor_install_with_a_log_file_merges_it_with_the_journal(
         end_time=f"{_DAY}T10:00:09+00:00",
     )
     assert [row["source"] for row in page["records"]] == ["core", "host"]
+
+
+@pytest.mark.skipif(
+    hasattr(aiohasupervisor.models, "LogsOptions"),
+    reason="Core 2026.12 reads the journal itself; this is the 2026.11 fallback",
+)
+async def test_the_fallback_reads_a_raw_journal_window(
+    hass: HomeAssistant,
+    component_core_client: HomeAssistantClient,
+    core_supervisor: Supervisor,
+) -> None:
+    hass.data.pop(KEY_DATA_LOGGING, None)
+    core_supervisor.reply("GET", "/host/logs", text="kernel: one\nkernel: two\n")
+    core_supervisor.reply("GET", "/host/logs", text="")
+    raw = await call_logs(
+        component_core_client, source="system_service", slug="host", **_WINDOW
+    )
+    assert raw["log"] == "kernel: one\nkernel: two"
+    assert not raw["has_more"]
+    assert raw["warnings"]
+
+
+@pytest.mark.skipif(
+    hasattr(aiohasupervisor.models, "LogsOptions"),
+    reason="Core 2026.12 reads the journal itself; this is the 2026.11 fallback",
+)
+async def test_the_fallback_timeline_names_a_source_that_failed(
+    hass: HomeAssistant,
+    component_core_client: HomeAssistantClient,
+    core_supervisor: Supervisor,
+) -> None:
+    hass.data.pop(KEY_DATA_LOGGING, None)
+    core_supervisor.reply(
+        "GET", "/host/logs", text=f"{_DAY} 10:00:02.000+00:00 host kernel: journal\n"
+    )
+    timeline = await call_logs(
+        component_core_client, sources=["host", "app:not_installed"], **_WINDOW
+    )
+    assert [row["source"] for row in timeline["records"]] == ["host"]
+    assert list(timeline["errors"]) == ["app:not_installed"]
+
+
+async def test_a_timeline_whose_sources_all_lack_a_journal_is_not_found(
+    component_core_client: HomeAssistantClient,
+) -> None:
+    with pytest.raises(ToolError) as refused:
+        await call_logs(
+            component_core_client, sources=["supervisor", "host"], **_WINDOW
+        )
+    assert error_body(refused)["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
+@pytest.mark.skipif(
+    hasattr(aiohasupervisor.models, "LogsOptions"),
+    reason="Core 2026.12 reads the journal itself; this is the 2026.11 fallback",
+)
+async def test_the_fallback_timeline_with_no_source_left_is_not_found(
+    hass: HomeAssistant,
+    component_core_client: HomeAssistantClient,
+    core_supervisor: Supervisor,
+) -> None:
+    hass.data.pop(KEY_DATA_LOGGING, None)
+    with pytest.raises(ToolError) as refused:
+        await call_logs(
+            component_core_client, sources=["app:one", "app:two"], **_WINDOW
+        )
+    error = error_body(refused)["error"]
+    assert error["code"] == "RESOURCE_NOT_FOUND"
+    assert "app:one" in error["message"] and "app:two" in error["message"]
 
 
 async def test_lines_holding_a_carriage_return_page_once_each(
@@ -182,9 +253,10 @@ _WINDOW = {
         {"source": "error_log", "latest": True, "hours_back": 1},
         {"source": "error_log", "latest": True, "boot": -1},
         {"source": "supervisor", "slug": "core_ssh", "identifier": "kernel"},
-        {"source": "system_service", "slug": "host", "identifier": "../../core/info"},
-        {"source": "system_service", "slug": "host", "identifier": ".."},
         {"source": "error_log", "level": "NOTSET"},
+        {"sources": [], **_WINDOW},
+        {"sources": ["not a name"], **_WINDOW},
+        {"sources": [f"app:{index}" for index in range(13)], **_WINDOW},
     ],
 )
 async def test_parameters_that_do_not_combine_are_refused(
@@ -193,6 +265,33 @@ async def test_parameters_that_do_not_combine_are_refused(
     with pytest.raises(ToolError) as refused:
         await call_logs(component_core_client, **arguments)
     assert error_body(refused)["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"start_time": _WINDOW["end_time"], "end_time": _WINDOW["start_time"]},
+        {"start_time": f"{_DAY}T10:00:00", "end_time": f"{_DAY}T10:00:09"},
+    ],
+)
+async def test_a_window_that_is_reversed_or_has_no_offset_is_refused(
+    component_core_client: HomeAssistantClient, window: dict[str, str]
+) -> None:
+    with pytest.raises(ToolError) as refused:
+        await call_logs(component_core_client, source="error_log", **window)
+    assert error_body(refused)["error"]["code"] == "VALIDATION_FAILED"
+
+
+async def test_system_entries_name_an_unloaded_integration_and_survive_a_missing_one(
+    hass: HomeAssistant, component_core_client: HomeAssistantClient
+) -> None:
+    await set_up_core_logs(hass)
+    logging.getLogger("homeassistant.components.zha.core").error("setup failed")
+    logging.getLogger("custom_components.not_installed.api").error("stray")
+    result = await call_logs(component_core_client, source="system")
+    owners = {entry["name"]: entry["integrations"] for entry in result["entries"]}
+    assert owners["homeassistant.components.zha.core"] == ["zha"]
+    assert owners["custom_components.not_installed.api"] == []
 
 
 @pytest.mark.parametrize("source", ["error_log", "system"])
