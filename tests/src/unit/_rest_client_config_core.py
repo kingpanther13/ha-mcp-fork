@@ -7,7 +7,7 @@ config directory; Core reloads the integration after every write.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +66,13 @@ async def error_status(read: Awaitable[Any]) -> int | None:
 @pytest.fixture
 async def config_client(
     hass: HomeAssistant, core_client: HomeAssistantClient
-) -> HomeAssistantClient:
-    """``core_client`` on a ``hass`` whose config API edits all three files."""
+) -> AsyncIterator[HomeAssistantClient]:
+    """``core_client`` on a ``hass`` whose config API edits all three files.
+
+    Core's config view reloads in the background after it answers a write; the
+    test waits for that reload, so the registry save it schedules is not left
+    running when Home Assistant stops.
+    """
     await set_up_config_api(hass)
-    return core_client
+    yield core_client
+    await hass.async_block_till_done()
