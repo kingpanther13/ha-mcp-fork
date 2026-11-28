@@ -30,7 +30,11 @@ async def _statistics_metadata(
     *,
     needed: bool,
 ) -> tuple[dict[str, dict[str, Any]], str | None, dict[str, dict[str, Any]]]:
-    converted = await converter_records(client, ids, units, warnings, needed=needed)
+    # Core's metadata command lists the same records the converter starts from,
+    # so a read that needs no converter choice asks Core directly.
+    converted = (
+        await converter_records(client, ids, units, warnings) if needed else None
+    )
     if converted is not None:
         metadata = {
             key: {
