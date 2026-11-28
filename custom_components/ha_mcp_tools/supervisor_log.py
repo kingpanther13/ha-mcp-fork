@@ -97,9 +97,12 @@ async def _prepare(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
             (value for cls, value in codes.items() if isinstance(exc, cls)), None
         )
         # Supervisor's log routes answer in plain text, which leaves the error empty.
+        source = msg.get("source", "host")
         text = str(exc) or (
-            f"Supervisor answered {status or type(exc).__name__} for the "
-            f"{msg.get('source', 'host')} logs."
+            f"Supervisor answered {status} for the {source} logs."
+            if status
+            else f"Supervisor could not serve the {source} logs. Its own log "
+            "(source system_service, slug supervisor) holds the reason."
         )
         return {"error": text, "status": status}
 

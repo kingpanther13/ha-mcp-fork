@@ -141,7 +141,7 @@ async def _proxy_texts(
                 ErrorCode.RESOURCE_NOT_FOUND
                 if statuses == {404}
                 else ErrorCode.SERVICE_CALL_FAILED,
-                "; ".join(f"{name}: {text}" for name, text in errors.items()),
+                " ".join(f"{name}: {text}" for name, text in errors.items()),
             )
         )
     return texts, limited, errors

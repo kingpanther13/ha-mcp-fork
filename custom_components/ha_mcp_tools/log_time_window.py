@@ -281,7 +281,7 @@ async def _prepare(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
         # Core before 2026.12: the caller makes these reads.
         return {"unavailable": True, "requests": requests}
     if errors and not batches:
-        text = "; ".join(f"{name}: {error}" for name, error in errors.items())
+        text = " ".join(f"{name}: {error}" for name, error in errors.items())
         return {"error": text, "status": statuses.pop() if len(statuses) == 1 else None}
     result = _merge(batches, start, end, msg["limit"], msg["search"], errors)
     if errors:
